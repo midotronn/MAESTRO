@@ -45,7 +45,7 @@ source .venv/bin/activate
 pip install -U pip wheel setuptools
 
 pip install -r requirements.txt
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
 # LODGE deps (opencv/pyrender/trimesh needed at render.py import; rest for model + FK)
 pip install gdown omegaconf pytorch-lightning einops tqdm soundfile librosa \
@@ -55,7 +55,7 @@ pip install gdown omegaconf pytorch-lightning einops tqdm soundfile librosa \
 # already-installed torch (ModuleNotFoundError: torch). Build CPU-only (no nvcc required)
 # with build isolation disabled so the build backend can import torch.
 pip install ninja fvcore iopath
-FORCE_CUDA=0 pip install --no-build-isolation "git+https://github.com/facebookresearch/pytorch3d.git@stable" \
+pip show pytorch3d >/dev/null 2>&1 || CUDA_VISIBLE_DEVICES="" FORCE_CUDA=0 pip install --no-build-isolation "git+https://github.com/facebookresearch/pytorch3d.git@stable" \
   || FORCE_CUDA=0 pip install --no-build-isolation pytorch3d
 
 # EDGE app deps into the shared venv (EDGE model needs these; jukebox/jukemirlib are
