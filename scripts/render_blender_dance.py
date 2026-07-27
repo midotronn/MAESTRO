@@ -50,29 +50,35 @@ def compute_smplx_meshes(
 
     import smplx as smplx_pkg
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     model = smplx_pkg.create(
         str(model_dir), model_type="smplx", gender="neutral",
         use_pca=False, flat_hand_mean=True, batch_size=1,
-    )
+    ).to(device)
     length = poses.shape[0]
-    zeros3 = torch.zeros(1, 3)
-    zeros45 = torch.zeros(1, 45)
-    zeros10 = torch.zeros(1, 10)
+    poses_t = torch.from_numpy(poses).float().to(device)
+    trans_t = torch.from_numpy(trans).float().to(device)
     verts = np.empty((length, model.get_num_verts(), 3), dtype=np.float32)
+    batch = 256
     with torch.no_grad():
-        for i in range(length):
+        for s in range(0, length, batch):
+            e = min(s + batch, length)
+            b = e - s
+            z3 = torch.zeros(b, 3, device=device)
+            z45 = torch.zeros(b, 45, device=device)
+            z10 = torch.zeros(b, 10, device=device)
             # Match LODGE's exact SMPL-X call: explicit flat hands / neutral face / zero
             # shape so nothing falls back to a non-flat default that would bend the limbs.
             out = model(
-                betas=zeros10,
-                global_orient=torch.from_numpy(poses[i, 0:1]).float().reshape(1, 3),
-                body_pose=torch.from_numpy(poses[i, 1:22]).float().reshape(1, 63),
-                transl=torch.from_numpy(trans[i]).float().reshape(1, 3),
-                jaw_pose=zeros3, leye_pose=zeros3, reye_pose=zeros3,
-                left_hand_pose=zeros45, right_hand_pose=zeros45,
-                expression=zeros10,
+                betas=z10,
+                global_orient=poses_t[s:e, 0].reshape(b, 3),
+                body_pose=poses_t[s:e, 1:22].reshape(b, 63),
+                transl=trans_t[s:e].reshape(b, 3),
+                jaw_pose=z3, leye_pose=z3, reye_pose=z3,
+                left_hand_pose=z45, right_hand_pose=z45,
+                expression=z10,
             )
-            verts[i] = out.vertices[0].numpy()
+            verts[s:e] = out.vertices.detach().cpu().numpy()
     return verts, model.faces.astype(np.int32)
 
 
