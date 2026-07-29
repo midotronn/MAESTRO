@@ -110,12 +110,12 @@ class EditSession:
 
     # ------------------------------------------------------------------ editing
     def edit(self, a: int, b: int, instruction: str, *, k: int | None = None,
-             max_cycles: int | None = None) -> WindowEditResult:
+             max_cycles: int | None = None, progress_cb=None) -> WindowEditResult:
         """Apply an NL window edit to the current dance and commit it as a new checkpoint."""
         res = apply_window_edit(
             self.current_motion(), a, b, instruction, self.generator,
             beats=self.assets.beats, k=k or self.k, max_cycles=max_cycles or self.max_cycles,
-            blend_frames=self.blend_frames, api_key=self.api_key,
+            blend_frames=self.blend_frames, api_key=self.api_key, progress_cb=progress_cb,
         )
         metrics = dict(self._whole_metrics(res.motion))
         metrics["window_after"] = res.metrics_after
@@ -124,13 +124,13 @@ class EditSession:
         return res
 
     def edit_from(self, from_id: str, a: int, b: int, instruction: str, *, k: int | None = None,
-                  max_cycles: int | None = None) -> WindowEditResult:
+                  max_cycles: int | None = None, progress_cb=None) -> WindowEditResult:
         """Branch: apply an edit to an ARBITRARY earlier checkpoint, forking history."""
         base = self.store.motion(from_id)
         res = apply_window_edit(
             base, a, b, instruction, self.generator, beats=self.assets.beats,
             k=k or self.k, max_cycles=max_cycles or self.max_cycles,
-            blend_frames=self.blend_frames, api_key=self.api_key,
+            blend_frames=self.blend_frames, api_key=self.api_key, progress_cb=progress_cb,
         )
         metrics = dict(self._whole_metrics(res.motion))
         metrics["window_after"] = res.metrics_after

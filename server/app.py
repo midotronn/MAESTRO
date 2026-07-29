@@ -1,0 +1,247 @@
+"""FastAPI backend for the AgentLODGE interactive dance editor (Phase 3).
+
+Serves the web editor and exposes the edit session over REST + WebSocket:
+
+* ``GET  /``                               -> the editor web UI
+* ``GET  /api/songs``                      -> available songs (a ``server/media/<sid>/`` each)
+* ``POST /api/session/{sid}``              -> create/load the session; returns duration, beats,
+                                              checkpoint timeline, current metrics, preview URL
+* ``GET  /api/session/{sid}/media/{name}`` -> stream the current preview video
+* ``POST /api/session/{sid}/edit``         -> run one NL window edit (blocking) + commit
+* ``WS   /api/session/{sid}/edit_ws``      -> run an edit while streaming live cycle progress
+* ``POST /api/session/{sid}/undo|redo``    -> walk history
+* ``POST /api/session/{sid}/restore``      -> roll back/forward to a checkpoint
+* ``GET  /api/session/{sid}/timeline``     -> checkpoint tree
+
+A song folder ``server/media/<sid>/`` holds ``base_motion.npy`` (Z-up 139), ``beats.npy`` (30 FPS
+frame indices) and ``preview.mp4``. If a ``bank/`` subfolder with ``bank_<sid>_<bb>_seed<n>.npy``
+exists the real backbone candidate bank is used (wrapped in a resilient fallback); otherwise the
+offline :class:`MockWindowGenerator` drives edits so the UI is fully usable without a GPU.
+
+Run:  uvicorn server.app:app --host 127.0.0.1 --port 8000
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from pathlib import Path
+
+import numpy as np
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from agentlodge.editor.remote_generator import BankWindowGenerator, ResilientWindowGenerator
+from agentlodge.editor.session import EditSession, SongAssets
+from agentlodge.editor.window_edit import MockWindowGenerator
+
+HERE = Path(__file__).resolve().parent
+MEDIA = HERE / "media"
+STATIC = HERE / "static"
+SESSIONS = HERE / "sessions"
+FPS = 30
+
+app = FastAPI(title="AgentLODGE Interactive Editor")
+_sessions: dict[str, EditSession] = {}
+
+
+# --------------------------------------------------------------------------- session loading
+def _song_dir(sid: str) -> Path:
+    d = (MEDIA / sid).resolve()
+    if not d.is_dir() or MEDIA not in d.parents:
+        raise HTTPException(404, f"unknown song {sid!r}")
+    return d
+
+
+def _make_generator(sid: str, d: Path):
+    bank_dir = d / "bank"
+    fallback = MockWindowGenerator()
+    if bank_dir.is_dir() and any(bank_dir.glob(f"bank_{sid}_*.npy")):
+        bank = BankWindowGenerator.from_dir(bank_dir, sid, fallback=fallback)
+        if bank.backbones:
+            return ResilientWindowGenerator(bank, fallback), "bank"
+    return fallback, "mock"
+
+
+def _load_session(sid: str) -> EditSession:
+    if sid in _sessions:
+        return _sessions[sid]
+    d = _song_dir(sid)
+    motion_p, beats_p = d / "base_motion.npy", d / "beats.npy"
+    if not motion_p.exists():
+        raise HTTPException(404, f"song {sid!r} has no base_motion.npy")
+    motion = np.load(motion_p).astype(np.float32)
+    beats = np.load(beats_p).astype(np.float32) if beats_p.exists() else None
+    generator, gkind = _make_generator(sid, d)
+    assets = SongAssets(sid=sid, beats=beats, fps=FPS)
+    sess_dir = SESSIONS / sid
+    if (sess_dir / "checkpoints" / "manifest.json").exists():
+        sess = EditSession.load(sess_dir, generator)
+    else:
+        sess = EditSession(assets, motion, generator, directory=str(sess_dir))
+    sess.generator_kind = gkind          # type: ignore[attr-defined]
+    _sessions[sid] = sess
+    return sess
+
+
+def _session_state(sid: str, sess: EditSession) -> dict:
+    head = sess.current()
+    n = int(sess.current_motion().shape[0])
+    return {
+        "sid": sid,
+        "fps": FPS,
+        "n_frames": n,
+        "duration": round(n / FPS, 2),
+        "n_beats": int(len(sess.assets.beats)) if sess.assets.beats is not None else 0,
+        "generator": getattr(sess, "generator_kind", "mock"),
+        "head": head.id if head else None,
+        "metrics": head.metrics if head else {},
+        "timeline": sess.timeline(),
+        "preview_url": f"/api/session/{sid}/media/preview.mp4",
+        "can_undo": sess.store.can_undo(),
+        "can_redo": sess.store.can_redo(),
+    }
+
+
+# --------------------------------------------------------------------------- request models
+class EditBody(BaseModel):
+    a_sec: float
+    b_sec: float
+    instruction: str
+    k: int | None = None
+    max_cycles: int | None = None
+    from_id: str | None = None       # branch from an older checkpoint
+
+
+class RestoreBody(BaseModel):
+    ckpt_id: str
+
+
+# --------------------------------------------------------------------------- routes
+@app.get("/", response_class=HTMLResponse)
+def index() -> HTMLResponse:
+    return HTMLResponse((STATIC / "index.html").read_text(encoding="utf-8"))
+
+
+@app.get("/api/songs")
+def songs() -> dict:
+    if not MEDIA.is_dir():
+        return {"songs": []}
+    out = []
+    for d in sorted(MEDIA.iterdir()):
+        if d.is_dir() and (d / "base_motion.npy").exists():
+            out.append({"sid": d.name, "has_bank": (d / "bank").is_dir()})
+    return {"songs": out}
+
+
+@app.post("/api/session/{sid}")
+def open_session(sid: str) -> dict:
+    return _session_state(sid, _load_session(sid))
+
+
+@app.get("/api/session/{sid}/media/{name}")
+def media(sid: str, name: str) -> FileResponse:
+    d = _song_dir(sid)
+    p = (d / name).resolve()
+    if d not in p.parents or not p.exists():
+        raise HTTPException(404, "not found")
+    return FileResponse(p)
+
+
+def _clamp_window(sess: EditSession, a_sec: float, b_sec: float) -> tuple[int, int]:
+    n = int(sess.current_motion().shape[0])
+    a = int(max(0, min(round(a_sec * FPS), n - 2)))
+    b = int(max(a + 1, min(round(b_sec * FPS), n)))
+    return a, b
+
+
+@app.post("/api/session/{sid}/edit")
+def edit(sid: str, body: EditBody) -> dict:
+    sess = _load_session(sid)
+    a, b = _clamp_window(sess, body.a_sec, body.b_sec)
+    if body.from_id:
+        res = sess.edit_from(body.from_id, a, b, body.instruction,
+                             k=body.k, max_cycles=body.max_cycles)
+    else:
+        res = sess.edit(a, b, body.instruction, k=body.k, max_cycles=body.max_cycles)
+    return {"result": res.summary(), "cycles": res.cycles, "state": _session_state(sid, sess)}
+
+
+@app.post("/api/session/{sid}/undo")
+def undo(sid: str) -> dict:
+    sess = _load_session(sid)
+    sess.undo()
+    return _session_state(sid, sess)
+
+
+@app.post("/api/session/{sid}/redo")
+def redo(sid: str) -> dict:
+    sess = _load_session(sid)
+    sess.redo()
+    return _session_state(sid, sess)
+
+
+@app.post("/api/session/{sid}/restore")
+def restore(sid: str, body: RestoreBody) -> dict:
+    sess = _load_session(sid)
+    sess.restore(body.ckpt_id)
+    return _session_state(sid, sess)
+
+
+@app.get("/api/session/{sid}/timeline")
+def timeline(sid: str) -> dict:
+    sess = _load_session(sid)
+    return {"timeline": sess.timeline(), "head": sess.store.head}
+
+
+@app.websocket("/api/session/{sid}/edit_ws")
+async def edit_ws(ws: WebSocket, sid: str) -> None:
+    """Run an edit in a worker thread while streaming live cycle-progress events to the client."""
+    await ws.accept()
+    try:
+        req = await ws.receive_json()
+        sess = _load_session(sid)
+        a, b = _clamp_window(sess, float(req["a_sec"]), float(req["b_sec"]))
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def progress_cb(ev: dict) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, {"type": "progress", **ev})
+
+        async def run_edit():
+            def _do():
+                if req.get("from_id"):
+                    return sess.edit_from(req["from_id"], a, b, req["instruction"],
+                                          k=req.get("k"), max_cycles=req.get("max_cycles"),
+                                          progress_cb=progress_cb)
+                return sess.edit(a, b, req["instruction"], k=req.get("k"),
+                                 max_cycles=req.get("max_cycles"), progress_cb=progress_cb)
+            res = await loop.run_in_executor(None, _do)
+            await queue.put({"type": "final", "result": res.summary(), "cycles": res.cycles,
+                             "state": _session_state(sid, sess)})
+
+        task = asyncio.create_task(run_edit())
+        while True:
+            ev = await queue.get()
+            await ws.send_json(ev)
+            if ev.get("type") == "final":
+                break
+        await task
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        try:
+            await ws.send_json({"type": "error", "message": str(exc)})
+        except Exception:
+            pass
+    finally:
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+
+if STATIC.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")

@@ -321,8 +321,20 @@ def apply_window_edit(motion: np.ndarray, a: int, b: int, instruction: str,
                       generator: WindowGenerator | None = None, *, beats=None,
                       k: int = 6, max_cycles: int = 3, blend_frames: int = 15,
                       api_key: str | None = None,
-                      goal: EditGoal | None = None) -> WindowEditResult:
-    """Run one windowed NL edit over ``motion[a:b]`` and return the edited full motion + report."""
+                      goal: EditGoal | None = None,
+                      progress_cb=None) -> WindowEditResult:
+    """Run one windowed NL edit over ``motion[a:b]`` and return the edited full motion + report.
+
+    ``progress_cb`` (optional) is called with a small dict for each generated candidate and at each
+    verify step, so a UI can stream live "cycle n/K" progress.
+    """
+    def _emit(event: dict) -> None:
+        if progress_cb is not None:
+            try:
+                progress_cb(event)
+            except Exception:  # noqa: BLE001 - never let UI streaming break the edit
+                pass
+
     motion = np.ascontiguousarray(motion, dtype=np.float32)
     L = int(motion.shape[0])
     a, b = int(a), int(b)
@@ -331,6 +343,7 @@ def apply_window_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     goal = goal or parse_window_instruction(instruction, api_key=api_key)
     wbeats = _window_beats(beats, a, b)
     before = window_metrics(motion[a:b], wbeats)
+    _emit({"phase": "parsed", "goal": goal.to_dict(), "metrics_before": before})
 
     # ---- deterministic geometry ops: no regeneration ----
     if goal.objective in DETERMINISTIC_OBJECTIVES:
@@ -340,6 +353,7 @@ def apply_window_edit(motion: np.ndarray, a: int, b: int, instruction: str,
         ok, fb = _verify(goal, before, after)
         cyc = [{"cycle": 1, "op": goal.objective, "reward": None,
                 "metrics": after}]
+        _emit({"phase": "done", "ok": ok, "metrics_after": after, "feedback": fb})
         return WindowEditResult(ok, goal, (a, b), spliced, before, after,
                                 backbone="none", chosen_seed=None, cycles=cyc, feedback=fb)
 
@@ -349,15 +363,18 @@ def apply_window_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     backbones = ([goal.backbone] if goal.backbone in ("lodge", "edge")
                  else ["edge", "lodge"])
     ctx = {"prefix": motion[max(0, a - blend_frames):a], "suffix": motion[b:b + blend_frames]}
+    total = max_cycles * len(backbones) * k
 
     best = None  # (reward, spliced, after, seed, backbone)
     cycles: list = []
+    done = 0
     for cycle in range(max_cycles):
         etgt = _energy_target(goal.objective, cycle, goal.magnitude)
         seed0 = cycle * k
         for bb in backbones:
             for s in range(seed0, seed0 + k):
                 cand = generator.generate(bb, a, b, s, energy=etgt, beats=wbeats, context=ctx)
+                done += 1
                 if cand is None or np.asarray(cand).shape[0] < 2:
                     continue
                 spliced = splice_window(motion, a, b, np.asarray(cand), blend_frames=blend_frames)
@@ -367,10 +384,16 @@ def apply_window_edit(motion: np.ndarray, a: int, b: int, instruction: str,
                                "metrics": mets})
                 if best is None or reward > best[0]:
                     best = (reward, spliced, mets, s, bb)
+                _emit({"phase": "candidate", "cycle": cycle + 1, "backbone": bb, "seed": s,
+                       "done": done, "total": total, "reward": round(reward, 5),
+                       "metrics": mets, "best_reward": round(best[0], 5)})
         # verify the best-so-far against the goal; stop early if satisfied
         if best is not None:
             ok, fb = _verify(goal, before, best[2])
+            _emit({"phase": "verify", "cycle": cycle + 1, "ok": ok, "feedback": fb,
+                   "metrics_after": best[2]})
             if ok:
+                _emit({"phase": "done", "ok": True, "metrics_after": best[2], "feedback": fb})
                 return WindowEditResult(True, goal, (a, b), best[1], before, best[2],
                                         backbone=best[4], chosen_seed=best[3],
                                         cycles=cycles, feedback=fb)
@@ -379,5 +402,6 @@ def apply_window_edit(motion: np.ndarray, a: int, b: int, instruction: str,
         raise RuntimeError("window generator produced no valid candidates")
     ok, fb = _verify(goal, before, best[2])
     msg = fb if ok else f"could not fully satisfy '{instruction}' after {max_cycles} cycle(s): {fb}"
+    _emit({"phase": "done", "ok": ok, "metrics_after": best[2], "feedback": msg})
     return WindowEditResult(ok, goal, (a, b), best[1], before, best[2],
                             backbone=best[4], chosen_seed=best[3], cycles=cycles, feedback=msg)
