@@ -20,6 +20,7 @@ runs and is tested without torch or a GPU.
 from __future__ import annotations
 
 from agentlodge.editor.checkpoints import Checkpoint, CheckpointStore
+from agentlodge.editor.remote_generator import BankWindowGenerator, ResilientWindowGenerator
 from agentlodge.editor.session import EditSession, SongAssets
 from agentlodge.editor.window_edit import (
     EditGoal,
@@ -34,11 +35,13 @@ from agentlodge.editor.window_edit import (
 )
 
 __all__ = [
+    "BankWindowGenerator",
     "Checkpoint",
     "CheckpointStore",
     "EditGoal",
     "EditSession",
     "MockWindowGenerator",
+    "ResilientWindowGenerator",
     "SongAssets",
     "WindowEditResult",
     "WindowGenerator",
