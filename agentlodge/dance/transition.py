@@ -215,6 +215,110 @@ def blend_onto(prev_tail139: np.ndarray, seg139: np.ndarray, blend_frames: int =
     return seg.numpy().astype(np.float32)
 
 
+def blend_tail_into(seg139: np.ndarray, target_head139: np.ndarray,
+                    blend_frames: int = 15) -> np.ndarray:
+    """Ease the END of ``seg139`` so its last frame matches ``target_head139`` (position + pose).
+
+    The mirror image of :func:`blend_onto`: instead of chaining the segment's start onto a previous
+    motion, this bends only the final ``blend_frames`` of the segment so ``seg[-1]`` lands exactly on
+    ``target_head139`` (the untouched frame that follows the segment), with **zero** change at frame
+    ``n - blend_frames`` (smoothstep ramp 0->1). Used to splice a regenerated window between a fixed
+    prefix and a fixed suffix without modifying either side: the head is chained with ``blend_onto``
+    and the tail is eased onto the suffix's first frame here, so every frame outside the window is
+    preserved byte-for-byte while both seams stay continuous.
+    """
+    torch = _t()
+    seg = torch.from_numpy(np.ascontiguousarray(seg139, dtype=np.float32)).clone()
+    n = seg.shape[0]
+    bf = int(max(0, min(blend_frames, n)))
+    if bf == 0 or n == 0:
+        return seg.numpy().astype(np.float32)
+    tgt = torch.from_numpy(np.ascontiguousarray(target_head139, dtype=np.float32))
+
+    seg_tr = seg[:, _TRANS]
+    seg_q = _quat_from_6d(seg[:, _ROT].reshape(n, NUM_JOINTS, 6))     # (n, 22, 4)
+    tgt_tr = tgt[_TRANS]
+    tgt_q = _quat_from_6d(tgt[_ROT].reshape(NUM_JOINTS, 6))           # (22, 4)
+
+    troff = tgt_tr - seg_tr[-1].clone()                              # (3,)
+    qoff = _qmul(tgt_q, _qinv(seg_q[-1].clone()))                    # (22, 4)
+    for idx in range(bf):
+        f = n - bf + idx
+        k = idx / max(1, bf - 1)
+        w = 3 * k ** 2 - 2 * k ** 3                                  # smoothstep 0 -> 1
+        shifted = _qmul(qoff, seg_q[f])
+        seg_q[f] = _slerp(seg_q[f], shifted, torch.tensor(float(w)).expand(NUM_JOINTS))
+        seg_tr[f] = seg_tr[f] + w * troff
+
+    seg[:, _TRANS] = seg_tr
+    seg[:, _ROT] = _6d_from_quat(seg_q).reshape(n, NUM_JOINTS * 6)
+    return seg.numpy().astype(np.float32)
+
+
+def _orthonormalize6d(r6: np.ndarray) -> np.ndarray:
+    """Re-orthonormalize 6D rotation rows via the module's Gram-Schmidt round-trip."""
+    return _matrix_to_sixd(_sixd_to_matrix(r6))
+
+
+def _ease_rot_toward(window: np.ndarray, ref_frame: np.ndarray, frames, *, head: bool) -> None:
+    """In-place: blend the given ``frames`` of ``window`` rotations toward ``ref_frame`` pose.
+
+    ``head`` True ramps the weight 1->0 across ``frames`` (first frame == ref, easing back to the
+    window's own pose); ``head`` False ramps 0->1 (last frame == ref). 6D rows are linearly blended
+    then re-orthonormalized, an approximate but valid short-seam rotation interpolation (numpy-only,
+    no torch/pytorch3d), so the splice runs and is testable without the heavy rotation backend.
+    """
+    ref = ref_frame[_ROT].reshape(NUM_JOINTS, 6)
+    frames = list(frames)
+    m = len(frames)
+    if m == 0:
+        return
+    for i, f in enumerate(frames):
+        k = i / max(1, m - 1)
+        s = 3 * k ** 2 - 2 * k ** 3                 # smoothstep 0 -> 1
+        wgt = (1.0 - s) if head else s              # head: 1->0, tail: 0->1
+        cur = window[f, _ROT].reshape(NUM_JOINTS, 6)
+        blended = (1.0 - wgt) * cur + wgt * ref
+        window[f, _ROT] = _orthonormalize6d(blended).reshape(NUM_JOINTS * 6)
+
+
+def splice_window(motion139: np.ndarray, a: int, b: int, new_window139: np.ndarray,
+                  blend_frames: int = 15) -> np.ndarray:
+    """Replace frames ``[a, b)`` of ``motion139`` with ``new_window139``, preserving the rest exactly.
+
+    The regenerated window is chained onto the fixed prefix (its start position/pose eased from the
+    last kept frame before ``a``) and eased onto the fixed suffix (its end lands on the first kept
+    frame at ``b``), distributing both corrections *inside* the window over ``blend_frames`` so that
+    **every frame outside ``[a, b)`` is byte-for-byte identical** to the input (high-fidelity edit).
+    If the supplied window length differs from ``b - a`` it is retimed to fit. Pure numpy.
+    """
+    m = np.ascontiguousarray(motion139, dtype=np.float32)
+    L = int(m.shape[0])
+    a, b = int(a), int(b)
+    if not (0 <= a < b <= L):
+        raise ValueError(f"invalid window [{a}, {b}) for motion of length {L}")
+    n = b - a
+    w = np.ascontiguousarray(new_window139, dtype=np.float32)
+    w = retime(w, n) if w.shape[0] != n else w.copy()
+    prefix, suffix = m[:a], m[b:]
+    bf = int(max(0, min(blend_frames, n)))
+
+    if a >= 1:                                       # chain start onto the kept prefix
+        anchor = m[a - 1]
+        w[:, _TRANS] += anchor[_TRANS] - w[0, _TRANS]
+        _ease_rot_toward(w, anchor, range(bf), head=True)
+    if suffix.shape[0] >= 1:                         # ease end onto the kept suffix
+        nxt = suffix[0]
+        resid = nxt[_TRANS] - w[n - 1, _TRANS]
+        for i in range(bf):
+            f = n - bf + i
+            k = i / max(1, bf - 1)
+            w[f, _TRANS] += (3 * k ** 2 - 2 * k ** 3) * resid
+        _ease_rot_toward(w, nxt, range(n - bf, n), head=False)
+
+    return np.concatenate([prefix, w, suffix], axis=0).astype(np.float32)
+
+
 # --------------------------------------------------------------------------- pure-numpy transforms
 # retime / mirror / amplitude_scale operate directly on the AgentLODGE 139 layout using ONLY numpy
 # (no torch/pytorch3d), so they run anywhere and are unit-testable without the heavy rotation

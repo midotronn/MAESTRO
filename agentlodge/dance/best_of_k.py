@@ -36,6 +36,27 @@ def _mean_speed(motion: np.ndarray) -> float:
     return float(np.mean(_kinematic_speed(motion)))
 
 
+# Instruction-aware reward weighting for the interactive editor (agentlodge.editor). Maps a parsed
+# edit objective to best-of-K composite weights + an energy target, so windowed regeneration selects
+# the candidate that best realizes the user's intent ("more energetic" weights the energy term and
+# targets high energy; "more on beat" weights BAS; "calmer" targets low energy).
+_OBJECTIVE_WEIGHTS = {
+    "more_on_beat":   {"w_bas": 0.80, "w_foot": 0.10, "w_energy": 0.10, "target_intensity": None},
+    "more_energetic": {"w_bas": 0.20, "w_foot": 0.10, "w_energy": 0.70, "target_intensity": 1.0},
+    "sharper":        {"w_bas": 0.30, "w_foot": 0.10, "w_energy": 0.60, "target_intensity": 1.0},
+    "calmer":         {"w_bas": 0.20, "w_foot": 0.15, "w_energy": 0.65, "target_intensity": 0.0},
+    "smoother":       {"w_bas": 0.20, "w_foot": 0.35, "w_energy": 0.45, "target_intensity": 0.0},
+}
+
+
+def objective_weights(objective: str) -> dict:
+    """Best-of-K composite weights + energy target for an editor objective (falls back to defaults)."""
+    return dict(_OBJECTIVE_WEIGHTS.get(
+        objective,
+        {"w_bas": _W_BAS, "w_foot": _W_FOOT, "w_energy": _W_ENERGY, "target_intensity": None},
+    ))
+
+
 def score_candidates(motions: Sequence[np.ndarray], music_beat_frames, *,
                      target_intensity: float | None = None, sigma_frames: float = 3.0,
                      w_bas: float = _W_BAS, w_foot: float = _W_FOOT,
