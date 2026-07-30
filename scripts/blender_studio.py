@@ -159,17 +159,95 @@ def attach_follow_spot(spot, target, floor_z, body_size, offset):
     return front_sign * body_size * 2.2, float(floor_z) + body_size * 4.0
 
 
-def configure_render(width, height, samples):
+def _enable_cycles_gpu(scene):
+    """Enable Cycles GPU (OptiX preferred, then CUDA/HIP/ONEAPI). Returns True if a GPU is on."""
+    try:
+        prefs = bpy.context.preferences.addons["cycles"].preferences
+    except Exception:
+        scene.cycles.device = "CPU"
+        return False
+    for dtype in ("OPTIX", "CUDA", "HIP", "ONEAPI"):
+        try:
+            prefs.compute_device_type = dtype
+            prefs.get_devices()
+        except Exception:
+            continue
+        gpus = [d for d in prefs.devices if d.type == dtype]
+        if gpus:
+            for d in prefs.devices:
+                d.use = (d.type == dtype)  # GPU only (skip CPU so it isn't the bottleneck)
+            scene.cycles.device = "GPU"
+            print(f"CYCLES_DEVICE {dtype} x{len(gpus)}")
+            return True
+    scene.cycles.device = "CPU"
+    print("CYCLES_DEVICE CPU (no GPU found)")
+    return False
+
+
+def configure_render(width, height, samples, engine="eevee", denoise=True):
+    """Configure the render engine. ``engine`` is 'eevee' (fast, high-quality raster) or 'cycles'
+    (path-traced GPU, photoreal). Adds AgX tonemapping + full-res output for a crisp result."""
     scene = bpy.context.scene
-    scene.render.engine = "BLENDER_EEVEE_NEXT"
     scene.render.resolution_x = width
     scene.render.resolution_y = height
+    scene.render.resolution_percentage = 100
     scene.render.film_transparent = False
     scene.render.image_settings.file_format = "PNG"
-    ee = scene.eevee
+    scene.render.image_settings.color_mode = "RGB"
+    scene.render.image_settings.color_depth = "8"
+    scene.render.image_settings.compression = 15
+    # nicer, higher-contrast tone mapping (Blender 4.x default is AgX; fall back to Filmic).
     try:
-        ee.taa_render_samples = samples
-        ee.use_shadows = True
-        ee.use_raytracing = True
+        scene.view_settings.view_transform = "AgX"
+        scene.view_settings.look = "AgX - Medium High Contrast"
     except Exception:
-        pass
+        try:
+            scene.view_settings.view_transform = "Filmic"
+        except Exception:
+            pass
+
+    if str(engine).lower() == "cycles":
+        scene.render.engine = "CYCLES"
+        _enable_cycles_gpu(scene)
+        cy = scene.cycles
+        cy.samples = int(samples)
+        try:
+            cy.use_adaptive_sampling = True
+            cy.adaptive_threshold = 0.01
+            cy.adaptive_min_samples = max(16, int(samples) // 8)
+        except Exception:
+            pass
+        cy.use_denoising = bool(denoise)
+        for dn in ("OPTIX", "OPENIMAGEDENOISE"):
+            try:
+                cy.denoiser = dn
+                break
+            except Exception:
+                continue
+        try:
+            cy.max_bounces = 8
+            cy.diffuse_bounces = 4
+            cy.glossy_bounces = 6
+            cy.transmission_bounces = 8
+            scene.render.use_persistent_data = True  # reuse BVH across frames -> much faster
+        except Exception:
+            pass
+    else:
+        scene.render.engine = "BLENDER_EEVEE_NEXT"
+        ee = scene.eevee
+        try:
+            ee.taa_render_samples = int(samples)
+            ee.use_shadows = True
+            ee.use_raytracing = True          # screen-space GI + reflections (metallic robot)
+            try:
+                ee.ray_tracing_options.resolution_scale = "1:1"
+            except Exception:
+                pass
+            for attr, val in (("use_gtao", True), ("use_bloom", False),
+                              ("shadow_ray_count", 2), ("shadow_step_count", 6)):
+                try:
+                    setattr(ee, attr, val)
+                except Exception:
+                    pass
+        except Exception:
+            pass

@@ -10,6 +10,9 @@ BB="$WORKSPACE/blender/blender"
 BS="$A/scripts/blender_render_ybot.py"
 YB="$WORKSPACE/EDGE/SMPL-to-FBX/ybot.fbx"
 MOTION="$1"; OUT="$2"; SID="${3:-}"
+# High-quality defaults (override via env). 1080^2, path-traced Cycles GPU + OptiX denoise.
+RW="${RENDER_W:-1080}"; RH="${RENDER_H:-1080}"; RS="${RENDER_SAMPLES:-96}"
+RENGINE="${RENDER_ENGINE:-cycles}"; RDENOISE="${RENDER_DENOISE:-1}"
 AUDIO_ARG=()
 [ -n "$SID" ] && [ -f "$WORKSPACE/LODGE/data/finedance/music_wav/${SID}.wav" ] && \
   AUDIO_ARG=(--audio "$WORKSPACE/LODGE/data/finedance/music_wav/${SID}.wav")
@@ -17,5 +20,6 @@ __EGL_VENDOR_LIBRARY_FILENAMES=$EGL "$PY" "$A/scripts/render_blender_dance.py" \
   --agentlodge-root "$A" --motion-npy "$MOTION" --output-mp4 "$OUT" \
   --lodge-code-path "$WORKSPACE/LODGE" --blender-bin "$BB" --blender-script "$BS" \
   --character ybot --ybot-fbx "$YB" --color 0.5,0.5,0.52 \
-  "${AUDIO_ARG[@]}" --width 480 --height 480 --samples 12
+  "${AUDIO_ARG[@]}" --width "$RW" --height "$RH" --samples "$RS" \
+  --engine "$RENGINE" --denoise "$RDENOISE"
 echo "RENDER_ONE_DONE $OUT"

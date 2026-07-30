@@ -287,12 +287,13 @@ def _encode_video(frames_dir: Path, work: Path, output_mp4: Path,
     subprocess.run([
         ffmpeg, "-loglevel", "error", "-y", "-framerate", str(fps),
         "-i", str(frames_dir / "frame_%05d.png"),
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(silent),
+        "-c:v", "libx264", "-preset", "slow", "-crf", "16",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(silent),
     ], check=True)
     if audio_path is not None and Path(audio_path).exists():
         subprocess.run([
             ffmpeg, "-loglevel", "error", "-y", "-i", str(silent), "-i", str(audio_path),
-            "-shortest", "-c:v", "copy", "-c:a", "aac", "-q:a", "4", str(output_mp4),
+            "-shortest", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", str(output_mp4),
         ], check=True)
     else:
         shutil.copy(silent, output_mp4)
@@ -313,6 +314,8 @@ def render_ybot_dance(
     align_x: float = 0.0,
     img_size: tuple[int, int] = (720, 720),
     samples: int = 32,
+    engine: str = "eevee",
+    denoise: bool = True,
     fps: int = 30,
 ) -> Path:
     """Render a dance as EDGE's Mixamo Y-Bot robot by posing ybot.fbx's SMPL armature."""
@@ -336,10 +339,13 @@ def render_ybot_dance(
         "--frames-dir", str(frames_dir),
         "--width", str(img_size[0]), "--height", str(img_size[1]),
         "--samples", str(samples),
+        "--engine", str(engine),
+        "--denoise", "1" if denoise else "0",
         "--color", color,
         "--align-x", str(align_x),
     ]
-    logger.info("Rendering Y-Bot in Blender (%dx%d, %d samples)...", *img_size, samples)
+    logger.info("Rendering Y-Bot in Blender (%dx%d, %d samples, %s)...",
+                img_size[0], img_size[1], samples, engine)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(
@@ -370,6 +376,8 @@ def main() -> int:
     parser.add_argument("--width", type=int, default=960)
     parser.add_argument("--height", type=int, default=960)
     parser.add_argument("--samples", type=int, default=64)
+    parser.add_argument("--engine", default="eevee", choices=["eevee", "cycles"])
+    parser.add_argument("--denoise", type=int, default=1)
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -388,6 +396,8 @@ def main() -> int:
             align_x=args.align_x,
             img_size=(args.width, args.height),
             samples=args.samples,
+            engine=args.engine,
+            denoise=bool(args.denoise),
         )
         print(f"Saved Blender dance video to {out} ({out.stat().st_size} bytes)")
         return 0

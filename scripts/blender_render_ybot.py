@@ -50,6 +50,9 @@ def parse_args():
     p.add_argument("--width", type=int, default=720)
     p.add_argument("--height", type=int, default=720)
     p.add_argument("--samples", type=int, default=32)
+    p.add_argument("--engine", default="eevee", choices=["eevee", "cycles"],
+                   help="eevee = fast high-quality raster; cycles = path-traced GPU (photoreal)")
+    p.add_argument("--denoise", type=int, default=1, help="Cycles denoiser on (1) / off (0)")
     p.add_argument("--color", default="0.5,0.5,0.52",
                    help="Robot base colour r,g,b in 0-1")
     p.add_argument("--align-x", type=float, default=0.0,
@@ -259,7 +262,8 @@ def main():
     target.location = (0.0, 0.0, target_z)
     cam.location = (offset[0], offset[1], target_z + offset[2])
     spot.location = (0.0, spot_front, spot_high)
-    studio.configure_render(args.width, args.height, args.samples)
+    studio.configure_render(args.width, args.height, args.samples,
+                            engine=args.engine, denoise=bool(args.denoise))
 
     scene = bpy.context.scene
     frames_dir = args.frames_dir.rstrip("/")
