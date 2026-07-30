@@ -56,10 +56,15 @@ def to_zup(motion139: np.ndarray) -> np.ndarray:
     root orientation will be corrupted (contact channels get swizzled as translation).
 
     Translation is swizzled (x, y, z) -> (x, -z, y); the root joint's global orientation is
-    pre-multiplied by Rx(+90). Local joint rotations (frame-independent) are unchanged.
+    pre-multiplied by Rx(+90). Local joint rotations (frame-independent) are unchanged. Uses
+    pytorch3d when available, else a numerically-identical numpy path (:func:`_to_zup_numpy`) so a
+    candidate bank can be built without torch/pytorch3d.
     """
-    torch = _t()
-    rot6d_to_mat, mat_to_6d, *_ = _pt3d()
+    try:
+        torch = _t()
+        rot6d_to_mat, mat_to_6d, *_ = _pt3d()
+    except Exception:  # noqa: BLE001 - no torch/pytorch3d: use the numpy-equivalent path
+        return _to_zup_numpy(motion139)
     m = motion139.astype(np.float32).copy()
     s = m.shape[0]
     trans = m[:, _TRANS]
@@ -67,6 +72,18 @@ def to_zup(motion139: np.ndarray) -> np.ndarray:
     R = rot6d_to_mat(torch.from_numpy(m[:, _ROT].reshape(s, NUM_JOINTS, 6).copy()).float())
     R[:, 0] = torch.einsum("ij,sjk->sik", torch.from_numpy(_RX90), R[:, 0])
     m[:, _ROT] = mat_to_6d(R).reshape(s, NUM_JOINTS * 6).numpy()
+    return m
+
+
+def _to_zup_numpy(motion139: np.ndarray) -> np.ndarray:
+    """Pure-numpy :func:`to_zup` (identical math via the module's 6D<->matrix helpers)."""
+    m = motion139.astype(np.float32).copy()
+    s = m.shape[0]
+    trans = m[:, _TRANS]
+    m[:, _TRANS] = np.stack([trans[:, 0], -trans[:, 2], trans[:, 1]], axis=1)
+    R = _sixd_to_matrix(m[:, _ROT].reshape(s, NUM_JOINTS, 6))          # (s, 22, 3, 3)
+    R[:, 0] = np.einsum("ij,sjk->sik", _RX90, R[:, 0])
+    m[:, _ROT] = _matrix_to_sixd(R).reshape(s, NUM_JOINTS * 6)
     return m
 
 
