@@ -10,9 +10,11 @@ BB="$WORKSPACE/blender/blender"
 BS="$A/scripts/blender_render_ybot.py"
 YB="$WORKSPACE/EDGE/SMPL-to-FBX/ybot.fbx"
 MOTION="$1"; OUT="$2"; SID="${3:-}"
-# High-quality defaults (override via env). 1080^2, path-traced Cycles GPU + OptiX denoise.
+# High-quality defaults (override via env). 1080^2 EEVEE-Next (raytraced GI/reflections + AgX):
+# reliable + fast on the GPU. Set RENDER_ENGINE=cycles for path-traced photoreal (needs a Blender
+# build with kernels for your GPU arch; Cycles OptiX stalls on Blackwell + Blender 4.2.3).
 RW="${RENDER_W:-1080}"; RH="${RENDER_H:-1080}"; RS="${RENDER_SAMPLES:-96}"
-RENGINE="${RENDER_ENGINE:-cycles}"; RDENOISE="${RENDER_DENOISE:-1}"
+RENGINE="${RENDER_ENGINE:-eevee}"; RDENOISE="${RENDER_DENOISE:-1}"
 AUDIO_ARG=()
 [ -n "$SID" ] && [ -f "$WORKSPACE/LODGE/data/finedance/music_wav/${SID}.wav" ] && \
   AUDIO_ARG=(--audio "$WORKSPACE/LODGE/data/finedance/music_wav/${SID}.wav")
