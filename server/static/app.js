@@ -40,13 +40,19 @@ async function openSession(sid) {
   toast(`Loaded ${sid}: ${st.duration}s, ${st.n_beats} beats, ${st.generator} generator`);
 }
 
-function applyState(st) {
+function applyState(st, opts) {
+  opts = opts || {};
   ST.fps = st.fps; ST.dur = st.duration; ST.nframes = st.n_frames; ST.beats = st.n_beats; ST.head = st.head;
-  $("genkind").textContent = st.generator === "bank" ? "real backbone bank" : "offline mock";
+  const g = st.generator === "bank" ? "real backbone bank" : (st.generator === "remote" ? "live pod generation" : "offline mock");
+  $("genkind").textContent = g;
+  $("genkind").title = st.generator === "bank"
+    ? "Candidates come from a pre-generated bank of real LODGE/EDGE takes. The heavy generation ran once when the bank was built, so edits are instant selection + splice."
+    : (st.generator === "remote" ? "Each edit runs real LODGE/EDGE generation on the pod (slower)."
+       : "No bank found: using the offline synthetic generator.");
   $("undo").disabled = !st.can_undo; $("redo").disabled = !st.can_redo;
   drawBeatsTicks();
   renderHistory(st.timeline);
-  if (st.metrics && st.metrics.window_after) showMetricsFromState(st.metrics);
+  if (!opts.keepMetrics && st.metrics && st.metrics.energy !== undefined) showCurrentMetrics(st.metrics);
 }
 
 // -------------------------------------------------------------- timeline drawing + selection
@@ -123,24 +129,28 @@ function onProgress(ev) {
   if (ev.phase === "parsed") {
     const g = ev.goal; $("goal").innerHTML =
       `<span class="tag ${g.backbone}">${g.backbone}</span> objective: <b>${g.objective.replace(/_/g, " ")}</b>`;
-    $("progtext").textContent = "planning...";
+    $("progtext").textContent = "planning the edit...";
   } else if (ev.phase === "candidate") {
     const p = ev.total ? Math.round((ev.done / ev.total) * 100) : 0;
     $("progbar").style.width = p + "%";
-    $("progtext").textContent = `cycle ${ev.cycle}: querying ${ev.backbone} seed ${ev.seed}  (candidate ${ev.done}/${ev.total}, best reward ${ev.best_reward})`;
+    $("progtext").textContent = `cycle ${ev.cycle} \u00b7 trying ${ev.backbone} take #${ev.seed}  (candidate ${ev.done}/${ev.total}, best so far ${ev.best_reward})`;
   } else if (ev.phase === "verify") {
-    $("progtext").textContent = `verify cycle ${ev.cycle}: ${ev.ok ? "goal met" : "not yet, refining..."} (${ev.feedback})`;
+    $("progtext").textContent = `checked cycle ${ev.cycle}: ${ev.ok ? "goal met \u2714" : "not there yet, refining..."}`;
   }
 }
 
 function onFinal(payload) {
-  const res = payload.result, st = payload.state;
+  const res = payload.result, st = payload.state, ncand = payload.cycles ? payload.cycles.length : 0;
   $("progbar").style.width = "100%";
-  $("progtext").textContent = `done in ${payload.cycles ? payload.cycles.length : 0} candidate evaluations`;
-  const fb = $("feedback"); fb.textContent = (res.ok ? "\u2714 " : "\u26a0 ") + res.feedback;
+  const src = st.generator === "bank" ? "real backbone takes" : (st.generator === "remote" ? "live pod generations" : "candidates");
+  $("progtext").textContent = `evaluated ${ncand} ${src} across ${res.n_cycles || 0} cycle(s)`;
+  const fb = $("feedback");
+  let msg = (res.ok ? "\u2714 " : "\u26a0 ") + res.feedback;
+  if (!res.ok && st.generator === "bank") msg += "  \u2014 the bank has limited takes for this window; a richer bank (more seeds) or live pod mode would search harder.";
+  fb.textContent = msg;
   fb.className = "feedback " + (res.ok ? "ok" : "bad");
+  applyState(st, { keepMetrics: true });          // update history/toolbar but keep the before->after table
   showMetrics(res.metrics_before, res.metrics_after);
-  applyState(st);
   $("apply").disabled = false;
   toast(res.ok ? "Edit applied + checkpointed" : "Best-effort edit checkpointed");
   // NOTE: re-rendering the edited motion to video needs the GPU worker; the preview stays the
@@ -148,6 +158,11 @@ function onFinal(payload) {
 }
 
 // -------------------------------------------------------------- metrics + history
+function metricHeader() {
+  const tr = document.createElement("tr"); tr.className = "mhead";
+  tr.innerHTML = `<td></td><td class="num">before</td><td class="num">after</td><td class="num">change</td>`;
+  return tr;
+}
 function metricRow(k, before, after) {
   const tr = document.createElement("tr");
   const d = (after - before);
@@ -156,21 +171,24 @@ function metricRow(k, before, after) {
   const arrow = Math.abs(d) < 1e-6 ? "" : (d > 0 ? " \u25b2" : " \u25bc");
   tr.innerHTML = `<td>${METRIC_LABELS[k] || k}</td>`
     + `<td class="num">${before.toFixed(3)}</td>`
-    + `<td class="num">\u2192 ${after.toFixed(3)}</td>`
+    + `<td class="num">${after.toFixed(3)}</td>`
     + `<td class="num delta ${cls}">${d >= 0 ? "+" : ""}${d.toFixed(3)}${arrow}</td>`;
   return tr;
 }
 function showMetrics(before, after) {
-  const t = $("metrics"); t.innerHTML = "";
+  const t = $("metrics"); t.innerHTML = ""; t.appendChild(metricHeader());
   ["energy", "bas", "jerk", "foot"].forEach((k) => {
     if (before[k] === undefined) return; t.appendChild(metricRow(k, before[k], after[k]));
   });
 }
-function showMetricsFromState(m) {
-  const t = $("metrics"); t.innerHTML = ""; const wa = m.window_after || {};
-  ["energy", "bas", "jerk", "foot"].forEach((k) => { if (wa[k] === undefined) return;
+function showCurrentMetrics(m) {
+  const t = $("metrics"); t.innerHTML = "";
+  const hr = document.createElement("tr"); hr.className = "mhead";
+  hr.innerHTML = `<td></td><td class="num" colspan="3">whole-dance (current)</td>`;
+  t.appendChild(hr);
+  ["energy", "bas", "jerk", "foot"].forEach((k) => { if (m[k] === undefined) return;
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${METRIC_LABELS[k]}</td><td class="num"></td><td class="num">${wa[k].toFixed(3)}</td><td></td>`;
+    tr.innerHTML = `<td>${METRIC_LABELS[k]}</td><td></td><td class="num">${m[k].toFixed(3)}</td><td></td>`;
     t.appendChild(tr); });
 }
 

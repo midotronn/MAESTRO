@@ -1,0 +1,3 @@
+# local pod connection config (never commit host/port/keys)
+pod.config.ps1
+pod.config.sh

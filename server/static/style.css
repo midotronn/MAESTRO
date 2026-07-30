@@ -75,6 +75,8 @@ video { width: 100%; background: #000; border-radius: 10px; display: block; }
 .metrics { width: 100%; border-collapse: collapse; font-size: 13px; }
 .metrics td { padding: 5px 4px; border-bottom: 1px solid var(--line); }
 .metrics td:first-child { color: var(--muted); }
+.metrics tr.mhead td { color: #7d8590; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .03em; border-bottom: 1px solid var(--line); padding-bottom: 3px; }
 .metrics .delta.up { color: #6fe0a0; } .metrics .delta.down { color: #e0a86f; }
 .metrics .num { font-family: ui-monospace, Consolas, monospace; text-align: right; }
 
