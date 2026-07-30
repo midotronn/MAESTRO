@@ -219,6 +219,8 @@ def main():
         fk = np.load(args.fk_npz)["joints"].astype(np.float64)
     elif "fk_joints" in data.files:
         fk = data["fk_joints"].astype(np.float64)
+    if fk is not None and float(np.abs(fk).max()) < 1e-6:
+        fk = None  # all-zero FK (smplx_neu_J absent) -> use import rotation for Z-up motion
 
     if fk is not None:
         sample = list(range(0, L, max(1, L // 12)))[:12]
