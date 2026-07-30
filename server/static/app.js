@@ -9,6 +9,12 @@ let ST = { sid: null, fps: 30, dur: 0, nframes: 0, beats: 0, head: null, sel: nu
 
 const METRIC_LABELS = { energy: "energy", bas: "beat align (BAS)", jerk: "smoothness (jerk)", foot: "foot contact" };
 const HIGHER_BETTER = { energy: null, bas: true, jerk: false, foot: true }; // null = neutral
+const METRIC_INFO = {
+  energy: "How big and lively the movement is. Measured as the average frame-to-frame change in the body pose (root travel + all joint rotations). Higher = more energetic; there is no 'good' value, it just tells you the intensity.",
+  bas: "Beat Alignment Score (0-1): how well the dance lands on the music's beats. We find each 'motion beat' (a moment the body decelerates into a pose) and score how close it is to the nearest music beat. Higher = tighter to the beat.",
+  jerk: "Smoothness, shown as jerk = the average 3rd derivative of the pose (how abruptly acceleration changes). Lower = smoother, less jittery motion; higher = sharper, snappier.",
+  foot: "Foot-plant consistency (0-1): of the frames a foot is marked on the floor, the fraction where the body is NOT sliding. Higher = less foot-skating (feet stay planted).",
+};
 
 function toast(msg) {
   let t = $("toast"); if (!t) { t = document.createElement("div"); t.id = "toast"; t.className = "toast"; document.body.appendChild(t); }
@@ -43,17 +49,6 @@ async function openSession(sid) {
 function applyState(st, opts) {
   opts = opts || {};
   ST.fps = st.fps; ST.dur = st.duration; ST.nframes = st.n_frames; ST.beats = st.n_beats; ST.head = st.head;
-  const gk = $("genkind");
-  if (st.generator === "bank") {
-    gk.textContent = "real dance"; gk.className = "badge ok";
-    gk.title = "Edits pick from real LODGE + EDGE dance takes generated for this song. The heavy generation was done ahead of time, so editing is instant.";
-  } else if (st.generator === "remote") {
-    gk.textContent = "live pod"; gk.className = "badge ok";
-    gk.title = "Each edit runs real LODGE/EDGE generation on the GPU pod.";
-  } else {
-    gk.textContent = "demo mode"; gk.className = "badge warn";
-    gk.title = "No generated dance for this song yet — using a placeholder generator. Process the song on the GPU pod to get real dance material.";
-  }
   $("undo").disabled = !st.can_undo; $("redo").disabled = !st.can_redo;
   drawBeatsTicks();
   renderHistory(st.timeline);
@@ -199,6 +194,11 @@ function onFinal(payload) {
 }
 
 // -------------------------------------------------------------- metrics + history
+function labelCell(k) {
+  return `<td><span class="mlabel">${METRIC_LABELS[k] || k}`
+    + `<span class="info" tabindex="0" data-tip="${(METRIC_INFO[k] || "").replace(/"/g, "&quot;")}">i</span>`
+    + `</span></td>`;
+}
 function metricHeader() {
   const tr = document.createElement("tr"); tr.className = "mhead";
   tr.innerHTML = `<td></td><td class="num">before</td><td class="num">after</td><td class="num">change</td>`;
@@ -210,7 +210,7 @@ function metricRow(k, before, after) {
   const better = HIGHER_BETTER[k];
   let cls = ""; if (better !== null && Math.abs(d) > 1e-6) cls = ((d > 0) === better) ? "up" : "down";
   const arrow = Math.abs(d) < 1e-6 ? "" : (d > 0 ? " \u25b2" : " \u25bc");
-  tr.innerHTML = `<td>${METRIC_LABELS[k] || k}</td>`
+  tr.innerHTML = labelCell(k)
     + `<td class="num">${before.toFixed(3)}</td>`
     + `<td class="num">${after.toFixed(3)}</td>`
     + `<td class="num delta ${cls}">${d >= 0 ? "+" : ""}${d.toFixed(3)}${arrow}</td>`;
@@ -229,7 +229,7 @@ function showCurrentMetrics(m) {
   t.appendChild(hr);
   ["energy", "bas", "jerk", "foot"].forEach((k) => { if (m[k] === undefined) return;
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${METRIC_LABELS[k]}</td><td></td><td class="num">${m[k].toFixed(3)}</td><td></td>`;
+    tr.innerHTML = labelCell(k) + `<td></td><td class="num">${m[k].toFixed(3)}</td><td></td>`;
     t.appendChild(tr); });
 }
 
