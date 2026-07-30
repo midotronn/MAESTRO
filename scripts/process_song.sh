@@ -43,6 +43,12 @@ echo "### [1/6] preprocess (LODGE feats + EDGE jukebox slices)"
 echo "### [2/6] best-of-K generation + storyboard"
 "$PY" "$GEN" "$SID" || fail "generation failed"
 if [ -n "${RECAP:-}" ]; then echo "### [2b] recap alignment"; "$PY" "$RECAP" "$SID" || true; fi
+echo "### [2c] resolve hand-through-body self-penetration"
+PEN="$(find_script resolve_penetration.py || true)"
+if [ -n "${PEN:-}" ]; then
+  "$PY" "$PEN" "fd_${SID}_STORY_bestofk.npy" "fd_${SID}_STORY_bestofk.npy" \
+    --radius 0.12 --margin 0.03 --max-deg 30 || echo "  (penetration cleanup skipped)"
+fi
 echo "### [3/6] candidate bank (K=$K real seeded takes)"
 AGENTLODGE_BANK_K="$K" "$PY" "$BANK" "$SID" || fail "bank build failed"
 
