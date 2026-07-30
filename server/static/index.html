@@ -21,6 +21,8 @@
         <span>Song</span>
         <select id="song"></select>
       </label>
+      <button id="uploadBtn" class="ghost-btn" title="Upload your own song (processed on the GPU pod)">＋ Upload</button>
+      <input type="file" id="uploadInput" accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" hidden />
       <span id="genkind" class="badge">—</span>
       <div class="hist-btns">
         <button id="undo" class="icon-btn" title="Undo" disabled>↶</button>
@@ -58,7 +60,6 @@
                placeholder="Describe the change…  e.g. make this calmer / more energetic / more on beat" />
         <button id="apply" class="apply">Apply edit</button>
       </div>
-      <div class="chips" id="chips"></div>
     </section>
 
     <!-- right: progress · metrics · history -->

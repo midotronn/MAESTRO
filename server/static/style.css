@@ -45,6 +45,13 @@ select {
   font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
   background: rgba(53,208,127,.12); color: #9fe9c4; border: 1px solid rgba(53,208,127,.3);
 }
+.badge.ok { background: rgba(53,208,127,.12); color: #9fe9c4; border-color: rgba(53,208,127,.3); }
+.badge.warn { background: rgba(240,180,106,.12); color: var(--warn); border-color: rgba(240,180,106,.35); }
+.ghost-btn {
+  background: var(--card2); border: 1px solid var(--line2); border-radius: 9px; padding: 7px 12px;
+  cursor: pointer; font-size: 13px; color: var(--text); transition: .12s;
+}
+.ghost-btn:hover { border-color: var(--accent); color: var(--accent); }
 .hist-btns { display: flex; gap: 6px; }
 .icon-btn {
   width: 34px; height: 34px; border-radius: 9px; background: var(--card2); border: 1px solid var(--line2);

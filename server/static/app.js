@@ -20,15 +20,15 @@ async function init() {
   const { songs } = await api("/api/songs");
   const sel = $("song");
   sel.innerHTML = "";
-  songs.forEach((s) => { const o = document.createElement("option"); o.value = s.sid; o.textContent = s.sid + (s.has_bank ? "  (bank)" : ""); sel.appendChild(o); });
+  songs.forEach((s) => { const o = document.createElement("option"); o.value = s.sid; o.textContent = s.name || s.sid; sel.appendChild(o); });
   sel.onchange = () => openSession(sel.value);
   if (songs.length) await openSession(songs[0].sid);
   wireTimeline();
+  wireUpload();
   $("apply").onclick = runEdit;
   $("undo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/undo`, { method: "POST" }));
   $("redo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/redo`, { method: "POST" }));
   $("instruction").addEventListener("keydown", (e) => { if (e.key === "Enter") runEdit(); });
-  renderChips();
 }
 
 async function openSession(sid) {
@@ -43,12 +43,17 @@ async function openSession(sid) {
 function applyState(st, opts) {
   opts = opts || {};
   ST.fps = st.fps; ST.dur = st.duration; ST.nframes = st.n_frames; ST.beats = st.n_beats; ST.head = st.head;
-  const g = st.generator === "bank" ? "real backbone bank" : (st.generator === "remote" ? "live pod generation" : "offline mock");
-  $("genkind").textContent = g;
-  $("genkind").title = st.generator === "bank"
-    ? "Candidates come from a pre-generated bank of real LODGE/EDGE takes. The heavy generation ran once when the bank was built, so edits are instant selection + splice."
-    : (st.generator === "remote" ? "Each edit runs real LODGE/EDGE generation on the pod (slower)."
-       : "No bank found: using the offline synthetic generator.");
+  const gk = $("genkind");
+  if (st.generator === "bank") {
+    gk.textContent = "real dance"; gk.className = "badge ok";
+    gk.title = "Edits pick from real LODGE + EDGE dance takes generated for this song. The heavy generation was done ahead of time, so editing is instant.";
+  } else if (st.generator === "remote") {
+    gk.textContent = "live pod"; gk.className = "badge ok";
+    gk.title = "Each edit runs real LODGE/EDGE generation on the GPU pod.";
+  } else {
+    gk.textContent = "demo mode"; gk.className = "badge warn";
+    gk.title = "No generated dance for this song yet — using a placeholder generator. Process the song on the GPU pod to get real dance material.";
+  }
   $("undo").disabled = !st.can_undo; $("redo").disabled = !st.can_redo;
   drawBeatsTicks();
   renderHistory(st.timeline);
@@ -88,12 +93,48 @@ function wireTimeline() {
 }
 
 // -------------------------------------------------------------- edit (WebSocket w/ live progress)
-function renderChips() {
-  const ex = ["make this more energetic", "make this calmer", "tighten this to the beat",
-    "make this smoother", "make this sharper", "reverse this section", "mirror this"];
-  const c = $("chips"); c.innerHTML = "";
-  ex.forEach((t) => { const s = document.createElement("span"); s.className = "chip"; s.textContent = t;
-    s.onclick = () => { $("instruction").value = t; }; c.appendChild(s); });
+// -------------------------------------------------------------- song upload (processed on the pod)
+function wireUpload() {
+  const btn = $("uploadBtn"), input = $("uploadInput");
+  if (!btn || !input) return;
+  btn.onclick = () => input.click();
+  input.onchange = async () => {
+    const f = input.files && input.files[0];
+    input.value = "";
+    if (!f) return;
+    const fd = new FormData(); fd.append("file", f);
+    toast(`Uploading ${f.name}…`);
+    let job;
+    try { job = await (await fetch("/api/upload", { method: "POST", body: fd })).json(); }
+    catch (e) { toast("Upload failed: " + e.message); return; }
+    if (job.error) { toast(job.error); return; }
+    pollJob(job.sid, f.name);
+  };
+}
+
+function pollJob(sid, name) {
+  const goal = $("goal"), pt = $("progtext"), pb = $("progbar"), fb = $("feedback");
+  fb.textContent = ""; fb.className = "feedback";
+  goal.innerHTML = `<b>Processing “${name}”</b> on the GPU pod`;
+  pb.style.width = "8%"; pt.textContent = "queued…";
+  const iv = setInterval(async () => {
+    let j; try { j = await api(`/api/jobs/${sid}`); } catch { return; }
+    pb.style.width = (j.progress || 10) + "%";
+    pt.textContent = j.message || j.status;
+    if (j.status === "done") {
+      clearInterval(iv); pb.style.width = "100%";
+      fb.textContent = "\u2714 Ready"; fb.className = "feedback ok";
+      const { songs } = await api("/api/songs");
+      const sel = $("song"); sel.innerHTML = "";
+      songs.forEach((s) => { const o = document.createElement("option"); o.value = s.sid;
+        o.textContent = s.name || s.sid; sel.appendChild(o); });
+      sel.value = sid; await openSession(sid);
+      toast(`“${name}” is ready`);
+    } else if (j.status === "error") {
+      clearInterval(iv); pb.style.width = "0%";
+      fb.textContent = "\u26a0 " + (j.message || "processing failed"); fb.className = "feedback bad";
+    }
+  }, 2500);
 }
 
 function runEdit() {

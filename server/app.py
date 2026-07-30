@@ -24,11 +24,13 @@ Run:  uvicorn server.app:app --host 127.0.0.1 --port 8000
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import shutil
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -36,6 +38,7 @@ from pydantic import BaseModel
 from agentlodge.editor.remote_generator import BankWindowGenerator, ResilientWindowGenerator
 from agentlodge.editor.session import EditSession, SongAssets
 from agentlodge.editor.window_edit import MockWindowGenerator
+from server import processing
 
 HERE = Path(__file__).resolve().parent
 MEDIA = HERE / "media"
@@ -125,6 +128,16 @@ def index() -> HTMLResponse:
     return HTMLResponse((STATIC / "index.html").read_text(encoding="utf-8"))
 
 
+def _display_name(d: Path) -> str:
+    meta = d / "meta.json"
+    if meta.exists():
+        try:
+            return str(json.loads(meta.read_text()).get("name") or d.name)
+        except Exception:
+            pass
+    return d.name
+
+
 @app.get("/api/songs")
 def songs() -> dict:
     if not MEDIA.is_dir():
@@ -132,8 +145,48 @@ def songs() -> dict:
     out = []
     for d in sorted(MEDIA.iterdir()):
         if d.is_dir() and (d / "base_motion.npy").exists():
-            out.append({"sid": d.name, "has_bank": (d / "bank").is_dir()})
+            out.append({"sid": d.name, "name": _display_name(d), "has_bank": (d / "bank").is_dir()})
     return {"songs": out}
+
+
+@app.post("/api/upload")
+async def upload(file: UploadFile = File(...)) -> dict:
+    """Accept an audio file, then process it into a dance on the GPU pod (background job)."""
+    name = file.filename or "song"
+    if not any(name.lower().endswith(e) for e in (".wav", ".mp3", ".m4a", ".flac", ".ogg")):
+        raise HTTPException(400, "please upload an audio file (.wav/.mp3/.m4a/.flac/.ogg)")
+    sid = processing.slugify(name)
+    d = (MEDIA / sid)
+    d.mkdir(parents=True, exist_ok=True)
+    src = d / ("source" + Path(name).suffix.lower())
+    with open(src, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    wav = _ensure_wav(src)
+    processing.start_processing(sid, wav, d, Path(name).stem)
+    return {"sid": sid, "name": Path(name).stem, "status": "queued"}
+
+
+def _ensure_wav(src: Path) -> Path:
+    """Return a .wav for the upload (transcode non-wav with imageio-ffmpeg if needed)."""
+    if src.suffix.lower() == ".wav":
+        return src
+    out = src.with_suffix(".wav")
+    try:
+        import imageio_ffmpeg
+        ff = imageio_ffmpeg.get_ffmpeg_exe()
+        import subprocess
+        subprocess.run([ff, "-y", "-i", str(src), "-ar", "22050", "-ac", "1", str(out)],
+                       capture_output=True, timeout=120)
+        if out.exists():
+            return out
+    except Exception:
+        pass
+    return src
+
+
+@app.get("/api/jobs/{sid}")
+def job_status(sid: str) -> dict:
+    return processing.get_job(sid)
 
 
 @app.post("/api/session/{sid}")
