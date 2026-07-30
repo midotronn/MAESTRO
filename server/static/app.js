@@ -49,10 +49,24 @@ async function openSession(sid) {
 function applyState(st, opts) {
   opts = opts || {};
   ST.fps = st.fps; ST.dur = st.duration; ST.nframes = st.n_frames; ST.beats = st.n_beats; ST.head = st.head;
+  ST.generator = st.generator;
+  setGenBadge(st.generator);
   $("undo").disabled = !st.can_undo; $("redo").disabled = !st.can_redo;
   drawBeatsTicks();
   renderHistory(st.timeline);
   if (!opts.keepMetrics && st.metrics && st.metrics.energy !== undefined) showCurrentMetrics(st.metrics);
+}
+
+const GEN_INFO = {
+  live: ["live pod", "Live pod mode: every new seed runs a fresh LODGE/EDGE diffusion sample on the GPU pod (minutes per new take), so edits search an unbounded space. Falls back to the local bank if the pod can't answer."],
+  bank: ["bank", "Editing selects from a pre-generated bank of real LODGE/EDGE takes for this song. Instant, and works with the pod switched off, but only as diverse as the number of cached seeds."],
+  mock: ["offline demo", "No real backbone takes for this song yet — using the offline stand-in generator. Connect a GPU pod (bank or live mode) for real search."],
+};
+function setGenBadge(kind) {
+  const el = $("genbadge"); if (!el) return;
+  const [label, tip] = GEN_INFO[kind] || GEN_INFO.mock;
+  el.textContent = label; el.title = tip;
+  el.className = "genbadge " + (kind || "mock");
 }
 
 // -------------------------------------------------------------- timeline drawing + selection
@@ -178,11 +192,19 @@ function onProgress(ev) {
 function onFinal(payload) {
   const res = payload.result, st = payload.state, ncand = payload.cycles ? payload.cycles.length : 0;
   $("progbar").style.width = "100%";
-  const src = st.generator === "bank" ? "real backbone takes" : (st.generator === "remote" ? "live pod generations" : "candidates");
+  const src = st.generator === "bank" ? "real backbone takes"
+    : (st.generator === "live" ? "live pod generations" : "candidates");
   $("progtext").textContent = `evaluated ${ncand} ${src} across ${res.n_cycles || 0} cycle(s)`;
   const fb = $("feedback");
   let msg = (res.ok ? "\u2714 " : "\u26a0 ") + res.feedback;
-  if (!res.ok && st.generator === "bank") msg += "  \u2014 the bank has limited takes for this window; a richer bank (more seeds) or live pod mode would search harder.";
+  if (!res.ok) {
+    if (st.generator === "live")
+      msg += "  \u2014 the pod already searched fresh takes; try a wider window, rephrase the instruction, or raise AGENTLODGE_LIVE_CYCLES for a deeper search.";
+    else if (st.generator === "bank")
+      msg += "  \u2014 the local bank has limited takes for this window. Enable live pod mode (AGENTLODGE_LIVE=1 with a generation pod) or build a richer bank to search harder.";
+    else
+      msg += "  \u2014 this is the offline demo generator; connect a GPU pod (bank or live mode) for a real search.";
+  }
   fb.textContent = msg;
   fb.className = "feedback " + (res.ok ? "ok" : "bad");
   applyState(st, { keepMetrics: true });          // update history/toolbar but keep the before->after table

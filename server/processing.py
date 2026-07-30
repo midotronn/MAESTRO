@@ -89,6 +89,96 @@ def _scp_from(cfg: PodConfig, remote: str, local: str, timeout: int = 300) -> su
                           capture_output=True, text=True, timeout=timeout)
 
 
+# --------------------------------------------------------------------------- live take provider
+class PodTakeProvider:
+    """Fetch a full LODGE/EDGE take for ``(backbone, seed)`` from the GPU pod (live pod mode).
+
+    Wired as the ``take_provider`` of
+    :class:`~agentlodge.editor.remote_generator.LiveWindowGenerator`. Each call returns a full Z-up
+    139 take (or ``None`` on any failure, so the generator can fall back). Results are cached in the
+    song's local ``bank/`` directory using the candidate-bank naming, so repeated seeds are served
+    from disk and the persistent bank grows as a side effect of live editing.
+
+    The pod-side generator (``scripts/gen_take.py``) is uploaded lazily on first use.
+    """
+
+    def __init__(self, sid: str, bank_dir: Path, cfg: PodConfig | None = None, *,
+                 gen_timeout: int = 60 * 20):
+        self.sid = sid
+        self.bank_dir = Path(bank_dir)
+        self.bank_dir.mkdir(parents=True, exist_ok=True)
+        self.cfg = cfg or pod_config()
+        self.gen_timeout = int(gen_timeout)
+        self._script_shipped = False
+
+    # -- helpers ------------------------------------------------------------
+    def _local_path(self, backbone: str, seed: int) -> Path:
+        return self.bank_dir / f"bank_{self.sid}_{backbone}_seed{seed}.npy"
+
+    def _ensure_script(self) -> bool:
+        if self._script_shipped:
+            return True
+        ws = self.cfg.ws
+        if _ssh(self.cfg, f"mkdir -p {ws}/AgentLODGE/scripts", timeout=30).returncode != 0:
+            return False
+        r = _scp_to(self.cfg, str(REPO / "scripts" / "gen_take.py"),
+                    f"{ws}/AgentLODGE/scripts/gen_take.py")
+        if r.returncode != 0:
+            return False
+        _ssh(self.cfg, f"sed -i 's/\\r$//' {ws}/AgentLODGE/scripts/gen_take.py", timeout=30)
+        self._script_shipped = True
+        return True
+
+    # -- take_provider callable --------------------------------------------
+    def __call__(self, backbone: str, seed: int):
+        import numpy as np
+
+        local = self._local_path(backbone, int(seed))
+        if local.exists():                                   # already have it (bank or prior live pull)
+            try:
+                return np.load(local).astype(np.float32)
+            except Exception:                                # noqa: BLE001 - corrupt cache: regenerate
+                local.unlink(missing_ok=True)
+
+        if not self.cfg.host:
+            return None
+        try:
+            if not self._ensure_script():
+                return None
+            ws = self.cfg.ws
+            run = _ssh(self.cfg,
+                       f"cd {ws}/AgentLODGE && WORKSPACE={ws} "
+                       f"{_venv_python(self.cfg)} scripts/gen_take.py {self.sid} {backbone} {int(seed)}",
+                       timeout=self.gen_timeout)
+            remote = _parse_take_path(run.stdout)
+            if remote is None:
+                return None
+            if _scp_from(self.cfg, remote, str(local), timeout=300).returncode != 0:
+                return None
+            return np.load(local).astype(np.float32)
+        except subprocess.TimeoutExpired:
+            return None
+        except Exception:                                    # noqa: BLE001 - never break the edit
+            return None
+
+
+def _venv_python(cfg: PodConfig) -> str:
+    """Prefer the pod's generation venv python if the env names one, else plain ``python``."""
+    return os.environ.get("AGENTLODGE_POD_PYTHON", "python")
+
+
+def _parse_take_path(stdout: str) -> str | None:
+    """Extract the take path from ``TAKE_DONE <path> <n>`` / ``TAKE_CACHED <path>`` output."""
+    for line in reversed((stdout or "").splitlines()):
+        line = line.strip()
+        if line.startswith(("TAKE_DONE ", "TAKE_CACHED ")):
+            parts = line.split()
+            if len(parts) >= 2:
+                return parts[1]
+    return None
+
+
+
 # --------------------------------------------------------------------------- pipeline
 def start_processing(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> None:
     _set(sid, status="queued", message="queued", progress=5, name=display_name)

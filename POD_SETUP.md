@@ -62,10 +62,41 @@ uvicorn server.app:app --host 127.0.0.1 --port 8000
 # http://127.0.0.1:8000  (auto-loads the bank from server/media/<sid>/bank/)
 ```
 
-## Why edits are instant (and how to make generation run live)
+## Why edits are instant — and how to switch on **live pod mode**
 
 By default the editor does **best-of-K selection over a pre-generated bank** — real LODGE/EDGE
-material, but generated ahead of time (step 3), so editing is a fast select + splice. If you want
-each edit to run backbone generation **live** on the pod (slower, one generation per seed per
-cycle), that path plugs in through the same `WindowGenerator` protocol
-(`agentlodge/editor/remote_generator.py`); wire a live remote generator and pass it to the session.
+material, but generated ahead of time (step 3), so editing is a fast select + splice that works even
+with the pod switched off. Its only limit is variety: an edit can only pick from the seeds you baked.
+
+**Live pod mode** removes that ceiling: instead of a fixed bank, every unseen seed runs a *fresh*
+LODGE/EDGE diffusion sample **on the pod, on demand**, so the search space is unbounded. It plugs in
+through the same `WindowGenerator` protocol and degrades gracefully — if the pod can't produce a take
+(unreachable, or the song isn't preprocessed for generation) it falls back to the local bank, then to
+the offline mock, so the UI never breaks.
+
+### Requirements
+Live mode needs a **generation-provisioned** pod, *not* a render-only one:
+- CUDA torch (`setup_pod.sh` with the default `AGENTLODGE_TORCH_INDEX=cu128`, **not** `cpu`),
+- the LODGE + EDGE checkpoints (`runpod_bootstrap.sh`), and
+- the song preprocessed for regen: `lodge_fd_<sid>_feats.npy`, `edge<sid>_slices.npy`, and
+  `LODGE/data/finedance/music_wav/<sid>.wav` present in `/workspace` (a byproduct of step 3 / an
+  upload). Seed 0 also reuses `<lodge|edge>_fd_<sid>_full.npy` when present.
+
+### Turn it on
+```powershell
+# point at the pod (steps 1-2 above), then:
+$env:AGENTLODGE_LIVE="1"                 # enable live pod mode
+$env:AGENTLODGE_POD_PYTHON="/root/al_venv/bin/python"   # pod venv python (optional; default: python)
+# optional search budget (each new seed is minutes of GPU):
+$env:AGENTLODGE_LIVE_K="2"; $env:AGENTLODGE_LIVE_CYCLES="2"
+uvicorn server.app:app --host 127.0.0.1 --port 8000
+```
+The header badge shows **LIVE POD** when it is active. Each new seed calls `scripts/gen_take.py <sid>
+<lodge|edge> <seed>` on the pod (shipped automatically), which generates one take, converts it to the
+Z-up 139 space, and caches it as `bank_<sid>_<bb>_seed<n>.npy`; the client scps it back into
+`server/media/<sid>/bank/`, so **live editing also grows your bank** for next time. Expect roughly
+`AGENTLODGE_LIVE_K x AGENTLODGE_LIVE_CYCLES` new seeds per backbone per edit, a few minutes each.
+
+> Prefer the bank for quick, offline iteration; switch on live mode when an edit plateaus and you want
+> the pod to search harder. Both use the identical reward + splice path, so results are comparable.
+

@@ -35,7 +35,11 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agentlodge.editor.remote_generator import BankWindowGenerator, ResilientWindowGenerator
+from agentlodge.editor.remote_generator import (
+    BankWindowGenerator,
+    LiveWindowGenerator,
+    ResilientWindowGenerator,
+)
 from agentlodge.editor.session import EditSession, SongAssets
 from agentlodge.editor.window_edit import MockWindowGenerator
 from server import processing
@@ -58,7 +62,8 @@ def _song_dir(sid: str) -> Path:
     return d
 
 
-def _make_generator(sid: str, d: Path):
+def _bank_or_mock(sid: str, d: Path):
+    """The offline generator: real candidate bank if present (mock-backed), else pure mock."""
     bank_dir = d / "bank"
     fallback = MockWindowGenerator()
     if bank_dir.is_dir() and any(bank_dir.glob(f"bank_{sid}_*.npy")):
@@ -66,6 +71,32 @@ def _make_generator(sid: str, d: Path):
         if bank.backbones:
             return ResilientWindowGenerator(bank, fallback), "bank"
     return fallback, "mock"
+
+
+def _live_enabled() -> bool:
+    return os.environ.get("AGENTLODGE_LIVE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _make_generator(sid: str, d: Path):
+    """Pick the window generator for a song.
+
+    Live pod mode (``AGENTLODGE_LIVE=1`` + ``AGENTLODGE_POD_HOST`` set) queries LODGE/EDGE on the GPU
+    pod on demand for an unbounded search, falling back to the local candidate bank (then the offline
+    mock) whenever the pod can't produce a take -- so the UI never breaks. Otherwise we use the local
+    bank if present, else the mock.
+    """
+    offline, offline_kind = _bank_or_mock(sid, d)
+    if _live_enabled() and processing.pod_config().host:
+        provider = processing.PodTakeProvider(sid, d / "bank")
+        return LiveWindowGenerator(provider, fallback=offline), "live"
+    return offline, offline_kind
+
+
+def _live_edit_budget() -> tuple[int, int]:
+    """(k, max_cycles) for live sessions -- small, because each new seed is minutes of GPU."""
+    k = int(os.environ.get("AGENTLODGE_LIVE_K", "2"))
+    cycles = int(os.environ.get("AGENTLODGE_LIVE_CYCLES", "2"))
+    return max(1, k), max(1, cycles)
 
 
 def _load_session(sid: str) -> EditSession:
@@ -85,6 +116,8 @@ def _load_session(sid: str) -> EditSession:
     else:
         sess = EditSession(assets, motion, generator, directory=str(sess_dir))
     sess.generator_kind = gkind          # type: ignore[attr-defined]
+    if gkind == "live":                  # each new seed is real GPU: search fewer, deeper
+        sess.k, sess.max_cycles = _live_edit_budget()
     _sessions[sid] = sess
     return sess
 
