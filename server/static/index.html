@@ -3,67 +3,86 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>AgentLODGE - Interactive Dance Editor</title>
+<title>AgentLODGE — Dance Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-<header>
-  <h1>AgentLODGE <span class="sub">interactive dance editor</span></h1>
-  <div class="toolbar">
-    <label>Song
-      <select id="song"></select>
-    </label>
-    <span id="genkind" class="pill" title="candidate source"></span>
-    <button id="undo" disabled>&#8630; Undo</button>
-    <button id="redo" disabled>Redo &#8631;</button>
-  </div>
-</header>
-
-<main>
-  <section class="stage">
-    <video id="video" controls preload="auto"></video>
-
-    <div class="timeline" id="timeline">
-      <div class="beats" id="beats"></div>
-      <div class="selection" id="selection"></div>
-      <div class="playhead" id="playhead"></div>
-      <div class="ticks" id="ticks"></div>
+<div class="app">
+  <!-- ─────────────── top bar ─────────────── -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◈</span>
+      <span class="brand-name">AgentLODGE</span>
+      <span class="brand-sub">dance editor</span>
     </div>
-    <div class="hint">Drag on the bar to select the section you want to edit. The shaded band is the
-      edit window.</div>
-
-    <div class="editbar">
-      <div class="win">window
-        <input type="number" id="aSec" step="0.1" min="0" /> s to
-        <input type="number" id="bSec" step="0.1" min="0" /> s
+    <div class="tools">
+      <label class="song">
+        <span>Song</span>
+        <select id="song"></select>
+      </label>
+      <span id="genkind" class="badge">—</span>
+      <div class="hist-btns">
+        <button id="undo" class="icon-btn" title="Undo" disabled>↶</button>
+        <button id="redo" class="icon-btn" title="Redo" disabled>↷</button>
       </div>
-      <input type="text" id="instruction" placeholder="e.g. make this more energetic / more on beat / calmer / smoother / reverse this" />
-      <button id="apply" class="primary">Apply edit</button>
     </div>
-    <div class="chips" id="chips"></div>
-  </section>
+  </header>
 
-  <aside class="side">
-    <div class="panel">
-      <h2>Edit progress</h2>
-      <div id="goal" class="goal"></div>
-      <div class="progwrap"><div id="progbar" class="progbar"></div></div>
-      <div id="progtext" class="mono small"></div>
-      <div id="feedback" class="feedback"></div>
-    </div>
+  <!-- ─────────────── main ─────────────── -->
+  <main class="grid">
+    <!-- left: viewer + timeline + prompt -->
+    <section class="stage-col">
+      <div class="viewer">
+        <video id="video" playsinline preload="auto"></video>
+        <span class="viewer-tag">preview · base take</span>
+      </div>
 
-    <div class="panel">
-      <h2>Window metrics <span class="small">(before &#8594; after)</span></h2>
-      <table id="metrics" class="metrics"></table>
-    </div>
+      <div class="tl-wrap">
+        <div class="timeline" id="timeline">
+          <div class="beats" id="beats"></div>
+          <div class="selection" id="selection"></div>
+          <div class="playhead" id="playhead"></div>
+          <div class="ticks" id="ticks"></div>
+        </div>
+        <div class="tl-hint">Drag across the bar to pick the section to edit · the shaded band is your window</div>
+      </div>
 
-    <div class="panel">
-      <h2>History</h2>
-      <ol id="history" class="history"></ol>
-    </div>
-  </aside>
-</main>
+      <div class="prompt">
+        <div class="win">
+          <span>window</span>
+          <input type="number" id="aSec" step="0.1" min="0" /><i>–</i>
+          <input type="number" id="bSec" step="0.1" min="0" /><span>s</span>
+        </div>
+        <input type="text" id="instruction" class="instr"
+               placeholder="Describe the change…  e.g. make this calmer / more energetic / more on beat" />
+        <button id="apply" class="apply">Apply edit</button>
+      </div>
+      <div class="chips" id="chips"></div>
+    </section>
 
+    <!-- right: progress · metrics · history -->
+    <aside class="side-col">
+      <div class="card">
+        <div class="card-h"><span class="dot-h"></span>Edit progress</div>
+        <div id="goal" class="goal muted">Select a window and describe an edit to begin.</div>
+        <div class="progwrap"><div id="progbar" class="progbar"></div></div>
+        <div id="progtext" class="mono tiny muted"></div>
+        <div id="feedback" class="feedback"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-h">Window metrics</div>
+        <table id="metrics" class="metrics"></table>
+      </div>
+
+      <div class="card grow">
+        <div class="card-h">History</div>
+        <ol id="history" class="history"></ol>
+      </div>
+    </aside>
+  </main>
+</div>
 <script src="/static/app.js"></script>
 </body>
 </html>

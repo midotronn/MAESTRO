@@ -197,9 +197,10 @@ function renderHistory(timeline) {
   (timeline || []).slice().reverse().forEach((c) => {
     const li = document.createElement("li"); if (c.is_head) li.className = "head";
     const ed = c.edit || {};
-    const badge = ed.objective ? `<span class="badge ${ed.ok === false ? "bad" : ""}">${ed.objective.replace(/_/g, " ")}</span>` : "";
+    const badge = ed.objective ? `<span class="badge2 ${ed.ok === false ? "bad" : ""}">${ed.objective.replace(/_/g, " ")}</span>` : "";
     const win = ed.window ? `<small>${(ed.window[0] / ST.fps).toFixed(0)}-${(ed.window[1] / ST.fps).toFixed(0)}s</small>` : "";
-    li.innerHTML = `<span class="dot"></span><span class="lbl">${c.label || "original"} ${win}</span>${badge}`;
+    const label = c.label ? c.label.replace(/\s*\[[^\]]*\]/, "").replace(/_/g, " ") : "original";
+    li.innerHTML = `<span class="dot"></span><span class="lbl">${label}${win}</span>${badge}`;
     li.onclick = async () => { applyState(await api(`/api/session/${ST.sid}/restore`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ckpt_id: c.id }) }));
       toast("Rolled back to: " + (c.label || "original")); };
