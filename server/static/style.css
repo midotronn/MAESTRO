@@ -105,22 +105,6 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
 }
 .render-status.ok { color: var(--ok); border-color: rgba(53,208,127,.4); }
 .render-status.bad { color: var(--warn); border-color: rgba(240,180,106,.4); }
-.skel3d { position: absolute; inset: 0; width: 100%; height: 100%; }
-.skel3d canvas { display: block; }
-.view-toggle { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 6;
-  display: flex; gap: 2px; background: rgba(0,0,0,.5); border: 1px solid var(--line); border-radius: 8px;
-  padding: 2px; backdrop-filter: blur(4px); }
-.vt-btn { font-size: 11px; font-weight: 600; color: var(--muted); background: none; border: none;
-  padding: 4px 12px; border-radius: 6px; cursor: pointer; }
-.vt-btn.active { color: #06210f; background: var(--accent); }
-.vt-btn:disabled { color: var(--faint); cursor: default; }
-.skel-play { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 6;
-  display: flex; align-items: center; gap: 10px; width: min(70%, 520px);
-  background: rgba(0,0,0,.55); border: 1px solid var(--line); border-radius: 999px;
-  padding: 6px 14px; backdrop-filter: blur(4px); }
-.sk-btn { background: none; border: none; color: var(--text); font-size: 13px; cursor: pointer; width: 18px; }
-.sk-scrub { flex: 1; accent-color: var(--accent); cursor: pointer; }
-.sk-time { color: var(--muted); min-width: 40px; text-align: right; }
 
 /* timeline */
 .tl-wrap { flex: none; }

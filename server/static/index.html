@@ -36,24 +36,14 @@
     <!-- left: viewer + timeline + prompt -->
     <section class="stage-col">
       <div class="viewer">
-        <video id="video" controls playsinline preload="auto" style="display:none"></video>
-        <div id="skel3d" class="skel3d"></div>
-        <div id="skelPlay" class="skel-play">
-          <button id="skPlayBtn" class="sk-btn" title="Play/pause">▶</button>
-          <input type="range" id="skScrub" class="sk-scrub" min="0" max="100" value="0" />
-          <span id="skTime" class="sk-time mono tiny">0.0s</span>
-        </div>
-        <span class="viewer-tag" id="viewerTag">3D preview</span>
-        <div class="view-toggle">
-          <button id="view3d" class="vt-btn active" title="Instant 3D stick preview">3D</button>
-          <button id="viewVid" class="vt-btn" title="Rendered Blender video" disabled>Video</button>
-        </div>
+        <video id="video" controls playsinline preload="auto"></video>
+        <span class="viewer-tag" id="viewerTag">preview · base take</span>
         <div class="render-ctl">
           <select id="renderScope" class="render-scope" title="What to render">
             <option value="window">edited window (fast)</option>
             <option value="full">full dance + music</option>
           </select>
-          <button id="renderBtn" class="render-btn" title="Render the edited dance in HQ (Blender, on the GPU)">🎬 HQ Render</button>
+          <button id="renderBtn" class="render-btn" title="Render the edited dance on the GPU (Blender)">🎬 Render</button>
         </div>
         <div id="renderStatus" class="render-status"></div>
       </div>
@@ -103,9 +93,6 @@
     </aside>
   </main>
 </div>
-<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
-<script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-<script src="/static/skeleton3d.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

@@ -44,7 +44,6 @@ from agentlodge.editor.session import EditSession, SongAssets
 from agentlodge.editor.window_edit import MockWindowGenerator
 from server import processing
 from server import rendering
-from server import skeleton as skel
 
 HERE = Path(__file__).resolve().parent
 MEDIA = HERE / "media"
@@ -294,31 +293,6 @@ def render(sid: str, body: RenderBody) -> dict:
 @app.get("/api/session/{sid}/render")
 def render_status(sid: str) -> dict:
     return rendering.get_render_job(sid)
-
-
-@app.get("/api/session/{sid}/skeleton")
-def skeleton(sid: str, fps: int = 20) -> dict:
-    """Forward-kinematics of the CURRENT edited motion -> joint positions for the in-browser preview.
-
-    Instant, local (no pod): the 22-joint stick figure the browser animates for fast iteration, while
-    HQ Blender stays the final export. Downsamples to ``fps`` and rounds to keep the payload small.
-    """
-    sess = _load_session(sid)
-    motion = sess.current_motion()
-    out_fps = int(max(8, min(int(fps), FPS)))
-    step = max(1, round(FPS / out_fps))
-    joints = skel.fk_joints(motion)[::step]                    # (T, 22, 3)
-    head = sess.current()
-    return {
-        "sid": sid,
-        "fps": FPS / step,
-        "n_frames": int(joints.shape[0]),
-        "n_joints": int(joints.shape[1]),
-        "bones": skel.BONES,
-        "up_axis": 2,                                           # motion is Z-up
-        "joints": np.round(joints, 4).reshape(-1).tolist(),    # flat [T*22*3]
-        "head": head.id if head else None,
-    }
 
 
 @app.post("/api/session/{sid}/undo")
