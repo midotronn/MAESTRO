@@ -54,11 +54,13 @@ async function pollRender() {
     const v = $("video");
     v.src = `/api/session/${ST.sid}/media/${j.video}?t=` + Date.now();
     v.load(); v.play().catch(() => {});
-    $("viewerTag").textContent = "edited render";
+    $("viewerTag").textContent = "HQ render";
     st.className = "render-status ok";
     st.textContent = `\u2714 rendered${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
     $("renderBtn").disabled = false;
-    toast("Edited dance rendered");
+    $("viewVid").disabled = false;
+    showView("video");
+    toast("HQ render ready");
     setTimeout(() => { st.style.display = "none"; }, 5000);
     return;
   }
@@ -73,6 +75,7 @@ async function pollRender() {
 
 // -------------------------------------------------------------- load songs + session
 async function init() {
+  initSkeletonViewer();                    // set up the 3D viewer BEFORE the first openSession loads it
   const { songs } = await api("/api/songs");
   const sel = $("song");
   sel.innerHTML = "";
@@ -83,9 +86,49 @@ async function init() {
   wireUpload();
   $("apply").onclick = runEdit;
   $("renderBtn").onclick = startRender;
-  $("undo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/undo`, { method: "POST" }));
-  $("redo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/redo`, { method: "POST" }));
+  $("undo").onclick = async () => { applyState(await api(`/api/session/${ST.sid}/undo`, { method: "POST" })); loadSkeleton(); };
+  $("redo").onclick = async () => { applyState(await api(`/api/session/${ST.sid}/redo`, { method: "POST" })); loadSkeleton(); };
   $("instruction").addEventListener("keydown", (e) => { if (e.key === "Enter") runEdit(); });
+}
+
+// -------------------------------------------------------------- 3D stick-figure preview (instant, local FK)
+function initSkeletonViewer() {
+  if (window.Skel3D) window.Skel3D.init("skel3d");
+  $("skPlayBtn").onclick = () => { const p = window.Skel3D.toggle(); $("skPlayBtn").textContent = p ? "\u275a\u275a" : "\u25b6"; };
+  $("skScrub").addEventListener("input", (e) => {
+    if (!window.Skel3D) return;
+    window.Skel3D.pause(); $("skPlayBtn").textContent = "\u25b6";
+    const f = Math.round((parseFloat(e.target.value) / 100) * (window.Skel3D.total() - 1));
+    window.Skel3D.setFrame(f);
+  });
+  if (window.Skel3D) window.Skel3D.onFrame((cur, total, tsec) => {
+    if (!$("skScrub").matches(":active")) $("skScrub").value = total > 1 ? (cur / (total - 1)) * 100 : 0;
+    $("skTime").textContent = tsec.toFixed(1) + "s";
+  });
+  $("view3d").onclick = () => showView("3d");
+  $("viewVid").onclick = () => showView("video");
+}
+
+async function loadSkeleton() {
+  if (!window.Skel3D || !ST.sid) return;
+  try {
+    const data = await api(`/api/session/${ST.sid}/skeleton`);
+    window.Skel3D.load(data);
+    window.Skel3D.resize();
+    $("skPlayBtn").textContent = "\u275a\u275a";
+    showView("3d");
+  } catch (e) { /* keep last */ }
+}
+
+function showView(mode) {
+  const is3d = mode === "3d";
+  $("skel3d").style.display = is3d ? "block" : "none";
+  $("skelPlay").style.display = is3d ? "flex" : "none";
+  $("video").style.display = is3d ? "none" : "block";
+  $("view3d").classList.toggle("active", is3d);
+  $("viewVid").classList.toggle("active", !is3d);
+  $("viewerTag").textContent = is3d ? "3D preview" : "HQ render";
+  if (is3d && window.Skel3D) window.Skel3D.resize();
 }
 
 async function openSession(sid) {
@@ -94,6 +137,7 @@ async function openSession(sid) {
   const v = $("video");
   v.src = st.preview_url + "?t=" + Date.now();
   applyState(st);
+  await loadSkeleton();
   toast(`Loaded ${sid}: ${st.duration}s, ${st.n_beats} beats, ${st.generator} generator`);
 }
 
@@ -297,8 +341,7 @@ function onFinal(payload) {
   showMetrics(res.metrics_before, res.metrics_after);
   $("apply").disabled = false;
   toast(res.ok ? "Edit applied + checkpointed" : "Best-effort edit checkpointed");
-  // NOTE: re-rendering the edited motion to video needs the GPU worker; the preview stays the
-  // base take. Metric deltas + history reflect the real edited motion immediately.
+  loadSkeleton();     // auto-refresh the instant 3D preview with the edited motion
 }
 
 // -------------------------------------------------------------- metrics + history
@@ -352,7 +395,7 @@ function renderHistory(timeline) {
     li.innerHTML = `<span class="dot"></span><span class="lbl">${label}${win}</span>${badge}`;
     li.onclick = async () => { applyState(await api(`/api/session/${ST.sid}/restore`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ckpt_id: c.id }) }));
-      toast("Rolled back to: " + (c.label || "original")); };
+      loadSkeleton(); toast("Rolled back to: " + (c.label || "original")); };
     ol.appendChild(li);
   });
 }
