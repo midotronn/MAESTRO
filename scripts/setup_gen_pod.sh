@@ -34,8 +34,23 @@ die()  { echo "SETUP_FAILED: $*" >&2; exit 1; }
 # ---- optional per-song preprocessing mode -------------------------------------------------
 if [ "${1:-}" = "--song" ]; then
   SID="${2:?--song needs a <sid>}"
+  MODE="${3:-}"
+  # EDGE features need Jukebox's ~10GB 5B prior. jukemirlib fetches it with a NON-resumable wget that
+  # routinely dies mid-download; pre-fetch it resumably (curl -C -) to the cache path jukemirlib checks,
+  # so setup_models() finds it and skips its own fragile download.
+  if [ "$MODE" != "--lodge-only" ]; then
+    PRIOR="$HOME/.cache/jukemirlib/prior_level_2.pth.tar"; PRIOR_SIZE=10288727721
+    mkdir -p "$(dirname "$PRIOR")"
+    if [ ! -f "$PRIOR" ] || [ "$(stat -c %s "$PRIOR" 2>/dev/null || echo 0)" -lt "$PRIOR_SIZE" ]; then
+      TMP=$(ls "$(dirname "$PRIOR")"/prior_level_2.pth.tar*.tmp 2>/dev/null | head -1)
+      [ -n "$TMP" ] && mv -f "$TMP" "$PRIOR"        # reuse any partial jukemirlib download
+      step "fetching Jukebox 5B prior (~10GB, resumable, one-time)"
+      curl -L -C - --retry 20 --retry-delay 5 --retry-all-errors -o "$PRIOR" \
+        https://openaipublic.azureedge.net/jukebox/models/5b/prior_level_2.pth.tar || die "prior download"
+    fi
+  fi
   step "preprocess $SID (LODGE feats + EDGE Jukebox slices)"
-  cd "$AL" && WORKSPACE="$WORK" "$PY" scripts/preprocess_song.py "$SID" "${3:-}" || die "preprocess failed"
+  cd "$AL" && WORKSPACE="$WORK" "$PY" scripts/preprocess_song.py "$SID" "$MODE" || die "preprocess failed"
   echo "PREPROCESS_OK $SID"; exit 0
 fi
 

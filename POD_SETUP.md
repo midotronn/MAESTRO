@@ -123,3 +123,15 @@ Z-up 139 space, and caches it as `bank_<sid>_<bb>_seed<n>.npy`; the client scps 
 > Prefer the bank for quick, offline iteration; switch on live mode when an edit plateaus and you want
 > the pod to search harder. Both use the identical reward + splice path, so results are comparable.
 
+### Performance note (network-volume import latency)
+`setup_gen_pod.sh` puts the venvs on `/workspace` (a RunPod **network** volume), which survives pod
+restarts but has slow cold imports: a fresh `python` that imports torch takes **~2 min** the first
+time (LODGE and EDGE each spawn a subprocess, so a single new seed can pay this twice on top of the
+3-6 min diffusion). Consequences:
+- A live edit that generates several fresh seeds can take 10-40 min. Keep `AGENTLODGE_LIVE_K` /
+  `AGENTLODGE_LIVE_CYCLES` small (default 2/1), and remember seeds already pulled are cached (instant).
+- For much faster iteration, copy the CUDA venv to local SSD (`cp -a /workspace/AgentLODGE/.venv
+  /root/al_gpu`), repoint `LODGE/.venv` + the EDGE `.pth` at it, and set
+  `AGENTLODGE_POD_PYTHON=/root/al_gpu/bin/python` — imports drop to ~10s. This is **ephemeral** (lost
+  on restart), so re-copy after each pod start.
+
