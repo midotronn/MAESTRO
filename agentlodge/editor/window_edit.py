@@ -121,6 +121,7 @@ class WindowEditResult:
     feedback: str = ""
     log: list = field(default_factory=list)          # agent step log (agent editor path)
     agent_summary: str = ""                           # one-line agent plan summary
+    trace: dict = field(default_factory=dict)         # structured planner+executor+verify trace (UI)
 
     def summary(self) -> dict:
         return {
@@ -128,7 +129,7 @@ class WindowEditResult:
             "backbone": self.backbone, "chosen_seed": self.chosen_seed,
             "metrics_before": self.metrics_before, "metrics_after": self.metrics_after,
             "n_cycles": len(self.cycles), "feedback": self.feedback,
-            "log": self.log, "agent_summary": self.agent_summary,
+            "log": self.log, "agent_summary": self.agent_summary, "trace": self.trace,
         }
 
 

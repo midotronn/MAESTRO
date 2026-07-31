@@ -229,18 +229,19 @@ async function runEditHTTP(a, b, instruction) {
 function onProgress(ev) {
   if (ev.phase === "plan") {
     $("goal").innerHTML = `<b>Agent plan:</b> ${escapeHtml(ev.summary || "")}`;
-    $("agentlog").innerHTML = "";
+    $("checks").innerHTML = ""; $("reasoning").hidden = true;
     $("progbar").style.width = "8%";
-    $("progtext").textContent = `planning ${(ev.steps || []).length} step(s)...`;
+    $("progtext").textContent = `planning ${(ev.steps || []).length} step(s)\u2026`;
   } else if (ev.phase === "refine") {
     $("progbar").style.width = "30%";
     $("progtext").textContent = `refining (attempt ${ev.cycle}): ${ev.summary || ""}`;
   } else if (ev.phase === "step") {
     const p = ev.n_steps ? Math.round(20 + (ev.step / ev.n_steps) * 60) : 50;
     $("progbar").style.width = p + "%";
-    $("progtext").textContent = `attempt ${ev.cycle || 1} \u00b7 step ${ev.step}/${ev.n_steps}: ${ev.tool}`;
+    const tag = ev.status === "rejected" ? " \u2014 rejected \u21a9" : ev.status === "applied" ? " \u2713" : "";
+    $("progtext").textContent = `attempt ${ev.cycle || 1} \u00b7 step ${ev.step}/${ev.n_steps}: ${ev.tool}${tag}`;
   } else if (ev.phase === "verify") {
-    $("progtext").textContent = `attempt ${ev.cycle}: ${ev.ok ? "goal met \u2714" : "short of goal, refining\u2026"} (${ev.feedback || ""})`;
+    $("progtext").textContent = `attempt ${ev.cycle}: ${ev.ok ? "goals met \u2714" : "short of goal, refining\u2026"}`;
   } else if (ev.phase === "candidate") {   // legacy best-of-K generators
     const p = ev.total ? Math.round((ev.done / ev.total) * 100) : 0;
     $("progbar").style.width = p + "%";
@@ -262,34 +263,63 @@ function metricDeltaStr(before, after) {
   return parts.join("  ");
 }
 
-function renderAgentLog(log) {
-  const el = $("agentlog");
-  if (!log || !log.length) { el.innerHTML = ""; return; }
-  let html = "";
-  let lastCycle = null;
-  const multi = log.some((e) => (e.cycle || 1) > 1);
-  for (const e of log) {
-    const cyc = e.cycle || 1;
-    if (multi && cyc !== lastCycle) {
-      html += `<li class="cyc-div">${cyc === 1 ? "attempt 1" : "refine \u2192 attempt " + cyc}</li>`;
-      lastCycle = cyc;
+// compact one-line-per-goal chips: did each thing the user asked for actually happen?
+const ARROW = { improved: "\u25b2", regressed: "\u25bc", held: "\u2192" };
+function renderChecks(trace) {
+  const el = $("checks");
+  const checks = (trace && trace.final && trace.final.checks) || [];
+  if (!checks.length) { el.innerHTML = ""; return; }
+  el.innerHTML = checks.map((c) =>
+    `<span class="chk ${c.met ? "met" : "miss"}" title="${c.met ? "goal met" : "not fully met"}">`
+    + `${escapeHtml(c.label)} <b>${c.before.toFixed(2)}${ARROW[c.status] || ""}${c.after.toFixed(2)}</b></span>`
+  ).join("");
+}
+
+function paramsStr(p) {
+  if (!p || !Object.keys(p).length) return "";
+  return ` <code class="rz-params">${escapeHtml(JSON.stringify(p))}</code>`;
+}
+
+// the expandable walk-through: for each attempt, the PLANNER's plan, the EXECUTOR's applied/rejected
+// steps (with metric deltas), and the VERIFY checks. Collapsed by default to keep the panel calm.
+function renderTrace(trace) {
+  const det = $("reasoning"), body = $("reasoningBody");
+  if (!trace || !(trace.attempts || []).length) { det.hidden = true; body.innerHTML = ""; return; }
+  det.hidden = false;
+  const goalLine = (trace.goals || []).map((g) => `${g.label} ${g.dir === "up" ? "\u2191" : "\u2193"}`).join(", ");
+  let html = goalLine ? `<div class="rz-goals">Goals: ${escapeHtml(goalLine)}</div>` : "";
+  for (const at of trace.attempts) {
+    const v = at.verify || {};
+    html += `<div class="rz-attempt"><div class="rz-head">Attempt ${at.n}`
+      + `<span class="rz-verdict ${v.ok ? "ok" : "bad"}">${v.ok ? "goals met" : "short of goal"}</span></div>`;
+    html += `<div class="rz-sub">\ud83e\udde0 Planner</div><div class="rz-plan">\u201c${escapeHtml(at.plan.summary || "")}\u201d</div>`;
+    html += `<ol class="rz-steps">` + (at.plan.steps || []).map((s) =>
+      `<li><span class="rz-tool">${escapeHtml(s.tool)}</span>${s.why ? " \u2014 " + escapeHtml(s.why) : ""}${paramsStr(s.params)}</li>`
+    ).join("") + `</ol>`;
+    html += `<div class="rz-sub">\u2699\ufe0f Executor</div><ol class="rz-steps">` + (at.steps || []).map((s) => {
+      const delta = metricDeltaStr(s.metrics_before, s.metrics_after);
+      const note = escapeHtml(s.reject_reason || s.note || "");
+      return `<li class="ex-${s.status}"><span class="rz-badge ${s.status}">${s.status}</span>`
+        + `<span class="rz-tool">${escapeHtml(s.tool)}</span>`
+        + `<span class="rz-note">${note}${delta ? ` <span class="ldelta">${delta}</span>` : ""}</span></li>`;
+    }).join("") + `</ol>`;
+    if ((v.checks || []).length) {
+      html += `<div class="rz-sub">\u2713 Verify</div><ul class="rz-checks">` + v.checks.map((c) =>
+        `<li class="${c.met ? "met" : "miss"}">${escapeHtml(c.label)}: ${c.before.toFixed(3)}\u2192${c.after.toFixed(3)} <em>(${c.status})</em></li>`
+      ).join("") + `</ul>`;
     }
-    const delta = metricDeltaStr(e.metrics_before, e.metrics_after);
-    html += `<li class="done"><span class="lstep">${e.step}</span>`
-      + `<span class="ltool">${escapeHtml(e.tool)}</span>`
-      + `<span class="lnote">${escapeHtml(e.note || e.why || "")}`
-      + (delta ? ` <span class="ldelta">${delta}</span>` : "")
-      + `</span></li>`;
+    html += `</div>`;
   }
-  el.innerHTML = html;
+  body.innerHTML = html;
 }
 
 function onFinal(payload) {
   const res = payload.result, st = payload.state;
   $("progbar").style.width = "100%";
-  $("progtext").textContent = res.agent_summary ? `plan: ${res.agent_summary}` : "edit applied";
+  $("progtext").textContent = "";
   if (res.agent_summary) $("goal").innerHTML = `<b>Agent plan:</b> ${escapeHtml(res.agent_summary)}`;
-  renderAgentLog(res.log);
+  renderChecks(res.trace);
+  renderTrace(res.trace);
   const fb = $("feedback");
   fb.textContent = (res.ok ? "\u2714 " : "\u26a0 ") + res.feedback;
   fb.className = "feedback " + (res.ok ? "ok" : "bad");
@@ -297,8 +327,7 @@ function onFinal(payload) {
   showMetrics(res.metrics_before, res.metrics_after);
   $("apply").disabled = false;
   toast(res.ok ? "Edit applied + checkpointed" : "Best-effort edit checkpointed");
-  // NOTE: re-rendering the edited motion to video needs the GPU worker; the preview stays the
-  // base take. Metric deltas + history reflect the real edited motion immediately.
+  // NOTE: to see the edit as video, hit 🎬 Render. Metric deltas + history reflect the edit now.
 }
 
 // -------------------------------------------------------------- metrics + history

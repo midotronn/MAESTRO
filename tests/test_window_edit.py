@@ -96,6 +96,26 @@ def test_splice_rejects_bad_window():
             pass
 
 
+def test_crossfade_identity_is_a_true_noop():
+    # editor splice: re-inserting the ORIGINAL window must not perturb the motion at all (the earlier
+    # neighbour-snap splice drained energy/BAS even for an unchanged edit -> phantom regressions).
+    m = _base(240)
+    a, b = 60, 150
+    out = T.crossfade_edit(m, a, b, m[a:b].copy(), blend_frames=12)
+    assert out.shape == m.shape
+    assert np.allclose(out, m, atol=1e-5)          # exact no-op everywhere
+
+
+def test_crossfade_preserves_outside_and_keeps_edit():
+    m = _base(240)
+    a, b = 60, 150
+    edited = T.amplitude_scale(m[a:b].copy(), 1.5)          # a real interior change
+    out = T.crossfade_edit(m, a, b, edited, blend_frames=12)
+    assert np.array_equal(out[:a], m[:a]) and np.array_equal(out[b:], m[b:])   # outside byte-identical
+    mid = (a + b) // 2
+    assert not np.allclose(out[mid], m[mid])               # interior actually edited
+
+
 def test_window_beats_slices_and_shifts():
     beats = np.array([0, 10, 20, 30, 40, 50], dtype=float)
     wb = WE._window_beats(beats, 15, 45)

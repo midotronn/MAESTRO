@@ -74,7 +74,7 @@ def test_composed_plan_runs_all_steps(monkeypatch):
     monkeypatch.setattr(AE, "plan_edit", lambda *a, **k: plan)
     m = _base(300, energy=0.9)
     r = AE.run_agent_edit(m, 90, 210, "calmer but keep it on beat", beats=_beats())
-    tools = [e["tool"] for e in r.log]
+    tools = [e["tool"] for e in r.log if e.get("cycle") == 1]     # first attempt runs both, in order
     assert tools == ["energy", "beat_align"]
     # step 1 (energy) lowers intensity in its own log entry
     e1 = r.log[0]
@@ -122,7 +122,7 @@ def test_regenerate_without_generator_degrades_gracefully():
 def test_refine_escalates_when_first_attempt_misses(monkeypatch):
     # attempt 1 is a no-op (energy amount 0 -> no change -> verify fails); the refine feedback then
     # yields a stronger plan that actually lowers energy. Best (2nd) attempt is kept.
-    def fake_plan(instruction, metrics, a_sec, b_sec, *, api_key=None, feedback=None):
+    def fake_plan(instruction, metrics, a_sec, b_sec, *, api_key=None, feedback=None, goals=None):
         if feedback is None:
             return AE.AgentPlan("weak", [AE.PlanStep("energy", {"direction": "down", "amount": 0.0}, "x")],
                                 expect_metric="energy", expect_dir="down")
@@ -156,3 +156,52 @@ def test_goalless_op_skips_refine(monkeypatch):
     r = AE.run_agent_edit(m, 60, 150, "reverse this", beats=_beats(200), max_refine=3)
     assert calls["n"] == 1                               # planned once, no refine
     assert {e["cycle"] for e in r.log} == {1}
+
+
+# --------------------------------------------------------------------------- executor guardrail (regression catch)
+def test_requested_metrics_extracts_multiple():
+    reqs = {m: d for m, d, _ in AE._requested_metrics("calmer but keep it tight to the beat")}
+    assert reqs.get("energy") == "down" and reqs.get("bas") == "up"
+    # a contradictory instruction cancels the ambiguous metric
+    assert not any(m == "energy" for m, _, _ in AE._requested_metrics("calmer but more energetic"))
+
+
+def test_executor_rejects_step_that_regresses_its_metric(monkeypatch):
+    # A beat_align that would LOWER beat alignment must be REJECTED and the motion kept (this is the
+    # exact bug: user asked to raise beat alignment but BAS dropped -- the executor now catches it).
+    def fake_metrics(clip, beats=None):
+        v = float(np.mean(clip))
+        return {"energy": 0.3, "bas": round(1.0 - v, 5), "jerk": 0.1, "foot": 1.0}   # bigger clip -> lower BAS
+    monkeypatch.setattr(AE, "window_metrics", fake_metrics)
+    monkeypatch.setitem(AE.TOOLS, "beat_align",
+                        AE.ToolSpec(lambda clip, ctx, **kw: (clip + 0.5, "fake align"), "x", ""))
+    base = np.zeros((120, 139), np.float32)
+    plan = AE.AgentPlan("tighten", [AE.PlanStep("beat_align", {}, "tighten")], "bas", "up")
+    cur, log = AE._execute_plan(base, plan, {"wbeats": None}, None, cycle=1, emit=lambda e: None)
+    assert log[0]["status"] == "rejected"
+    assert "wrong way" in log[0]["reject_reason"]
+    assert np.array_equal(cur, base)                     # the regressing edit was discarded
+
+
+def test_executor_applies_step_that_improves_its_metric(monkeypatch):
+    def fake_metrics(clip, beats=None):
+        v = float(np.mean(clip))
+        return {"energy": 0.3, "bas": round(v, 5), "jerk": 0.1, "foot": 1.0}          # bigger clip -> higher BAS
+    monkeypatch.setattr(AE, "window_metrics", fake_metrics)
+    monkeypatch.setitem(AE.TOOLS, "beat_align",
+                        AE.ToolSpec(lambda clip, ctx, **kw: (clip + 0.5, "fake align"), "x", ""))
+    base = np.zeros((120, 139), np.float32)
+    plan = AE.AgentPlan("tighten", [AE.PlanStep("beat_align", {}, "tighten")], "bas", "up")
+    cur, log = AE._execute_plan(base, plan, {"wbeats": None}, None, cycle=1, emit=lambda e: None)
+    assert log[0]["status"] == "applied" and float(np.mean(cur)) > 0
+
+
+def test_trace_carries_plan_executor_and_verify():
+    m = _base(300)
+    r = AE.run_agent_edit(m, 90, 210, "make this much more on beat", beats=_beats())
+    t = r.trace
+    assert t.get("goals") and t.get("attempts")
+    at = t["attempts"][0]
+    assert set(("plan", "steps", "verify")).issubset(at)
+    assert "checks" in at["verify"] and at["plan"]["steps"]
+    assert all("status" in s for s in at["steps"])

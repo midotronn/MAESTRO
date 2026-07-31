@@ -280,25 +280,30 @@ def _orthonormalize6d(r6: np.ndarray) -> np.ndarray:
 
 
 def _ease_rot_toward(window: np.ndarray, ref_frame: np.ndarray, frames, *, head: bool) -> None:
-    """In-place: blend the given ``frames`` of ``window`` rotations toward ``ref_frame`` pose.
+    """In-place: reconnect the given ``frames`` of ``window`` toward ``ref_frame`` via an INERTIALIZED
+    (constant-offset, decayed) rotation blend that preserves the window's own relative motion.
 
-    ``head`` True ramps the weight 1->0 across ``frames`` (first frame == ref, easing back to the
-    window's own pose); ``head`` False ramps 0->1 (last frame == ref). 6D rows are linearly blended
-    then re-orthonormalized, an approximate but valid short-seam rotation interpolation (numpy-only,
-    no torch/pytorch3d), so the splice runs and is testable without the heavy rotation backend.
+    Used by :func:`splice_window` for the hybrid pipeline (chaining a foreign segment onto the kept
+    neighbour). The earlier version eased every blend frame toward ``ref_frame``'s absolute pose, which
+    flattened the seam frames into a near-static hold and drained energy; this applies a smoothstep-
+    decayed fraction of the single seam->ref offset to each frame, keeping frame-to-frame deltas.
+    Numpy only (fractional rotation via axis-angle scaling), so the core stays torch-free.
     """
-    ref = ref_frame[_ROT].reshape(NUM_JOINTS, 6)
     frames = list(frames)
     m = len(frames)
     if m == 0:
         return
+    R_ref = _sixd_to_matrix(ref_frame[_ROT].reshape(NUM_JOINTS, 6))          # (22, 3, 3)
+    seam = frames[0] if head else frames[-1]                                  # frame pinned onto ref
+    R_seam = _sixd_to_matrix(window[seam, _ROT].reshape(NUM_JOINTS, 6))
+    aa_off = _matrix_to_axis_angle(R_ref @ np.swapaxes(R_seam, -1, -2))       # offset seam->ref (22, 3)
     for i, f in enumerate(frames):
         k = i / max(1, m - 1)
-        s = 3 * k ** 2 - 2 * k ** 3                 # smoothstep 0 -> 1
-        wgt = (1.0 - s) if head else s              # head: 1->0, tail: 0->1
-        cur = window[f, _ROT].reshape(NUM_JOINTS, 6)
-        blended = (1.0 - wgt) * cur + wgt * ref
-        window[f, _ROT] = _orthonormalize6d(blended).reshape(NUM_JOINTS * 6)
+        s = 3 * k ** 2 - 2 * k ** 3                                           # smoothstep 0 -> 1
+        wgt = (1.0 - s) if head else s                                        # head 1->0 (seam@first), tail 0->1
+        Rf = _sixd_to_matrix(window[f, _ROT].reshape(NUM_JOINTS, 6))
+        Rf = _axis_angle_to_matrix(aa_off * wgt) @ Rf                         # decayed constant offset
+        window[f, _ROT] = _matrix_to_sixd(Rf).reshape(NUM_JOINTS * 6)
 
 
 def splice_window(motion139: np.ndarray, a: int, b: int, new_window139: np.ndarray,
@@ -336,6 +341,55 @@ def splice_window(motion139: np.ndarray, a: int, b: int, new_window139: np.ndarr
         _ease_rot_toward(w, nxt, range(n - bf, n), head=False)
 
     return np.concatenate([prefix, w, suffix], axis=0).astype(np.float32)
+
+
+def _crossfade_toward(out: np.ndarray, orig: np.ndarray, frames, *, head: bool) -> None:
+    """In-place per-frame cross-fade of ``out`` toward ``orig`` over ``frames`` (translation lerp +
+    contact lerp + geodesic rotation blend). ``head`` pins the FIRST frame to ``orig`` (weight 1->0);
+    otherwise the LAST frame is pinned (weight 0->1)."""
+    frames = list(frames)
+    m = len(frames)
+    if m == 0:
+        return
+    for i, f in enumerate(frames):
+        k = i / max(1, m - 1)
+        s = 3 * k ** 2 - 2 * k ** 3                                   # smoothstep 0 -> 1
+        wgt = (1.0 - s) if head else s                               # weight on the ORIGINAL frame
+        out[f, _TRANS] = (1.0 - wgt) * out[f, _TRANS] + wgt * orig[f, _TRANS]
+        out[f, _CONTACT] = (1.0 - wgt) * out[f, _CONTACT] + wgt * orig[f, _CONTACT]
+        R_e = _sixd_to_matrix(out[f, _ROT].reshape(NUM_JOINTS, 6))
+        R_o = _sixd_to_matrix(orig[f, _ROT].reshape(NUM_JOINTS, 6))
+        aa = _matrix_to_axis_angle(R_o @ np.swapaxes(R_e, -1, -2))    # edited -> original
+        R = _axis_angle_to_matrix(aa * wgt) @ R_e
+        out[f, _ROT] = _matrix_to_sixd(R).reshape(NUM_JOINTS * 6)
+
+
+def crossfade_edit(motion139: np.ndarray, a: int, b: int, edited_window139: np.ndarray,
+                   blend_frames: int = 12) -> np.ndarray:
+    """Splice an EDITED window back into ``motion`` for the interactive editor.
+
+    Unlike :func:`splice_window` (which chains a *foreign* segment onto the neighbour frames -- needed
+    for the hybrid pipeline, but it snaps the seam frame onto the neighbour and so perturbs the
+    window's energy/beat-alignment even for an unchanged edit), this cross-fades the edited window's
+    first/last ``blend_frames`` back toward the window's OWN original boundary. Since the original
+    boundary already joined the untouched prefix/suffix continuously, the seams stay smooth while the
+    interior keeps the edit -- and an unchanged edit is an EXACT no-op (energy/BAS preserved). Every
+    frame outside ``[a, b)`` is byte-for-byte identical. Numpy only.
+    """
+    m = np.ascontiguousarray(motion139, dtype=np.float32)
+    L = int(m.shape[0])
+    a, b = int(a), int(b)
+    if not (0 <= a < b <= L):
+        raise ValueError(f"invalid window [{a}, {b}) for motion of length {L}")
+    n = b - a
+    ed = np.ascontiguousarray(edited_window139, dtype=np.float32)
+    ed = retime(ed, n) if ed.shape[0] != n else ed.copy()
+    orig = m[a:b]
+    bf = int(max(0, min(blend_frames, n // 2)))
+    if bf > 0:
+        _crossfade_toward(ed, orig, range(bf), head=True)            # fade original -> edit at the start
+        _crossfade_toward(ed, orig, range(n - bf, n), head=False)    # fade edit -> original at the end
+    return np.concatenate([m[:a], ed, m[b:]], axis=0).astype(np.float32)
 
 
 # --------------------------------------------------------------------------- pure-numpy transforms
