@@ -21,6 +21,11 @@ function toast(msg) {
   t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2200);
 }
 
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 // -------------------------------------------------------------- load songs + session
 async function init() {
   const { songs } = await api("/api/songs");
@@ -176,36 +181,68 @@ async function runEditHTTP(a, b, instruction) {
 }
 
 function onProgress(ev) {
-  if (ev.phase === "parsed") {
-    const g = ev.goal; $("goal").innerHTML =
-      `<span class="tag ${g.backbone}">${g.backbone}</span> objective: <b>${g.objective.replace(/_/g, " ")}</b>`;
-    $("progtext").textContent = "planning the edit...";
-  } else if (ev.phase === "candidate") {
+  if (ev.phase === "plan") {
+    $("goal").innerHTML = `<b>Agent plan:</b> ${escapeHtml(ev.summary || "")}`;
+    const steps = ev.steps || [];
+    $("agentlog").innerHTML = steps.map((s, i) =>
+      `<li class="pending"><span class="lstep">${i + 1}</span>`
+      + `<span class="ltool">${escapeHtml(s.tool)}</span>`
+      + `<span class="lwhy">${escapeHtml(s.why || "")}</span></li>`).join("");
+    $("progbar").style.width = "8%";
+    $("progtext").textContent = `planning ${steps.length} step(s)...`;
+  } else if (ev.phase === "step") {
+    const p = ev.n_steps ? Math.round((ev.step / ev.n_steps) * 100) : 50;
+    $("progbar").style.width = p + "%";
+    $("progtext").textContent = `step ${ev.step}/${ev.n_steps}: ${ev.tool}`;
+    const li = $("agentlog").children[ev.step - 1];
+    if (li) {
+      li.classList.remove("pending"); li.classList.add("done");
+      li.innerHTML = `<span class="lstep">${ev.step}</span>`
+        + `<span class="ltool">${escapeHtml(ev.tool)}</span>`
+        + `<span class="lnote">${escapeHtml(ev.note || ev.why || "")}</span>`;
+    }
+  } else if (ev.phase === "candidate") {   // legacy best-of-K generators
     const p = ev.total ? Math.round((ev.done / ev.total) * 100) : 0;
     $("progbar").style.width = p + "%";
-    $("progtext").textContent = `cycle ${ev.cycle} \u00b7 trying ${ev.backbone} take #${ev.seed}  (candidate ${ev.done}/${ev.total}, best so far ${ev.best_reward})`;
-  } else if (ev.phase === "verify") {
-    $("progtext").textContent = `checked cycle ${ev.cycle}: ${ev.ok ? "goal met \u2714" : "not there yet, refining..."}`;
+    $("progtext").textContent = `trying ${ev.backbone} take #${ev.seed} (${ev.done}/${ev.total})`;
   }
 }
 
-function onFinal(payload) {
-  const res = payload.result, st = payload.state, ncand = payload.cycles ? payload.cycles.length : 0;
-  $("progbar").style.width = "100%";
-  const src = st.generator === "bank" ? "real backbone takes"
-    : (st.generator === "live" ? "live pod generations" : "candidates");
-  $("progtext").textContent = `evaluated ${ncand} ${src} across ${res.n_cycles || 0} cycle(s)`;
-  const fb = $("feedback");
-  let msg = (res.ok ? "\u2714 " : "\u26a0 ") + res.feedback;
-  if (!res.ok) {
-    if (st.generator === "live")
-      msg += "  \u2014 the pod already searched fresh takes; try a wider window, rephrase the instruction, or raise AGENTLODGE_LIVE_CYCLES for a deeper search.";
-    else if (st.generator === "bank")
-      msg += "  \u2014 the local bank has limited takes for this window. Enable live pod mode (AGENTLODGE_LIVE=1 with a generation pod) or build a richer bank to search harder.";
-    else
-      msg += "  \u2014 this is the offline demo generator; connect a GPU pod (bank or live mode) for a real search.";
+function metricDeltaStr(before, after) {
+  if (!before || !after) return "";
+  const keys = ["energy", "bas", "jerk", "foot"];
+  const parts = [];
+  for (const k of keys) {
+    if (before[k] === undefined || after[k] === undefined) continue;
+    const d = after[k] - before[k];
+    if (Math.abs(d) < 1e-3) continue;
+    const lbl = { energy: "energy", bas: "beat", jerk: "smooth.", foot: "foot" }[k];
+    parts.push(`${lbl} ${before[k].toFixed(2)}\u2192${after[k].toFixed(2)}`);
   }
-  fb.textContent = msg;
+  return parts.join("  ");
+}
+
+function renderAgentLog(log) {
+  const el = $("agentlog");
+  if (!log || !log.length) { el.innerHTML = ""; return; }
+  el.innerHTML = log.map((e) => {
+    const delta = metricDeltaStr(e.metrics_before, e.metrics_after);
+    return `<li class="done"><span class="lstep">${e.step}</span>`
+      + `<span class="ltool">${escapeHtml(e.tool)}</span>`
+      + `<span class="lnote">${escapeHtml(e.note || e.why || "")}`
+      + (delta ? ` <span class="ldelta">${delta}</span>` : "")
+      + `</span></li>`;
+  }).join("");
+}
+
+function onFinal(payload) {
+  const res = payload.result, st = payload.state;
+  $("progbar").style.width = "100%";
+  $("progtext").textContent = res.agent_summary ? `plan: ${res.agent_summary}` : "edit applied";
+  if (res.agent_summary) $("goal").innerHTML = `<b>Agent plan:</b> ${escapeHtml(res.agent_summary)}`;
+  renderAgentLog(res.log);
+  const fb = $("feedback");
+  fb.textContent = (res.ok ? "\u2714 " : "\u26a0 ") + res.feedback;
   fb.className = "feedback " + (res.ok ? "ok" : "bad");
   applyState(st, { keepMetrics: true });          // update history/toolbar but keep the before->after table
   showMetrics(res.metrics_before, res.metrics_after);

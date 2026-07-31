@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from agentlodge.config import FPS
+
 NUM_JOINTS = 22
 _ROOT = slice(3, 9)          # root joint 6D in the 139 layout
 _ROT = slice(3, 3 + NUM_JOINTS * 6)
@@ -481,6 +483,59 @@ def amplitude_scale(motion139: np.ndarray, alpha: float,
     rel_scaled = _axis_angle_to_matrix(_matrix_to_axis_angle(rel) * alpha)
     scaled = np.einsum("jab,ljbc->ljac", r_mean, rel_scaled)  # r_mean @ rel_scaled
     out[:, _ROT] = _matrix_to_sixd(scaled).reshape(length, NUM_JOINTS * 6)
+    return out
+
+
+def _kin_lowpass(kin: np.ndarray, win: int) -> np.ndarray:
+    """Centered moving-average low-pass over time for the kinematic channels (edge-padded)."""
+    win = int(max(1, win))
+    if win <= 1 or kin.shape[0] < 3:
+        return kin.copy()
+    k = np.ones(win, dtype=np.float64) / win
+    pad = win // 2
+    padded = np.pad(kin, ((pad, pad), (0, 0)), mode="edge")
+    out = np.empty_like(kin, dtype=np.float64)
+    for ch in range(kin.shape[1]):
+        out[:, ch] = np.convolve(padded[:, ch], k, mode="valid")[: kin.shape[0]]
+    return out.astype(np.float32)
+
+
+def temporal_smooth(motion139: np.ndarray, amount: float = 0.5) -> np.ndarray:
+    """Reduce jerk by low-pass filtering the motion over time (``amount`` in [0,1] -> kernel width).
+
+    Smooths translation + joint-rotation channels with a centered moving average (rotations are
+    re-orthonormalized), leaving contacts. Deterministic; lowers the jerk metric without regenerating.
+    """
+    m = motion139.astype(np.float32)
+    n = m.shape[0]
+    amount = float(np.clip(amount, 0.0, 1.0))
+    if n < 3 or amount <= 0.0:
+        return m.copy()
+    win = int(round(1 + amount * (FPS // 3)))                # up to ~1/3 s window at amount=1
+    out = m.copy()
+    out[:, :_CONTACT.start] = _kin_lowpass(m[:, :_CONTACT.start], win)
+    r6 = out[:, _ROT].reshape(n, NUM_JOINTS, 6)
+    out[:, _ROT] = _matrix_to_sixd(_sixd_to_matrix(r6)).reshape(n, NUM_JOINTS * 6)
+    return out
+
+
+def temporal_sharpen(motion139: np.ndarray, amount: float = 0.5) -> np.ndarray:
+    """Increase snappiness/attack (unsharp mask over time): accentuate deviations from the low-pass.
+
+    ``out_kin = kin + amount * (kin - lowpass(kin))``. Raises the crispness of hits (higher jerk /
+    more staccato) without regenerating. Rotations re-orthonormalized; contacts untouched.
+    """
+    m = motion139.astype(np.float32)
+    n = m.shape[0]
+    amount = float(np.clip(amount, 0.0, 1.5))
+    if n < 3 or amount <= 0.0:
+        return m.copy()
+    kin = m[:, :_CONTACT.start]
+    low = _kin_lowpass(kin, max(2, FPS // 6))
+    out = m.copy()
+    out[:, :_CONTACT.start] = kin + amount * (kin - low)
+    r6 = out[:, _ROT].reshape(n, NUM_JOINTS, 6)
+    out[:, _ROT] = _matrix_to_sixd(_sixd_to_matrix(r6)).reshape(n, NUM_JOINTS * 6)
     return out
 
 

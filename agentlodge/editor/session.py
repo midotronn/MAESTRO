@@ -17,14 +17,22 @@ from pathlib import Path
 import numpy as np
 
 from agentlodge.editor.checkpoints import Checkpoint, CheckpointStore
+from agentlodge.editor.agent_edit import run_agent_edit
 from agentlodge.editor.window_edit import (
     WindowEditResult,
     WindowGenerator,
-    apply_window_edit,
     window_metrics,
 )
 
 _ASSETS = "assets.json"
+
+
+def _edit_label(instruction: str, a: int, b: int) -> str:
+    """A concise checkpoint label from the user's instruction + window (in seconds)."""
+    text = " ".join(str(instruction).split())
+    if len(text) > 42:
+        text = text[:41] + "\u2026"
+    return f"{text} [{a // 30}-{b // 30}s]"
 
 
 @dataclass
@@ -105,37 +113,39 @@ class EditSession:
             "window": [int(a), int(b)], "instruction": instruction, "ok": res.ok,
             "backbone": res.backbone, "chosen_seed": res.chosen_seed,
             "metrics_before": res.metrics_before, "metrics_after": res.metrics_after,
-            "feedback": res.feedback, **res.goal.to_dict(),
+            "feedback": res.feedback, "agent_summary": res.agent_summary, "log": res.log,
+            **res.goal.to_dict(),
         }
 
     # ------------------------------------------------------------------ editing
     def edit(self, a: int, b: int, instruction: str, *, k: int | None = None,
              max_cycles: int | None = None, progress_cb=None) -> WindowEditResult:
         """Apply an NL window edit to the current dance and commit it as a new checkpoint."""
-        res = apply_window_edit(
+        res = run_agent_edit(
             self.current_motion(), a, b, instruction, self.generator,
-            beats=self.assets.beats, k=k or self.k, max_cycles=max_cycles or self.max_cycles,
-            blend_frames=self.blend_frames, api_key=self.api_key, progress_cb=progress_cb,
+            beats=self.assets.beats, api_key=self.api_key,
+            k=k or self.k, max_cycles=max_cycles or self.max_cycles,
+            blend_frames=self.blend_frames, progress_cb=progress_cb,
         )
         metrics = dict(self._whole_metrics(res.motion))
         metrics["window_after"] = res.metrics_after
         self.store.commit(res.motion, edit=self._record(res, a, b, instruction),
-                          metrics=metrics, label=f"{res.goal.objective} [{a}-{b}]")
+                          metrics=metrics, label=_edit_label(instruction, a, b))
         return res
 
     def edit_from(self, from_id: str, a: int, b: int, instruction: str, *, k: int | None = None,
                   max_cycles: int | None = None, progress_cb=None) -> WindowEditResult:
         """Branch: apply an edit to an ARBITRARY earlier checkpoint, forking history."""
         base = self.store.motion(from_id)
-        res = apply_window_edit(
+        res = run_agent_edit(
             base, a, b, instruction, self.generator, beats=self.assets.beats,
-            k=k or self.k, max_cycles=max_cycles or self.max_cycles,
-            blend_frames=self.blend_frames, api_key=self.api_key, progress_cb=progress_cb,
+            api_key=self.api_key, k=k or self.k, max_cycles=max_cycles or self.max_cycles,
+            blend_frames=self.blend_frames, progress_cb=progress_cb,
         )
         metrics = dict(self._whole_metrics(res.motion))
         metrics["window_after"] = res.metrics_after
         self.store.branch(from_id, res.motion, edit=self._record(res, a, b, instruction),
-                          metrics=metrics, label=f"{res.goal.objective} [{a}-{b}] (branch)")
+                          metrics=metrics, label=_edit_label(instruction, a, b) + " (branch)")
         return res
 
     # ------------------------------------------------------------------ history

@@ -110,12 +110,14 @@ def _load_session(sid: str) -> EditSession:
     beats = np.load(beats_p).astype(np.float32) if beats_p.exists() else None
     generator, gkind = _make_generator(sid, d)
     assets = SongAssets(sid=sid, beats=beats, fps=FPS)
+    api_key = os.environ.get("OPENAI_API_KEY") or None    # enables the LLM edit agent when present
     sess_dir = SESSIONS / sid
     if (sess_dir / "checkpoints" / "manifest.json").exists():
-        sess = EditSession.load(sess_dir, generator)
+        sess = EditSession.load(sess_dir, generator, api_key=api_key)
     else:
-        sess = EditSession(assets, motion, generator, directory=str(sess_dir))
+        sess = EditSession(assets, motion, generator, directory=str(sess_dir), api_key=api_key)
     sess.generator_kind = gkind          # type: ignore[attr-defined]
+    sess.agent_llm = bool(api_key)       # type: ignore[attr-defined]
     if gkind == "live":                  # each new seed is real GPU: search fewer, deeper
         sess.k, sess.max_cycles = _live_edit_budget()
     _sessions[sid] = sess
@@ -132,6 +134,7 @@ def _session_state(sid: str, sess: EditSession) -> dict:
         "duration": round(n / FPS, 2),
         "n_beats": int(len(sess.assets.beats)) if sess.assets.beats is not None else 0,
         "generator": getattr(sess, "generator_kind", "mock"),
+        "agent_llm": bool(getattr(sess, "agent_llm", False)),
         "head": head.id if head else None,
         "metrics": head.metrics if head else {},
         "timeline": sess.timeline(),

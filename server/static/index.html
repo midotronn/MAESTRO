@@ -57,7 +57,7 @@
           <input type="number" id="bSec" step="0.1" min="0" /><span>s</span>
         </div>
         <input type="text" id="instruction" class="instr"
-               placeholder="Describe the change…  e.g. make this calmer / more energetic / more on beat" />
+               placeholder="Describe any change in your own words…  e.g. 'calmer but keep it tight to the beat', 'explosive hits on the drop', 'flip and reverse this'" />
         <button id="apply" class="apply">Apply edit</button>
       </div>
     </section>
@@ -65,10 +65,11 @@
     <!-- right: progress · metrics · history -->
     <aside class="side-col">
       <div class="card">
-        <div class="card-h"><span class="dot-h"></span>Edit progress</div>
-        <div id="goal" class="goal muted">Select a window and describe an edit to begin.</div>
+        <div class="card-h"><span class="dot-h"></span>Agent edit</div>
+        <div id="goal" class="goal muted">Describe any change in plain English — the agent plans the steps.</div>
         <div class="progwrap"><div id="progbar" class="progbar"></div></div>
         <div id="progtext" class="mono tiny muted"></div>
+        <ol id="agentlog" class="agentlog"></ol>
         <div id="feedback" class="feedback"></div>
       </div>
 

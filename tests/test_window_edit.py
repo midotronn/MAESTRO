@@ -121,9 +121,10 @@ def test_calmer_decreases_energy():
 
 
 def test_on_beat_increases_bas():
-    m = _base(300, energy=0.5)
-    r = apply_window_edit(m, 90, 180, "tighten this to the beat",
-                          MockWindowGenerator(), beats=_beats(), k=6, max_cycles=3)
+    # Motion whose accents sit 6 frames OFF the music grid; the deterministic warp must pull them on.
+    grid = _beats(300, 15)
+    offgrid = MockWindowGenerator().generate("edge", 0, 300, 3, energy=0.6, beats=grid + 6)
+    r = apply_window_edit(offgrid, 90, 210, "tighten this to the beat", None, beats=grid)
     assert r.ok
     assert r.metrics_after["bas"] > r.metrics_before["bas"]
 

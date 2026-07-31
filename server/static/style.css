@@ -165,6 +165,17 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
 #progtext { margin-top: 7px; min-height: 15px; }
 .feedback { margin-top: 9px; font-size: 13px; line-height: 1.4; }
 .feedback.ok { color: var(--ok); } .feedback.bad { color: var(--warn); }
+.agentlog { list-style: none; margin: 8px 0 4px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.agentlog li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; line-height: 1.35;
+  padding: 5px 8px; border-radius: 7px; background: rgba(255,255,255,.025); border: 1px solid var(--line); }
+.agentlog li.pending { opacity: .5; }
+.agentlog li.done { border-color: rgba(53,208,127,.28); }
+.agentlog .lstep { flex: 0 0 auto; width: 16px; height: 16px; border-radius: 50%; text-align: center;
+  font-size: 10px; line-height: 16px; color: #06210f; background: var(--accent); font-weight: 700; }
+.agentlog li.pending .lstep { background: var(--line2); color: var(--muted); }
+.agentlog .ltool { flex: 0 0 auto; font-weight: 650; color: var(--blue); text-transform: none; }
+.agentlog .lwhy, .agentlog .lnote { color: var(--muted); flex: 1 1 100%; padding-left: 24px; word-break: break-word; }
+.agentlog .ldelta { color: var(--ok); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* metrics */
 .metrics { width: 100%; border-collapse: collapse; font-size: 13px; }

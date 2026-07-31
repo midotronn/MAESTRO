@@ -119,6 +119,8 @@ class WindowEditResult:
     chosen_seed: int | None = None
     cycles: list = field(default_factory=list)
     feedback: str = ""
+    log: list = field(default_factory=list)          # agent step log (agent editor path)
+    agent_summary: str = ""                           # one-line agent plan summary
 
     def summary(self) -> dict:
         return {
@@ -126,6 +128,7 @@ class WindowEditResult:
             "backbone": self.backbone, "chosen_seed": self.chosen_seed,
             "metrics_before": self.metrics_before, "metrics_after": self.metrics_after,
             "n_cycles": len(self.cycles), "feedback": self.feedback,
+            "log": self.log, "agent_summary": self.agent_summary,
         }
 
 
@@ -271,7 +274,9 @@ class MockWindowGenerator:
         n = int(b - a)
         if n <= 0:
             return np.zeros((0, 139), dtype=np.float32)
-        key = (hash((str(backbone), int(seed) + self.seed_offset, n)) & 0xFFFFFFFF)
+        # Deterministic across processes (Python's hash() is per-process randomized -> unstable seeds).
+        bb = sum(ord(c) for c in str(backbone))
+        key = (((int(seed) + self.seed_offset) * 2654435761 + n * 40503 + bb * 97) & 0xFFFFFFFF)
         rng = np.random.default_rng(key)
         amp = 0.15 + 0.9 * float(np.clip(energy, 0.0, 1.0))
 

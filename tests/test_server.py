@@ -46,7 +46,9 @@ def test_edit_commits_and_moves_metrics(client):
     r = client.post("/api/session/sng/edit",
                     json={"a_sec": 3, "b_sec": 6, "instruction": "make this calmer"}).json()
     res = r["result"]
-    assert res["ok"] and res["goal"]["objective"] == "calmer"
+    assert res["ok"] and res["goal"]["objective"] == "agent"
+    assert res["log"] and res["log"][0]["tool"] == "energy"      # agent chose the energy tool
+    assert res["agent_summary"]
     assert res["metrics_after"]["energy"] < res["metrics_before"]["energy"]
     assert len(r["state"]["timeline"]) == 2 and r["state"]["can_undo"]
 
@@ -80,7 +82,8 @@ def test_websocket_streams_progress_then_final(client):
             elif ev["type"] == "error":
                 pytest.fail(f"ws error: {ev}")
     assert n_prog >= 1
-    assert final["result"]["goal"]["objective"] == "more_on_beat"
+    assert final["result"]["goal"]["objective"] == "agent"
+    assert final["result"]["log"][0]["tool"] == "beat_align"    # agent snapped to the beat
     assert final["state"]["head"]
 
 
