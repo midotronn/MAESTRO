@@ -112,7 +112,7 @@ function initSkeletonViewer() {
 async function loadSkeleton() {
   if (!window.Skel3D || !ST.sid) return;
   try {
-    const resp = await fetch(`/api/session/${ST.sid}/skeleton.bin?fps=20`);
+    const resp = await fetch(`/api/session/${ST.sid}/skeleton.bin?fps=30`);
     if (!resp.ok) throw new Error("skeleton fetch failed");
     const joints = new Float32Array(await resp.arrayBuffer());
     window.Skel3D.load({
