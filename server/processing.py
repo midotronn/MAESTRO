@@ -112,7 +112,9 @@ class PodTakeProvider:
         self._script_shipped = False
 
     # -- helpers ------------------------------------------------------------
-    def _local_path(self, backbone: str, seed: int) -> Path:
+    def _local_path(self, backbone: str, seed: int, window=None) -> Path:
+        if window is not None:
+            return self.bank_dir / f"bank_{self.sid}_{backbone}_seed{seed}_w{window[0]}_{window[1]}.npy"
         return self.bank_dir / f"bank_{self.sid}_{backbone}_seed{seed}.npy"
 
     def _ensure_script(self) -> bool:
@@ -130,10 +132,12 @@ class PodTakeProvider:
         return True
 
     # -- take_provider callable --------------------------------------------
-    def __call__(self, backbone: str, seed: int):
+    def __call__(self, backbone: str, seed: int, a: int | None = None, b: int | None = None):
         import numpy as np
 
-        local = self._local_path(backbone, int(seed))
+        window = (int(a), int(b)) if (a is not None and b is not None) else None
+        local = self._local_path(backbone, int(seed), window)
+        # a full-song seed already on disk (the base bank) also serves as the source when no window
         if local.exists():                                   # already have it (bank or prior live pull)
             try:
                 return np.load(local).astype(np.float32)
@@ -146,9 +150,11 @@ class PodTakeProvider:
             if not self._ensure_script():
                 return None
             ws = self.cfg.ws
+            win_args = f" {window[0]} {window[1]}" if window is not None else ""
             run = _ssh(self.cfg,
                        f"cd {ws}/AgentLODGE && WORKSPACE={ws} "
-                       f"{_venv_python(self.cfg)} scripts/gen_take.py {self.sid} {backbone} {int(seed)}",
+                       f"{_venv_python(self.cfg)} scripts/gen_take.py {self.sid} {backbone} "
+                       f"{int(seed)}{win_args}",
                        timeout=self.gen_timeout)
             remote = _parse_take_path(run.stdout)
             if remote is None:

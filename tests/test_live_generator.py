@@ -22,47 +22,48 @@ def _take(energy: float, n: int = 300, backbone: str = "edge", seed: int = 0) ->
 
 
 class _FakeProvider:
-    """Records every (backbone, seed) it is asked to generate; returns a deterministic take."""
+    """Records every (backbone, seed, a, b) window it is asked to generate; returns a window take."""
 
     def __init__(self, n: int = 300, fail_for=None):
         self.n = n
-        self.calls: list[tuple[str, int]] = []
+        self.calls: list[tuple] = []
         self.fail_for = set(fail_for or ())
 
-    def __call__(self, backbone: str, seed: int):
-        self.calls.append((backbone, int(seed)))
+    def __call__(self, backbone: str, seed: int, a: int, b: int):
+        self.calls.append((backbone, int(seed), int(a), int(b)))
         if (backbone, int(seed)) in self.fail_for:
             return None
         energy = 0.9 if backbone == "edge" else 0.2
-        return _take(energy, self.n, backbone, int(seed))
+        length = min(self.n, int(b) - int(a))     # the pod returns just the window (may be shorter)
+        return _take(energy, max(2, length), backbone, int(seed))
 
 
-def test_live_returns_window_slice():
+def test_live_returns_window():
     p = _FakeProvider(240)
     g = LiveWindowGenerator(p)
     win = g.generate("edge", 60, 150, 0)
     assert win.shape == (90, 139)
-    assert p.calls == [("edge", 0)]
+    assert p.calls == [("edge", 0, 60, 150)]      # asked the pod for exactly that window
 
 
-def test_live_memoizes_one_generation_per_seed():
+def test_live_memoizes_per_window_and_seed():
     p = _FakeProvider(240)
     g = LiveWindowGenerator(p)
-    # many windows out of the same (backbone, seed) => exactly one pod generation
-    for a in (0, 30, 60, 90):
-        g.generate("edge", a, a + 30, 0)
-    assert p.calls == [("edge", 0)]
+    # the SAME window+seed reused => exactly one pod generation
+    for _ in range(4):
+        g.generate("edge", 30, 90, 0)
+    assert p.calls == [("edge", 0, 30, 90)]
     assert g.n_generated == 1
-    # a new seed and a new backbone each trigger exactly one more generation
-    g.generate("edge", 0, 30, 1)
-    g.generate("lodge", 0, 30, 0)
-    assert g.n_generated == 3
-    assert p.calls == [("edge", 0), ("edge", 1), ("lodge", 0)]
+    # a different window, a new seed, and a new backbone each trigger one more generation
+    g.generate("edge", 60, 120, 0)                # different window
+    g.generate("edge", 30, 90, 1)                 # new seed
+    g.generate("lodge", 30, 90, 0)                # new backbone
+    assert g.n_generated == 4
 
 
 def test_live_pads_when_take_too_short():
-    g = LiveWindowGenerator(_FakeProvider(100))
-    win = g.generate("edge", 80, 140, 0)       # 60 requested, only 20 available
+    g = LiveWindowGenerator(_FakeProvider(20))    # pod returns only 20 frames
+    win = g.generate("edge", 80, 140, 0)          # 60 requested
     assert win.shape == (60, 139)
     assert np.array_equal(win[20:], np.repeat(win[19:20], 40, axis=0))
 
@@ -81,7 +82,7 @@ def test_live_returns_none_without_fallback_on_failure():
 
 
 def test_live_provider_exception_is_swallowed():
-    def boom(backbone, seed):
+    def boom(backbone, seed, a, b):
         raise RuntimeError("pod unreachable")
     g = LiveWindowGenerator(boom, fallback=MockWindowGenerator())
     win = g.generate("edge", 0, 30, 0)

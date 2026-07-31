@@ -45,9 +45,30 @@ def _to_edge_zup(raw):
     return to_agentlodge139(ensure_lodge139(np.asarray(raw, dtype=np.float32)))
 
 
-def _generate(sid: str, backbone: str, seed: int) -> np.ndarray:
-    """Produce a full Z-up 139 take for ``(backbone, seed)`` (reuses best take at seed 0)."""
-    if seed == 0:
+def _trim_zup(motion_zup: np.ndarray, in_start: int, in_len: int, a: int, b: int) -> np.ndarray:
+    """Trim a Z-up take generated from feats[in_start:in_start+in_len] down to the [a,b) window.
+
+    LODGE/EDGE output length need not equal the input feature length, so map proportionally.
+    """
+    out_len = int(motion_zup.shape[0])
+    if in_len <= 0:
+        return motion_zup
+    scale = out_len / float(in_len)
+    lo = int(round((a - in_start) * scale))
+    hi = int(round((b - in_start) * scale))
+    lo, hi = max(0, min(lo, out_len)), max(0, min(hi, out_len))
+    if hi - lo < 2:
+        return motion_zup
+    return np.ascontiguousarray(motion_zup[lo:hi])
+
+
+def _generate(sid: str, backbone: str, seed: int, window=None) -> np.ndarray:
+    """Produce a full (or windowed) Z-up 139 take for ``(backbone, seed)``.
+
+    ``window=(a, b)`` in frames -> generate ONLY that window (plus a little context) and trim, so an
+    edit that touches [a, b) never regenerates or perturbs the rest of the song (and is much faster).
+    """
+    if seed == 0 and window is None:
         best = WS / f"{backbone}_fd_{sid}_full.npy"
         if best.exists():
             raw = np.load(best).astype(np.float32)
@@ -70,35 +91,58 @@ def _generate(sid: str, backbone: str, seed: int) -> np.ndarray:
         feats_p = WS / f"lodge_fd_{sid}_feats.npy"
         if not feats_p.exists():
             _fail(f"missing {feats_p.name} (song not preprocessed for generation on this pod)")
-        job = _run_lodge_job(np.load(feats_p).astype(np.float32), sd, work, seed=seed)
+        feats = np.load(feats_p).astype(np.float32)
+        in_start, in_end = 0, feats.shape[0]
+        if window is not None:
+            a, b = window
+            pad = 60                                        # ~2s context for the global stage
+            in_start = max(0, a - pad)
+            in_end = min(feats.shape[0], b + pad)
+            feats = feats[in_start:in_end]
+        job = _run_lodge_job(feats, sd, work, seed=seed)
         if job.get("error"):
             _fail(f"LODGE seed {seed}: {str(job['error'])[:180]}")
-        return _to_lodge_zup(job["motion"])
+        out = _to_lodge_zup(job["motion"])
+        return _trim_zup(out, in_start, in_end - in_start, window[0], window[1]) if window else out
 
     slices_p = WS / f"edge{sid}_slices.npy"
     wav = f"{WORKSPACE}/LODGE/data/finedance/music_wav/{sid}.wav"
     if not slices_p.exists():
         _fail(f"missing {slices_p.name} (song not preprocessed for generation on this pod)")
     edge_slices = [np.asarray(s, dtype=np.float32) for s in np.load(slices_p)]
+    in_start = 0
+    if window is not None:
+        a, b = window
+        i0 = max(0, a // 150)                                # EDGE slices are 150-frame (5s) chunks
+        i1 = min(len(edge_slices), (b + 149) // 150)
+        i1 = max(i1, i0 + 1)
+        edge_slices = edge_slices[i0:i1]
+        in_start = i0 * 150
     job = _run_edge_job(wav, edge_slices, sd, work, seed=seed)
     if job.get("error"):
         _fail(f"EDGE seed {seed}: {str(job['error'])[:180]}")
-    return _to_edge_zup(job["motion"])
+    out = _to_edge_zup(job["motion"])
+    return _trim_zup(out, in_start, len(edge_slices) * 150, window[0], window[1]) if window else out
 
 
 def main() -> None:
-    if len(sys.argv) != 4:
-        _fail("usage: gen_take.py <sid> <lodge|edge> <seed>")
+    # usage: gen_take.py <sid> <lodge|edge> <seed> [<a> <b>]   (a,b = window frames; optional)
+    if len(sys.argv) not in (4, 6):
+        _fail("usage: gen_take.py <sid> <lodge|edge> <seed> [<a> <b>]")
     sid, backbone, seed = sys.argv[1], sys.argv[2].lower(), int(sys.argv[3])
     if backbone not in ("lodge", "edge"):
         _fail(f"unknown backbone {backbone!r}")
+    window = (int(sys.argv[4]), int(sys.argv[5])) if len(sys.argv) == 6 else None
 
-    out = WS / f"bank_{sid}_{backbone}_seed{seed}.npy"
+    if window is not None:
+        out = WS / f"bank_{sid}_{backbone}_seed{seed}_w{window[0]}_{window[1]}.npy"
+    else:
+        out = WS / f"bank_{sid}_{backbone}_seed{seed}.npy"
     if out.exists():
         print(f"TAKE_CACHED {out}", flush=True)
         return
 
-    motion = np.asarray(_generate(sid, backbone, seed), dtype=np.float32)
+    motion = np.asarray(_generate(sid, backbone, seed, window), dtype=np.float32)
     tmp = out.with_suffix(".tmp.npy")
     np.save(tmp, motion)
     os.replace(tmp, out)                       # atomic: client never scps a half-written file

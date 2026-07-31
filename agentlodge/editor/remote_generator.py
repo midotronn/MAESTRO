@@ -86,32 +86,33 @@ class BankWindowGenerator:
 
 
 class LiveWindowGenerator:
-    """Query LODGE/EDGE **on-demand** for window candidates instead of a pre-baked bank.
+    """Query LODGE/EDGE **on-demand** for a fresh sample of JUST the requested window.
 
-    Where :class:`BankWindowGenerator` selects slices from a fixed set of cached takes, the live
-    generator asks a GPU pod to *generate a fresh full take per unseen seed* and then slices the
-    requested window from it. This gives the edit loop an unbounded search space (every new seed is a
-    genuinely new LODGE/EDGE diffusion sample), at the cost of minutes of GPU per new seed.
+    Where :class:`BankWindowGenerator` selects slices from a fixed set of cached full takes, the live
+    generator asks a GPU pod to generate a fresh diffusion sample of the window ``[a, b)`` itself (the
+    pod slices the music features to the window + a little context, generates, and trims). This gives
+    the edit an unbounded search space (every new seed is a genuinely new sample) while only paying
+    for the window, not the whole song.
 
-    All pod I/O is delegated to ``take_provider`` -- a callable ``(backbone, seed) -> full Z-up 139
-    take | None`` -- so this class stays torch/SSH-free and unit-testable, and the diffusion cost is
-    paid at most **once per (backbone, seed)**: takes are memoized, so slicing many windows out of the
-    same seed (across refine cycles or successive edits) is free after the first pull.
+    All pod I/O is delegated to ``take_provider`` -- a callable ``(backbone, seed, a, b) -> Z-up 139
+    window | None`` -- so this class stays torch/SSH-free and unit-testable. Results are memoized per
+    ``(backbone, seed, a, b)``, so re-using the same window/seed (e.g. across a refine loop) is free.
     """
 
     def __init__(self, take_provider, *, fallback=None):
         self.take_provider = take_provider
         self.fallback = fallback
-        self._cache: dict[tuple[str, int], np.ndarray | None] = {}
-        self.n_generated = 0          # distinct takes materialized (proxy for pod work; incl. cache hits)
+        self._cache: dict[tuple[str, int, int, int], np.ndarray | None] = {}
+        self.n_generated = 0          # distinct windows materialized (proxy for pod work; incl. cache hits)
 
-    def _take(self, backbone: str, seed: int) -> np.ndarray | None:
-        key = (str(backbone), int(seed))
+    def _take(self, backbone: str, seed: int, a: int, b: int) -> np.ndarray | None:
+        key = (str(backbone), int(seed), int(a), int(b))
         if key not in self._cache:
             try:
-                take = self.take_provider(str(backbone), int(seed))
+                take = self.take_provider(str(backbone), int(seed), int(a), int(b))
             except Exception as exc:  # noqa: BLE001 - a failed pull must not break the edit
-                logger.warning("live take_provider(%s, seed=%s) failed: %s", backbone, seed, exc)
+                logger.warning("live take_provider(%s, seed=%s, [%s,%s)) failed: %s",
+                               backbone, seed, a, b, exc)
                 take = None
             if take is not None:
                 take = np.asarray(take, dtype=np.float32)
@@ -121,13 +122,13 @@ class LiveWindowGenerator:
 
     def generate(self, backbone: str, a: int, b: int, seed: int, *,
                  energy: float = 0.5, beats=None, context=None) -> np.ndarray | None:
-        take = self._take(backbone, seed)
+        take = self._take(backbone, seed, int(a), int(b))
         if take is None or take.shape[0] < 2:
             if self.fallback is not None:
                 return self.fallback.generate(backbone, a, b, seed, energy=energy,
                                               beats=beats, context=context)
             return None
-        return _window_slice(take, int(a), int(b))
+        return _window_slice(take, 0, int(b) - int(a))       # fit the window take to exactly (b-a)
 
 
 class ResilientWindowGenerator:
