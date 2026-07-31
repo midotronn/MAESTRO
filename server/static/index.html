@@ -37,7 +37,15 @@
     <section class="stage-col">
       <div class="viewer">
         <video id="video" controls playsinline preload="auto"></video>
-        <span class="viewer-tag">preview · base take</span>
+        <span class="viewer-tag" id="viewerTag">preview · base take</span>
+        <div class="render-ctl">
+          <select id="renderScope" class="render-scope" title="What to render">
+            <option value="window">edited window (fast)</option>
+            <option value="full">full dance + music</option>
+          </select>
+          <button id="renderBtn" class="render-btn" title="Render the edited dance on the GPU (Blender)">🎬 Render</button>
+        </div>
+        <div id="renderStatus" class="render-status"></div>
       </div>
 
       <div class="tl-wrap">

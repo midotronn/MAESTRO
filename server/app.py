@@ -43,6 +43,7 @@ from agentlodge.editor.remote_generator import (
 from agentlodge.editor.session import EditSession, SongAssets
 from agentlodge.editor.window_edit import MockWindowGenerator
 from server import processing
+from server import rendering
 
 HERE = Path(__file__).resolve().parent
 MEDIA = HERE / "media"
@@ -158,6 +159,12 @@ class RestoreBody(BaseModel):
     ckpt_id: str
 
 
+class RenderBody(BaseModel):
+    scope: str = "window"        # "window" (fast, silent) | "full" (whole song + music)
+    a_sec: float | None = None
+    b_sec: float | None = None
+
+
 # --------------------------------------------------------------------------- routes
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
@@ -256,6 +263,36 @@ def edit(sid: str, body: EditBody) -> dict:
     else:
         res = sess.edit(a, b, body.instruction, k=body.k, max_cycles=body.max_cycles)
     return {"result": res.summary(), "cycles": res.cycles, "state": _session_state(sid, sess)}
+
+
+@app.post("/api/session/{sid}/render")
+def render(sid: str, body: RenderBody) -> dict:
+    """Render the CURRENT edited motion on the pod's Blender; poll for status.
+
+    scope="window" renders the section that was just edited (fast); an explicit a_sec/b_sec overrides
+    it; scope="full" renders the whole dance with music. Falls back to full if there is no edit yet.
+    """
+    sess = _load_session(sid)
+    motion = sess.current_motion()
+    a = b = None
+    scope = body.scope
+    if scope == "window":
+        if body.a_sec is not None and body.b_sec is not None and body.b_sec > body.a_sec + 0.1:
+            a, b = _clamp_window(sess, body.a_sec, body.b_sec)
+        else:
+            head = sess.current()                      # default to the last edit's window
+            win = (getattr(head, "edit", None) or {}).get("window") if head else None
+            if win and len(win) == 2:
+                a, b = int(win[0]), int(win[1])
+            else:
+                scope = "full"                         # nothing edited yet -> render the whole dance
+    rendering.start_render(sid, motion, _song_dir(sid), scope=scope, a=a, b=b)
+    return rendering.get_render_job(sid)
+
+
+@app.get("/api/session/{sid}/render")
+def render_status(sid: str) -> dict:
+    return rendering.get_render_job(sid)
 
 
 @app.post("/api/session/{sid}/undo")

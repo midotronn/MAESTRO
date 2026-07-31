@@ -26,6 +26,51 @@ function escapeHtml(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// -------------------------------------------------------------- render the edited dance (Blender/pod)
+async function startRender() {
+  const scope = $("renderScope").value;
+  const body = { scope };
+  // window render targets the LAST EDIT by default; a valid drag selection overrides it
+  if (scope === "window" && ST.sel && ST.sel[1] > ST.sel[0] + 0.1) {
+    body.a_sec = ST.sel[0]; body.b_sec = ST.sel[1];
+  }
+  $("renderBtn").disabled = true;
+  const st = $("renderStatus"); st.style.display = "block"; st.className = "render-status";
+  st.textContent = "starting render\u2026";
+  try {
+    await api(`/api/session/${ST.sid}/render`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    pollRender();
+  } catch (e) { st.textContent = "\u26a0 " + e.message; $("renderBtn").disabled = false; }
+}
+
+async function pollRender() {
+  let j;
+  try { j = await api(`/api/session/${ST.sid}/render`); }
+  catch (e) { setTimeout(pollRender, 3000); return; }
+  const st = $("renderStatus");
+  st.textContent = (j.status === "rendering" ? "\u{1F3AC} " : "") + (j.message || j.status);
+  if (j.status === "done") {
+    const v = $("video");
+    v.src = `/api/session/${ST.sid}/media/${j.video}?t=` + Date.now();
+    v.load(); v.play().catch(() => {});
+    $("viewerTag").textContent = "edited render";
+    st.className = "render-status ok";
+    st.textContent = `\u2714 rendered${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
+    $("renderBtn").disabled = false;
+    toast("Edited dance rendered");
+    setTimeout(() => { st.style.display = "none"; }, 5000);
+    return;
+  }
+  if (j.status === "error") {
+    st.className = "render-status bad"; st.textContent = "\u26a0 " + (j.message || "render failed");
+    $("renderBtn").disabled = false;
+    toast("Render failed");
+    return;
+  }
+  setTimeout(pollRender, 3000);
+}
+
 // -------------------------------------------------------------- load songs + session
 async function init() {
   const { songs } = await api("/api/songs");
@@ -37,6 +82,7 @@ async function init() {
   wireTimeline();
   wireUpload();
   $("apply").onclick = runEdit;
+  $("renderBtn").onclick = startRender;
   $("undo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/undo`, { method: "POST" }));
   $("redo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/redo`, { method: "POST" }));
   $("instruction").addEventListener("keydown", (e) => { if (e.key === "Enter") runEdit(); });
