@@ -31,7 +31,7 @@ from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -316,9 +316,32 @@ def skeleton(sid: str, fps: int = 20) -> dict:
         "n_joints": int(joints.shape[1]),
         "bones": skel.BONES,
         "up_axis": 2,                                           # motion is Z-up
-        "joints": np.round(joints, 4).reshape(-1).tolist(),    # flat [T*22*3]
+        "joints": np.round(joints, 3).reshape(-1).tolist(),    # flat [T*22*3], mm precision
         "head": head.id if head else None,
     }
+
+
+@app.get("/api/session/{sid}/skeleton.bin")
+def skeleton_bin(sid: str, fps: int = 20) -> Response:
+    """Same as /skeleton but the joints are raw little-endian Float32 (5x smaller, no JSON parse).
+
+    Metadata rides in headers so the per-edit preview reload is snappy.
+    """
+    sess = _load_session(sid)
+    out_fps = int(max(8, min(int(fps), FPS)))
+    step = max(1, round(FPS / out_fps))
+    joints = skel.fk_joints(sess.current_motion())[::step].astype("<f4")
+    return Response(
+        content=joints.tobytes(),
+        media_type="application/octet-stream",
+        headers={
+            "X-Frames": str(int(joints.shape[0])),
+            "X-Joints": str(int(joints.shape[1])),
+            "X-Fps": str(FPS / step),
+            "X-Bones": json.dumps(skel.BONES),
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @app.post("/api/session/{sid}/undo")

@@ -4,7 +4,7 @@
 (function () {
   let scene, camera, renderer, controls, group, boneLines, jointPts, container;
   let frames = null, nFrames = 0, nJoints = 22, bones = [], fps = 15, floorZ = 0;
-  let cur = 0, playing = true, lastT = 0, raf = null;
+  let cur = 0, curF = 0, playing = true, lastT = 0, raf = null;
   let onFrameCb = null;
 
   const UP = 0.0; // feet target height
@@ -66,6 +66,7 @@
     group.add(jointPts);
 
     frames = f; nFrames = data.n_frames;         // assign LAST so the animate loop can't race ahead
+    curF = 0;
     setFrame(0);
     playing = true; lastT = performance.now();
   }
@@ -75,37 +76,47 @@
     return [frames[o], frames[o + 1], frames[o + 2]];
   }
 
-  function setFrame(i) {
+  // Render an (interpolated) pose at fractional frame position `fpos`. Interpolating between the
+  // downsampled keyframes gives buttery display-rate playback from a low source fps.
+  function _renderPose(fpos) {
     if (!frames || !nFrames || !jointPts || !boneLines) return;
-    i = Math.max(0, Math.min(nFrames - 1, i | 0));
-    cur = i;
-    // horizontal center on the root (joint 0) so the dancer stays framed; keep vertical
-    const r = _j(i, 0);
-    const cx = r[0], cy = r[1];
+    fpos = Math.max(0, Math.min(nFrames - 1e-4, fpos));
+    const i0 = Math.floor(fpos), i1 = Math.min(nFrames - 1, i0 + 1), t = fpos - i0;
+    const base0 = i0 * nJoints * 3, base1 = i1 * nJoints * 3;
+    const pos = (b, j, k) => frames[b + j * 3 + k];
+    const at = (j, k) => pos(base0, j, k) * (1 - t) + pos(base1, j, k) * t;   // lerp keyframes
+    const cx = at(0, 0), cy = at(0, 1);                      // center on root (dance in place)
     const jp = jointPts.geometry.attributes.position.array;
     for (let j = 0; j < nJoints; j++) {
-      const p = _j(i, j);
-      jp[j * 3] = p[0] - cx; jp[j * 3 + 1] = p[1] - cy; jp[j * 3 + 2] = p[2] - floorZ;
+      jp[j * 3] = at(j, 0) - cx; jp[j * 3 + 1] = at(j, 1) - cy; jp[j * 3 + 2] = at(j, 2) - floorZ;
     }
     jointPts.geometry.attributes.position.needsUpdate = true;
     const bp = boneLines.geometry.attributes.position.array;
     for (let k = 0; k < bones.length; k++) {
-      const c = _j(i, bones[k][0]), pa = _j(i, bones[k][1]);
-      const b = k * 6;
-      bp[b] = c[0] - cx; bp[b + 1] = c[1] - cy; bp[b + 2] = c[2] - floorZ;
-      bp[b + 3] = pa[0] - cx; bp[b + 4] = pa[1] - cy; bp[b + 5] = pa[2] - floorZ;
+      const c = bones[k][0], pa = bones[k][1], b = k * 6;
+      bp[b] = at(c, 0) - cx; bp[b + 1] = at(c, 1) - cy; bp[b + 2] = at(c, 2) - floorZ;
+      bp[b + 3] = at(pa, 0) - cx; bp[b + 4] = at(pa, 1) - cy; bp[b + 5] = at(pa, 2) - floorZ;
     }
     boneLines.geometry.attributes.position.needsUpdate = true;
-    if (onFrameCb) onFrameCb(cur, nFrames, cur / fps);
+    cur = Math.round(fpos);
+    if (onFrameCb) onFrameCb(cur, nFrames, fpos / fps);
+  }
+
+  function setFrame(i) {                        // scrub to an exact frame
+    curF = Math.max(0, Math.min(nFrames - 1, i | 0));
+    _renderPose(curF);
   }
 
   function animate() {
     raf = requestAnimationFrame(animate);
     const now = performance.now();
+    const dt = Math.min(0.05, (now - lastT) / 1000);        // clamp big gaps (tab switch)
+    lastT = now;
     if (playing && frames && nFrames > 1) {
-      const adv = ((now - lastT) / 1000) * fps;
-      if (adv >= 1) { cur = (cur + Math.floor(adv)) % nFrames; setFrame(cur); lastT = now; }
-    } else { lastT = now; }
+      curF += dt * fps;                                     // accumulate time (no fractional loss)
+      if (curF >= nFrames) curF -= nFrames;
+      _renderPose(curF);
+    }
     if (controls) controls.update();
     if (renderer) renderer.render(scene, camera);
   }
