@@ -48,7 +48,8 @@ def _to_edge_zup(raw):
 def _trim_zup(motion_zup: np.ndarray, in_start: int, in_len: int, a: int, b: int) -> np.ndarray:
     """Trim a Z-up take generated from feats[in_start:in_start+in_len] down to the [a,b) window.
 
-    LODGE/EDGE output length need not equal the input feature length, so map proportionally.
+    LODGE/EDGE output length need not equal the input feature length, so first map the [a,b) span
+    proportionally, then resample to exactly ``b-a`` frames (the window length the editor expects).
     """
     out_len = int(motion_zup.shape[0])
     if in_len <= 0:
@@ -57,9 +58,11 @@ def _trim_zup(motion_zup: np.ndarray, in_start: int, in_len: int, a: int, b: int
     lo = int(round((a - in_start) * scale))
     hi = int(round((b - in_start) * scale))
     lo, hi = max(0, min(lo, out_len)), max(0, min(hi, out_len))
-    if hi - lo < 2:
+    span = motion_zup[lo:hi]
+    if span.shape[0] < 2:
         return motion_zup
-    return np.ascontiguousarray(motion_zup[lo:hi])
+    from agentlodge.dance.transition import retime
+    return np.ascontiguousarray(retime(span, int(b) - int(a)))
 
 
 def _generate(sid: str, backbone: str, seed: int, window=None) -> np.ndarray:
@@ -94,10 +97,18 @@ def _generate(sid: str, backbone: str, seed: int, window=None) -> np.ndarray:
         feats = np.load(feats_p).astype(np.float32)
         in_start, in_end = 0, feats.shape[0]
         if window is not None:
+            # LODGE's global stage needs its full 8x256 = 2048-frame structure; a bare window is too
+            # short. Expand to a 2048-frame context region containing [a, b) (still << the whole song),
+            # generate, then trim back to the edit window.
             a, b = window
-            pad = 60                                        # ~2s context for the global stage
-            in_start = max(0, a - pad)
-            in_end = min(feats.shape[0], b + pad)
+            MIN = 2048
+            L = feats.shape[0]
+            if L <= MIN:
+                in_start, in_end = 0, L
+            else:
+                center = (a + b) // 2
+                in_start = max(0, min(center - MIN // 2, L - MIN))
+                in_end = in_start + MIN
             feats = feats[in_start:in_end]
         job = _run_lodge_job(feats, sd, work, seed=seed)
         if job.get("error"):
