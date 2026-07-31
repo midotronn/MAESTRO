@@ -116,3 +116,43 @@ def test_regenerate_without_generator_degrades_gracefully():
         AEmod.plan_edit = orig
     assert r.motion.shape == m.shape                     # no crash, kept motion
     assert "kept the current motion" in r.log[0]["note"]
+
+
+# --------------------------------------------------------------------------- refine loop
+def test_refine_escalates_when_first_attempt_misses(monkeypatch):
+    # attempt 1 is a no-op (energy amount 0 -> no change -> verify fails); the refine feedback then
+    # yields a stronger plan that actually lowers energy. Best (2nd) attempt is kept.
+    def fake_plan(instruction, metrics, a_sec, b_sec, *, api_key=None, feedback=None):
+        if feedback is None:
+            return AE.AgentPlan("weak", [AE.PlanStep("energy", {"direction": "down", "amount": 0.0}, "x")],
+                                expect_metric="energy", expect_dir="down")
+        return AE.AgentPlan("stronger", [AE.PlanStep("energy", {"direction": "down", "amount": 0.9}, "harder")],
+                            expect_metric="energy", expect_dir="down")
+    monkeypatch.setattr(AE, "plan_edit", fake_plan)
+    m = _base(300, energy=0.9)
+    r = AE.run_agent_edit(m, 90, 210, "make it much calmer", beats=_beats(), max_refine=2)
+    assert r.ok                                          # the refined attempt satisfies the goal
+    assert r.metrics_after["energy"] < r.metrics_before["energy"]
+    cycles = {e["cycle"] for e in r.log}
+    assert cycles == {1, 2}                              # it took a refine cycle
+    assert "refined 1x" in r.feedback
+
+
+def test_keyword_refine_escalates_amount():
+    p0 = AE.plan_edit("make it calmer", {}, 3, 7)                      # first attempt
+    p1 = AE.plan_edit("make it calmer", {}, 3, 7, feedback={"cycle": 1})  # refine
+    assert p1.steps[0].params["amount"] > p0.steps[0].params["amount"]
+
+
+def test_goalless_op_skips_refine(monkeypatch):
+    # reverse has no measurable goal -> exactly one attempt, no refine calls
+    calls = {"n": 0}
+    def fake_plan(*a, **k):
+        calls["n"] += 1
+        return AE.AgentPlan("reverse", [AE.PlanStep("reverse", {}, "backward")],
+                            expect_metric=None, expect_dir=None)
+    monkeypatch.setattr(AE, "plan_edit", fake_plan)
+    m = _base(200)
+    r = AE.run_agent_edit(m, 60, 150, "reverse this", beats=_beats(200), max_refine=3)
+    assert calls["n"] == 1                               # planned once, no refine
+    assert {e["cycle"] for e in r.log} == {1}

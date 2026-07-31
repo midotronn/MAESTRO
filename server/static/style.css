@@ -193,6 +193,8 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
 .agentlog .ltool { flex: 0 0 auto; font-weight: 650; color: var(--blue); text-transform: none; }
 .agentlog .lwhy, .agentlog .lnote { color: var(--muted); flex: 1 1 100%; padding-left: 24px; word-break: break-word; }
 .agentlog .ldelta { color: var(--ok); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.agentlog .cyc-div { display: block; padding: 2px 0 1px; font-size: 10px; font-weight: 650;
+  text-transform: uppercase; letter-spacing: .4px; color: var(--faint); background: none; border: none; }
 
 /* metrics */
 .metrics { width: 100%; border-collapse: collapse; font-size: 13px; }

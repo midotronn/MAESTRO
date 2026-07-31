@@ -43,9 +43,10 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================ toolbox
-def _tool_beat_align(clip, ctx, *, strength: float = 1.0):
+def _tool_beat_align(clip, ctx, *, strength: float = 1.0, passes: int = 3):
     strength = float(np.clip(strength, 0.0, 1.0))
-    out = beat_align_warp(clip, ctx["wbeats"], strength=strength, passes=3)
+    passes = int(np.clip(passes, 1, 8))
+    out = beat_align_warp(clip, ctx["wbeats"], strength=strength, passes=passes)
     return out, f"snapped the window's accents onto the music beats (strength {strength:.1f})"
 
 
@@ -117,7 +118,7 @@ class ToolSpec:
 TOOLS: dict[str, ToolSpec] = {
     "beat_align": ToolSpec(_tool_beat_align,
         "time-warp so the motion accents land on the music beats; raises beat alignment (BAS)",
-        'params: {"strength": 0..1}'),
+        'params: {"strength": 0..1, "passes": 1..8 (more = tighter)}'),
     "energy": ToolSpec(_tool_energy,
         "scale movement size; up = bigger/livelier/more energetic, down = calmer/smaller",
         'params: {"direction": "up"|"down", "amount": 0..1}'),
@@ -165,19 +166,36 @@ _OBJ_PLAN = {
 }
 
 
-def _keyword_plan(instruction: str) -> AgentPlan:
+def _escalate_params(tool: str, params: dict, cycle: int) -> dict:
+    """Push a tool harder on a refine cycle (offline escalation for the keyword planner)."""
+    p = dict(params)
+    if tool in ("energy", "smooth", "sharpen"):
+        base = float(p.get("amount", 0.5))
+        p["amount"] = float(min(1.0, base + 0.25 * cycle))
+    elif tool == "beat_align":
+        p["passes"] = int(min(8, int(p.get("passes", 3)) + 2 * cycle))
+        p["strength"] = 1.0
+    elif tool == "regenerate":
+        p["k"] = int(p.get("k", 3)) + 2 * cycle          # search more seeds
+    return p
+
+
+def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
     goal = parse_window_instruction(instruction, api_key=None)
     tool, params, metric, direction, why = _OBJ_PLAN.get(
         goal.objective, ("beat_align", {"strength": 1.0}, "bas", "up", "improve musical timing"))
     p = dict(params)
     if "amount" not in p and tool in ("energy", "smooth", "sharpen"):
         p["amount"] = 0.8 if goal.magnitude >= 0.7 else 0.5
+    if feedback:                                            # refine: push the same tool harder
+        p = _escalate_params(tool, p, int(feedback.get("cycle", 1)))
+        why = f"push harder ({why})"
     return AgentPlan(summary=f"{goal.objective.replace('_', ' ')} the selected window",
                      steps=[PlanStep(tool, p, why)], expect_metric=metric, expect_dir=direction)
 
 
 def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
-              api_key: str) -> AgentPlan:
+              api_key: str, feedback: dict | None = None) -> AgentPlan:
     from openai import OpenAI
 
     tool_lines = "\n".join(f"- {name}({spec.params}): {spec.doc}" for name, spec in TOOLS.items())
@@ -195,9 +213,18 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         ' "expect": {"metric": "bas"|"energy"|"jerk"|"foot"|null, "direction": "up"|"down"|null}}\n'
         "Pick tools by meaning, not keywords; you may combine (e.g. energy down + beat_align)."
     )
+    if feedback:                                            # Self-Refine: revise from what went wrong
+        prompt += (
+            "\n\nYOUR PREVIOUS ATTEMPT under-delivered. Previous steps: "
+            f"{json.dumps(feedback.get('prev_steps'))}. It moved {feedback.get('metric')} from "
+            f"{feedback.get('before'):.3f} to {feedback.get('after'):.3f}, but the goal was to move it "
+            f"{feedback.get('direction')}. REVISE: push HARDER (larger amounts / more passes / more "
+            "seeds) and/or add or swap tools. Do not repeat the same weak plan."
+        )
     client = OpenAI(api_key=api_key)
-    resp = client.chat.completions.create(model="gpt-4o-mini", max_tokens=400, temperature=0.2,
-                                          messages=[{"role": "user", "content": prompt}])
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini", max_tokens=400, temperature=(0.5 if feedback else 0.2),
+        messages=[{"role": "user", "content": prompt}])
     text = resp.choices[0].message.content or ""
     m = re.search(r"\{.*\}", text, re.DOTALL)
     if not m:
@@ -218,14 +245,18 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
 
 
 def plan_edit(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
-              *, api_key: str | None = None) -> AgentPlan:
-    """Plan an edit as an ordered tool sequence (LLM agent if ``api_key`` else keyword fallback)."""
+              *, api_key: str | None = None, feedback: dict | None = None) -> AgentPlan:
+    """Plan an edit as an ordered tool sequence (LLM agent if ``api_key`` else keyword fallback).
+
+    ``feedback`` (from a failed prior attempt) drives the Self-Refine revision: the LLM is told what
+    it tried and by how much it missed; the keyword planner escalates the same tool's magnitude.
+    """
     if api_key:
         try:
-            return _llm_plan(instruction, ctx_metrics, a_sec, b_sec, api_key)
+            return _llm_plan(instruction, ctx_metrics, a_sec, b_sec, api_key, feedback=feedback)
         except Exception as exc:  # noqa: BLE001 - robust offline fallback
             logger.warning("agent plan via LLM failed (%s); using keyword plan", exc)
-    return _keyword_plan(instruction)
+    return _keyword_plan(instruction, feedback=feedback)
 
 
 # ============================================================================ execute
@@ -238,18 +269,61 @@ def _verify(plan: AgentPlan, before: dict, after: dict) -> tuple[bool, str]:
         ok = hi > lo + 1e-3
     else:
         ok = hi < lo - 1e-3
-    arrow = "->"
-    return ok, f"{metric} {lo:.3f} {arrow} {hi:.3f}"
+    return ok, f"{metric} {lo:.3f} -> {hi:.3f}"
+
+
+def _reward(plan: AgentPlan, before: dict, after: dict) -> float:
+    """How far the edit moved the target metric in the intended direction (higher = better)."""
+    m, d = plan.expect_metric, plan.expect_dir
+    if not m or not d:
+        return 0.0
+    delta = after.get(m, 0.0) - before.get(m, 0.0)
+    return delta if d == "up" else -delta
+
+
+def _execute_plan(base_clip: np.ndarray, plan: AgentPlan, ctx: dict, wbeats, *,
+                  cycle: int, emit) -> tuple[np.ndarray, list]:
+    """Apply a plan's tools in order to a FRESH copy of the base window; return (clip, step log)."""
+    cur = np.ascontiguousarray(base_clip, dtype=np.float32)
+    log: list = []
+    for i, step in enumerate(plan.steps, 1):
+        spec = TOOLS.get(step.tool)
+        m_before = window_metrics(cur, wbeats)
+        if spec is None:
+            log.append({"cycle": cycle, "step": i, "tool": step.tool, "why": step.why,
+                        "note": "unknown tool - skipped", "metrics_before": m_before,
+                        "metrics_after": m_before})
+            continue
+        try:
+            cur2, note = spec.fn(cur, ctx, **(step.params or {}))
+        except Exception as exc:  # noqa: BLE001 - a bad tool step must not abort the edit
+            logger.warning("agent tool %s failed: %s", step.tool, exc)
+            log.append({"cycle": cycle, "step": i, "tool": step.tool, "why": step.why,
+                        "note": f"failed ({exc}) - skipped", "metrics_before": m_before,
+                        "metrics_after": m_before})
+            continue
+        cur2 = np.ascontiguousarray(cur2, dtype=np.float32)
+        m_after = window_metrics(cur2, wbeats)
+        log.append({"cycle": cycle, "step": i, "tool": step.tool, "params": step.params,
+                    "why": step.why, "note": note, "metrics_before": m_before,
+                    "metrics_after": m_after})
+        cur = cur2
+        emit({"phase": "step", "cycle": cycle, "step": i, "n_steps": len(plan.steps),
+              "tool": step.tool, "why": step.why, "note": note, "metrics": m_after})
+    return cur, log
 
 
 def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
                    generator=None, *, beats=None, api_key: str | None = None,
-                   blend_frames: int = 15, k: int = 3, max_cycles: int = 1,
+                   blend_frames: int = 15, k: int = 3, max_cycles: int = 1, max_refine: int = 2,
                    progress_cb=None, context=None) -> WindowEditResult:
-    """Plan (agentically) → apply tools in order (logging each) → splice → verify.
+    """Plan → execute tools → verify → **refine** (AgentBanana propose/apply/verify/refine).
 
-    Returns a :class:`WindowEditResult` whose ``log`` is the step-by-step agent walk and
-    ``agent_summary`` the one-line plan, for the UI to display.
+    Each attempt runs a plan on a FRESH copy of the window (so refinements don't compound-distort).
+    When the plan has a measurable goal and verify fails, the miss is fed back to the planner, which
+    revises (stronger amounts / more seeds / different tools); we keep the best attempt by how far it
+    moved the target metric. Returns a :class:`WindowEditResult` whose ``log`` is the full step-by-step
+    walk (across attempts) for the UI.
     """
     def _emit(ev: dict) -> None:
         if progress_cb is not None:
@@ -264,49 +338,54 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     if not (0 <= a < b <= L):
         raise ValueError(f"invalid window [{a}, {b}) for motion of length {L}")
     wbeats = _window_beats(beats, a, b)
-    before = window_metrics(motion[a:b], wbeats)
+    base_clip = np.ascontiguousarray(motion[a:b], dtype=np.float32)
+    before = window_metrics(base_clip, wbeats)
     a_sec, b_sec = a / 30.0, b / 30.0
+    ctx = {"wbeats": wbeats, "a": a, "b": b, "generator": generator, "context": context,
+           "blend_frames": blend_frames, "k": k}
 
     plan = plan_edit(instruction, before, a_sec, b_sec, api_key=api_key)
     _emit({"phase": "plan", "summary": plan.summary,
            "steps": [{"tool": s.tool, "why": s.why} for s in plan.steps],
            "metrics_before": before})
 
-    ctx = {"wbeats": wbeats, "a": a, "b": b, "generator": generator, "context": context,
-           "blend_frames": blend_frames, "k": k}
-    cur = np.ascontiguousarray(motion[a:b], dtype=np.float32)
-    log: list = []
-    for i, step in enumerate(plan.steps, 1):
-        spec = TOOLS.get(step.tool)
-        m_before = window_metrics(cur, wbeats)
-        if spec is None:
-            log.append({"step": i, "tool": step.tool, "why": step.why,
-                        "note": "unknown tool - skipped", "metrics": m_before})
-            continue
-        try:
-            cur2, note = spec.fn(cur, ctx, **(step.params or {}))
-        except Exception as exc:  # noqa: BLE001 - a bad tool step must not abort the edit
-            logger.warning("agent tool %s failed: %s", step.tool, exc)
-            log.append({"step": i, "tool": step.tool, "why": step.why,
-                        "note": f"failed ({exc}) - skipped", "metrics": m_before})
-            continue
-        cur2 = np.ascontiguousarray(cur2, dtype=np.float32)
-        m_after = window_metrics(cur2, wbeats)
-        entry = {"step": i, "tool": step.tool, "params": step.params, "why": step.why,
-                 "note": note, "metrics_before": m_before, "metrics_after": m_after}
-        log.append(entry)
-        cur = cur2
-        _emit({"phase": "step", "step": i, "n_steps": len(plan.steps), "tool": step.tool,
-               "why": step.why, "note": note, "metrics": m_after})
+    full_log: list = []
+    best = None  # (reward, clip, after, ok, verdict, plan, cycle)
+    refinable = bool(plan.expect_metric and plan.expect_dir)
+    total_attempts = (max(0, int(max_refine)) + 1) if refinable else 1
 
+    for cycle in range(total_attempts):
+        cur, step_log = _execute_plan(base_clip, plan, ctx, wbeats, cycle=cycle + 1, emit=_emit)
+        full_log.extend(step_log)
+        after = window_metrics(cur, wbeats)
+        ok, verdict = _verify(plan, before, after)
+        reward = _reward(plan, before, after)
+        _emit({"phase": "verify", "cycle": cycle + 1, "ok": ok, "feedback": verdict,
+               "metrics_after": after})
+        if best is None or reward > best[0]:
+            best = (reward, cur, after, ok, verdict, plan, cycle + 1)
+        if ok or cycle + 1 >= total_attempts:
+            break
+        # ---- refine: feed the miss back to the planner ----
+        fb = {"prev_summary": plan.summary,
+              "prev_steps": [{"tool": s.tool, "params": s.params} for s in plan.steps],
+              "metric": plan.expect_metric, "direction": plan.expect_dir,
+              "before": before.get(plan.expect_metric, 0.0),
+              "after": after.get(plan.expect_metric, 0.0), "cycle": cycle + 1}
+        plan = plan_edit(instruction, after, a_sec, b_sec, api_key=api_key, feedback=fb)
+        _emit({"phase": "refine", "cycle": cycle + 2, "summary": plan.summary,
+               "steps": [{"tool": s.tool, "why": s.why} for s in plan.steps]})
+
+    reward, cur, after, ok, verdict, win_plan, win_cycle = best
     spliced = splice_window(motion, a, b, cur, blend_frames=blend_frames)
     after = window_metrics(spliced[a:b], wbeats)
-    ok, verdict = _verify(plan, before, after)
-    feedback = (verdict if ok else f"partially applied: {verdict}")
+    n_attempts = max(e.get("cycle", 1) for e in full_log) if full_log else 1
+    refined = f" (refined {n_attempts - 1}x)" if n_attempts > 1 else ""
+    feedback = (verdict if ok else f"partially applied: {verdict}") + refined
     _emit({"phase": "done", "ok": ok, "metrics_after": after, "feedback": feedback,
-           "summary": plan.summary})
+           "summary": win_plan.summary})
 
     goal = EditGoal(objective="agent", backbone="agent", magnitude=0.5, raw=instruction)
     return WindowEditResult(ok, goal, (a, b), spliced, before, after, backbone="agent",
-                            chosen_seed=None, cycles=log, feedback=feedback,
-                            log=log, agent_summary=plan.summary)
+                            chosen_seed=None, cycles=full_log, feedback=feedback,
+                            log=full_log, agent_summary=win_plan.summary)

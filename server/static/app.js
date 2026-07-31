@@ -229,24 +229,18 @@ async function runEditHTTP(a, b, instruction) {
 function onProgress(ev) {
   if (ev.phase === "plan") {
     $("goal").innerHTML = `<b>Agent plan:</b> ${escapeHtml(ev.summary || "")}`;
-    const steps = ev.steps || [];
-    $("agentlog").innerHTML = steps.map((s, i) =>
-      `<li class="pending"><span class="lstep">${i + 1}</span>`
-      + `<span class="ltool">${escapeHtml(s.tool)}</span>`
-      + `<span class="lwhy">${escapeHtml(s.why || "")}</span></li>`).join("");
+    $("agentlog").innerHTML = "";
     $("progbar").style.width = "8%";
-    $("progtext").textContent = `planning ${steps.length} step(s)...`;
+    $("progtext").textContent = `planning ${(ev.steps || []).length} step(s)...`;
+  } else if (ev.phase === "refine") {
+    $("progbar").style.width = "30%";
+    $("progtext").textContent = `refining (attempt ${ev.cycle}): ${ev.summary || ""}`;
   } else if (ev.phase === "step") {
-    const p = ev.n_steps ? Math.round((ev.step / ev.n_steps) * 100) : 50;
+    const p = ev.n_steps ? Math.round(20 + (ev.step / ev.n_steps) * 60) : 50;
     $("progbar").style.width = p + "%";
-    $("progtext").textContent = `step ${ev.step}/${ev.n_steps}: ${ev.tool}`;
-    const li = $("agentlog").children[ev.step - 1];
-    if (li) {
-      li.classList.remove("pending"); li.classList.add("done");
-      li.innerHTML = `<span class="lstep">${ev.step}</span>`
-        + `<span class="ltool">${escapeHtml(ev.tool)}</span>`
-        + `<span class="lnote">${escapeHtml(ev.note || ev.why || "")}</span>`;
-    }
+    $("progtext").textContent = `attempt ${ev.cycle || 1} \u00b7 step ${ev.step}/${ev.n_steps}: ${ev.tool}`;
+  } else if (ev.phase === "verify") {
+    $("progtext").textContent = `attempt ${ev.cycle}: ${ev.ok ? "goal met \u2714" : "short of goal, refining\u2026"} (${ev.feedback || ""})`;
   } else if (ev.phase === "candidate") {   // legacy best-of-K generators
     const p = ev.total ? Math.round((ev.done / ev.total) * 100) : 0;
     $("progbar").style.width = p + "%";
@@ -271,14 +265,23 @@ function metricDeltaStr(before, after) {
 function renderAgentLog(log) {
   const el = $("agentlog");
   if (!log || !log.length) { el.innerHTML = ""; return; }
-  el.innerHTML = log.map((e) => {
+  let html = "";
+  let lastCycle = null;
+  const multi = log.some((e) => (e.cycle || 1) > 1);
+  for (const e of log) {
+    const cyc = e.cycle || 1;
+    if (multi && cyc !== lastCycle) {
+      html += `<li class="cyc-div">${cyc === 1 ? "attempt 1" : "refine \u2192 attempt " + cyc}</li>`;
+      lastCycle = cyc;
+    }
     const delta = metricDeltaStr(e.metrics_before, e.metrics_after);
-    return `<li class="done"><span class="lstep">${e.step}</span>`
+    html += `<li class="done"><span class="lstep">${e.step}</span>`
       + `<span class="ltool">${escapeHtml(e.tool)}</span>`
       + `<span class="lnote">${escapeHtml(e.note || e.why || "")}`
       + (delta ? ` <span class="ldelta">${delta}</span>` : "")
       + `</span></li>`;
-  }).join("");
+  }
+  el.innerHTML = html;
 }
 
 function onFinal(payload) {
