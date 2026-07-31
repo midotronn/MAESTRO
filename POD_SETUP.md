@@ -74,19 +74,42 @@ through the same `WindowGenerator` protocol and degrades gracefully — if the p
 (unreachable, or the song isn't preprocessed for generation) it falls back to the local bank, then to
 the offline mock, so the UI never breaks.
 
-### Requirements
-Live mode needs a **generation-provisioned** pod, *not* a render-only one:
-- CUDA torch (`setup_pod.sh` with the default `AGENTLODGE_TORCH_INDEX=cu128`, **not** `cpu`),
-- the LODGE + EDGE checkpoints (`runpod_bootstrap.sh`), and
-- the song preprocessed for regen: `lodge_fd_<sid>_feats.npy`, `edge<sid>_slices.npy`, and
-  `LODGE/data/finedance/music_wav/<sid>.wav` present in `/workspace` (a byproduct of step 3 / an
-  upload). Seed 0 also reuses `<lodge|edge>_fd_<sid>_full.npy` when present.
+### Requirements — provision a generation pod
+Live mode needs a **generation-provisioned** pod, *not* a render-only one. One command does the whole
+stack (verified on an RTX PRO 4500 Blackwell / sm_120, CUDA 13 driver):
+
+```powershell
+.\scripts\pod.ps1 ssh "cd /workspace/AgentLODGE && WORKSPACE=/workspace bash scripts/setup_gen_pod.sh"
+```
+
+`setup_gen_pod.sh` is idempotent and bakes in the hard-won fixes:
+- **CUDA torch that works on Blackwell** — it *uninstalls* any pre-existing `torch==*+cpu` first (a
+  leftover CPU wheel has a higher version string than every `cu128` wheel, so a plain install is a
+  silent no-op), installs `cu128`, and **gates on a real GPU matmul** before continuing.
+- **LODGE + EDGE weights** via `scripts/download_gdrive.py` (the pods' `gdown` is a broken 6.1.0 that
+  fails on Google's large-file "virus scan" page; the helper parses the confirm form instead).
+- **`pyrender` + OSMesa** (LODGE's `render.py` imports pyrender at module load — miss it and every
+  LODGE gen dies with `ModuleNotFoundError: pyrender`).
+- **EDGE venv + Jukebox** (`/workspace/EDGE/.venv` shares the CUDA venv via a `.pth`; jukebox +
+  jukemirlib install `--no-deps` so they don't downgrade torch) — verified importing under torch 2.11.
+- **LODGE on GPU** — repoints `/workspace/LODGE/.venv` at the CUDA venv.
+
+Then preprocess each song you want to live-edit (LODGE feats are fast; EDGE Jukebox slices need the
+~10GB 5B prior, downloaded once):
+
+```powershell
+.\scripts\pod.ps1 ssh "cd /workspace/AgentLODGE && WORKSPACE=/workspace bash scripts/setup_gen_pod.sh --song <sid>"
+# or LODGE-only (skip Jukebox):  ... setup_gen_pod.sh --song <sid> --lodge-only
+```
+
+The song's `LODGE/data/finedance/music_wav/<sid>.wav` must exist (a byproduct of an upload / step 3).
+Seed 0 also reuses `<lodge|edge>_fd_<sid>_full.npy` when present.
 
 ### Turn it on
 ```powershell
 # point at the pod (steps 1-2 above), then:
 $env:AGENTLODGE_LIVE="1"                 # enable live pod mode
-$env:AGENTLODGE_POD_PYTHON="/root/al_venv/bin/python"   # pod venv python (optional; default: python)
+$env:AGENTLODGE_POD_PYTHON="/workspace/AgentLODGE/.venv/bin/python"   # the CUDA venv on the gen pod
 # optional search budget (each new seed is minutes of GPU):
 $env:AGENTLODGE_LIVE_K="2"; $env:AGENTLODGE_LIVE_CYCLES="2"
 uvicorn server.app:app --host 127.0.0.1 --port 8000
