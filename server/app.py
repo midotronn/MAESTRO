@@ -55,6 +55,15 @@ app = FastAPI(title="AgentLODGE Interactive Editor")
 _sessions: dict[str, EditSession] = {}
 
 
+@app.on_event("startup")
+def _prewarm() -> None:
+    # warm the pod's torch/scipy page cache so the first render's FK is fast (best-effort, async)
+    try:
+        rendering.prewarm_pod()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 # --------------------------------------------------------------------------- session loading
 def _song_dir(sid: str) -> Path:
     d = (MEDIA / sid).resolve()

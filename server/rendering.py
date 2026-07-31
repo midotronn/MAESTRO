@@ -27,6 +27,59 @@ def get_render_job(sid: str) -> dict:
         return dict(_RJOBS.get(sid, {"status": "idle", "message": "", "progress": 0}))
 
 
+def _scp_many(cfg, locals_list, remote_dir: str, timeout: int = 300):
+    """scp several local files to one remote dir in a SINGLE connection (one handshake, not N)."""
+    import subprocess
+    if not locals_list:
+        return None
+    return subprocess.run(
+        ["scp", "-P", cfg.port, "-i", cfg.key, *[str(p) for p in locals_list],
+         f"{cfg.target}:{remote_dir}/"],
+        capture_output=True, text=True, timeout=timeout)
+
+
+# scripts change rarely; upload them once per (server process, host) so repeat renders skip ~4 scp
+# handshakes. Restarting the server re-sends them, so edits to the pod scripts still propagate.
+_SCRIPTS_SENT: set = set()
+_PREWARMED: set = set()
+
+
+def prewarm_pod() -> None:
+    """Best-effort: on server start, page-cache the pod venv's torch/scipy (so the FIRST render's
+    forward-kinematics pays ~9s, not the ~15-25s cold import off the network volume) AND upload the
+    render scripts (so the first render skips ~4 scp handshakes). Fire-and-forget; no-op if
+    unconfigured or already done this process."""
+    cfg = pod_config()
+    if not cfg.host or cfg.host in _PREWARMED:
+        return
+    _PREWARMED.add(cfg.host)
+    al_py = os.environ.get("AGENTLODGE_POD_PYTHON", f"{cfg.ws}/AgentLODGE/.venv/bin/python")
+
+    def _w() -> None:
+        try:
+            _upload_scripts(cfg)
+            _ssh(cfg, f"CUDA_VISIBLE_DEVICES= {al_py} -c 'import torch, numpy, scipy.signal' "
+                      f">/dev/null 2>&1; echo warmed", timeout=180)
+        except Exception:  # noqa: BLE001 - warming is best-effort
+            pass
+
+    threading.Thread(target=_w, daemon=True).start()
+
+
+def _upload_scripts(cfg) -> None:
+    """Upload the render scripts once per (server process, host), batched into a single scp."""
+    if cfg.host in _SCRIPTS_SENT:
+        return
+    _ssh(cfg, f"mkdir -p {cfg.ws}/AgentLODGE/scripts")
+    scripts = [REPO / "scripts" / s for s in
+               ("render_one_ybot.sh", "render_blender_dance.py", "blender_render_ybot.py",
+                "blender_studio.py")]
+    scripts = [p for p in scripts if p.exists()]
+    r = _scp_many(cfg, scripts, f"{cfg.ws}/AgentLODGE/scripts")
+    if r is not None and r.returncode == 0:
+        _SCRIPTS_SENT.add(cfg.host)
+
+
 def _set(sid: str, **kw) -> None:
     with _RLOCK:
         _RJOBS.setdefault(sid, {}).update(kw)
@@ -75,42 +128,53 @@ def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
         np.save(local_npy, motion.astype(np.float32))
 
         _set(sid, progress=16, message="uploading the edited motion\u2026")
-        _ssh(cfg, f"mkdir -p {ws}/AgentLODGE/scripts")
-        for s in ("render_one_ybot.sh", "render_blender_dance.py", "blender_render_ybot.py",
-                  "blender_studio.py"):
-            p = REPO / "scripts" / s
-            if p.exists():
-                _scp_to(cfg, str(p), f"{ws}/AgentLODGE/scripts/{s}")
+        _upload_scripts(cfg)                                 # once per process (pre-done at startup)
         remote_npy = f"{ws}/edit_render_{sid}.npy"
         if _scp_to(cfg, str(local_npy), remote_npy).returncode != 0:
             _set(sid, status="error", progress=0, message="upload of the motion failed.")
             return
 
         frames = int(motion.shape[0])
-        est_sec = max(60, int(frames * 1.5))                 # observed ~1.5s/frame incl. FK + startup
         base = f"{ws}/edit_render_{sid}"
         audio_sid = sid if with_audio else ""
         # Render FK runs in the persistent CUDA venv (the old /root/al_venv is wiped on pod restart).
         al_py = os.environ.get("AGENTLODGE_POD_PYTHON", f"{ws}/AgentLODGE/.venv/bin/python")
+        # Fast preview vs high-quality export. The window preview drops resolution/samples AND runs the
+        # SMPL forward-kinematics on CPU (CUDA_VISIBLE_DEVICES= empty) -- torch's CUDA context init alone
+        # costs ~12s and EEVEE renders through EGL/OpenGL, not CUDA, so the GPU render is unaffected.
+        # Measured: 180-frame window in ~36s at 480x480/16 (well under a minute) vs ~65s with GPU-FK/540.
+        if scope == "window":
+            rw = os.environ.get("AGENTLODGE_RENDER_WIN_W", "448")
+            rh = os.environ.get("AGENTLODGE_RENDER_WIN_H", "448")
+            rs = os.environ.get("AGENTLODGE_RENDER_WIN_SAMPLES", "8")
+            render_env = f"RENDER_W={rw} RENDER_H={rh} RENDER_SAMPLES={rs} CUDA_VISIBLE_DEVICES="
+            est_sec = 25 + int(frames * 0.25)
+        else:
+            rw = os.environ.get("AGENTLODGE_RENDER_FULL_W", "1080")
+            rh = os.environ.get("AGENTLODGE_RENDER_FULL_H", "1080")
+            rs = os.environ.get("AGENTLODGE_RENDER_FULL_SAMPLES", "96")
+            render_env = f"RENDER_W={rw} RENDER_H={rh} RENDER_SAMPLES={rs}"
+            est_sec = 45 + int(frames * 1.6)
         # Launch the render in the BACKGROUND with done/fail markers, then poll -- a blocking ssh over
         # a multi-minute render tends to hang its channel even after the render finishes.
         launch = _ssh(
             cfg,
             f"cd {ws}/AgentLODGE && sed -i 's/\\r$//' scripts/render_one_ybot.sh; "
             f"rm -f {base}.mp4 {base}.done {base}.fail {base}.log; "
-            f"setsid bash -c 'AL_PY={al_py} WORKSPACE={ws} bash scripts/render_one_ybot.sh {remote_npy} "
-            f"{base}.mp4 {audio_sid} >> {base}.log 2>&1 && touch {base}.done || touch {base}.fail' "
+            f"setsid bash -c 'AL_PY={al_py} WORKSPACE={ws} {render_env} bash scripts/render_one_ybot.sh "
+            f"{remote_npy} {base}.mp4 {audio_sid} >> {base}.log 2>&1 && touch {base}.done || touch {base}.fail' "
             f"</dev/null >/dev/null 2>&1 & echo LAUNCHED",
             timeout=40)
         if "LAUNCHED" not in (launch.stdout or ""):
             _set(sid, status="error", progress=0, message="could not start the render on the pod.")
             return
         _set(sid, progress=24, frames=frames,
-             message=f"rendering {frames} frames on the GPU (~{max(1, est_sec // 60)} min)\u2026")
+             message=f"rendering {frames} frames on the GPU "
+                     f"({'~' + str(est_sec) + 's' if est_sec < 90 else '~' + str(max(1, est_sec // 60)) + ' min'})\u2026")
 
         deadline = time.time() + 60 * 45
         while time.time() < deadline:
-            time.sleep(10)
+            time.sleep(3)                                    # tight poll: the fast window render is ~35-50s
             try:
                 chk = _ssh(cfg, f"if [ -f {base}.done ]; then echo DONE; "
                                 f"elif [ -f {base}.fail ]; then echo FAIL; else echo RUN; fi", timeout=25)
