@@ -78,7 +78,11 @@ if [ ! -f EDGE/EDGE.py ]; then rm -rf EDGE && git clone -q https://github.com/St
 
 # ---- 4. CUDA venv + PyTorch (Blackwell gate) ----------------------------------------------
 step "CUDA venv + torch ($TORCH_INDEX)"
-[ -d "$VENV" ] || python3 -m venv "$VENV"
+# The venv MUST live physically on /workspace to survive a pod restart. An earlier setup symlinked
+# it to /root/al_venv (fast local disk, but /root is wiped on restart) -- replace such a symlink with
+# a real venv so the whole gen+render stack persists.
+if [ -L "$VENV" ]; then echo "  replacing $VENV symlink -> real venv (persist across restarts)"; rm -f "$VENV"; fi
+[ -x "$VENV/bin/python" ] || { rm -rf "$VENV"; python3 -m venv "$VENV"; }
 "$PIP" install -q -U pip wheel setuptools
 # CRITICAL: uninstall any pre-existing torch first. A leftover '2.13.0+cpu' has a higher version
 # string than every cu128 wheel, so 'pip install torch --index-url .../cu128' becomes a no-op.
@@ -93,7 +97,7 @@ fi
 step "python deps"
 "$PIP" install -q -r "$AL/requirements.txt"
 "$PIP" install -q gdown omegaconf pytorch-lightning einops tqdm soundfile librosa \
-  opencv-python-headless pyrender PyOpenGL trimesh smplx p_tqdm h5py imageio psutil \
+  opencv-python-headless pyrender PyOpenGL trimesh smplx p_tqdm h5py imageio imageio-ffmpeg psutil \
   torchmetrics accelerate wandb fire
 # pytorch3d (transforms only -> CPU build is fine; no nvcc). Build isolation OFF so it sees torch.
 "$PIP" show pytorch3d >/dev/null 2>&1 || \
@@ -120,18 +124,25 @@ EDGE_CODE_PATH="$WORK/EDGE" "$PY" "$AL/scripts/patch_edge_pod.py" || true
 [ -f checkpoint.pt ] || "$PY" "$AL/scripts/download_gdrive.py" 1BAR712cVEqB8GR37fcEihRV_xOC-fZrZ checkpoint.pt || die "EDGE checkpoint download"
 
 # ---- 7. EDGE venv (shares CUDA venv via .pth) + Jukebox --------------------------------------
-step "EDGE venv + Jukebox"
+# ---- 7. EDGE venv (shares CUDA venv via .pth) + Jukebox --------------------------------------
+step "EDGE venv (shares CUDA venv via .pth)"
 PYVER="$("$PY" -c 'import sys;print(f"python{sys.version_info.major}.{sys.version_info.minor}")')"
 if [ ! -x "$WORK/EDGE/.venv/bin/python" ]; then
   python3 -m venv "$WORK/EDGE/.venv"
-  echo "$VENV/lib/$PYVER/site-packages" > "$WORK/EDGE/.venv/lib/$PYVER/site-packages/_shared_venv.pth"
   "$WORK/EDGE/.venv/bin/pip" install -q -U pip
 fi
-"$WORK/EDGE/.venv/bin/python" -c "import jukemirlib" 2>/dev/null || {
-  "$WORK/EDGE/.venv/bin/pip" install -q --no-build-isolation --no-deps "git+https://github.com/rodrigo-castellon/jukebox.git"
-  "$WORK/EDGE/.venv/bin/pip" install -q --no-deps "git+https://github.com/rodrigo-castellon/jukemirlib.git"
-  "$WORK/EDGE/.venv/bin/pip" install -q fire unidecode wget
-}
+# Always (re)write the shared-venv path: after a restart the CUDA venv is rebuilt, and an old .pth may
+# still point at the wiped /root path.
+echo "$VENV/lib/$PYVER/site-packages" > "$WORK/EDGE/.venv/lib/$PYVER/site-packages/_shared_venv.pth"
+if [ "${AGENTLODGE_SKIP_JUKEBOX:-0}" = "1" ]; then
+  echo "  skipping Jukebox install (only NEW-song EDGE feature extraction needs it; cached slices don't)"
+else
+  "$WORK/EDGE/.venv/bin/python" -c "import jukemirlib" 2>/dev/null || {
+    "$WORK/EDGE/.venv/bin/pip" install -q --no-build-isolation --no-deps "git+https://github.com/rodrigo-castellon/jukebox.git"
+    "$WORK/EDGE/.venv/bin/pip" install -q --no-deps "git+https://github.com/rodrigo-castellon/jukemirlib.git"
+    "$WORK/EDGE/.venv/bin/pip" install -q fire unidecode wget
+  }
+fi
 
 # ---- 8. LODGE runs in the CUDA venv (GPU), not a CPU venv ----------------------------------
 step "point LODGE at the CUDA venv (GPU)"

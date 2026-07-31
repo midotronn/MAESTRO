@@ -9,6 +9,7 @@ UI, mirroring :mod:`server.processing`.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from pathlib import Path
@@ -89,14 +90,16 @@ def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
         est_sec = max(60, int(frames * 1.5))                 # observed ~1.5s/frame incl. FK + startup
         base = f"{ws}/edit_render_{sid}"
         audio_sid = sid if with_audio else ""
+        # Render FK runs in the persistent CUDA venv (the old /root/al_venv is wiped on pod restart).
+        al_py = os.environ.get("AGENTLODGE_POD_PYTHON", f"{ws}/AgentLODGE/.venv/bin/python")
         # Launch the render in the BACKGROUND with done/fail markers, then poll -- a blocking ssh over
         # a multi-minute render tends to hang its channel even after the render finishes.
         launch = _ssh(
             cfg,
             f"cd {ws}/AgentLODGE && sed -i 's/\\r$//' scripts/render_one_ybot.sh; "
             f"rm -f {base}.mp4 {base}.done {base}.fail {base}.log; "
-            f"setsid bash -c 'WORKSPACE={ws} bash scripts/render_one_ybot.sh {remote_npy} {base}.mp4 "
-            f"{audio_sid} >> {base}.log 2>&1 && touch {base}.done || touch {base}.fail' "
+            f"setsid bash -c 'AL_PY={al_py} WORKSPACE={ws} bash scripts/render_one_ybot.sh {remote_npy} "
+            f"{base}.mp4 {audio_sid} >> {base}.log 2>&1 && touch {base}.done || touch {base}.fail' "
             f"</dev/null >/dev/null 2>&1 & echo LAUNCHED",
             timeout=40)
         if "LAUNCHED" not in (launch.stdout or ""):
