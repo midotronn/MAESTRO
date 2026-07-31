@@ -42,6 +42,7 @@ from agentlodge.dance.best_of_k import objective_weights
 from agentlodge.dance.transition import (
     NUM_JOINTS,
     amplitude_scale,
+    beat_align_warp,
     mirror,
     retrograde,
     splice_window,
@@ -52,9 +53,11 @@ logger = logging.getLogger(__name__)
 _KIN = 135  # trans(3) + rot(132); excludes the 4 contact labels
 _FROZEN_ENERGY = 0.01
 
-# Objectives that RE-QUERY a backbone over the window, vs. deterministic geometry ops.
-REGEN_OBJECTIVES = ("more_energetic", "calmer", "more_on_beat", "sharper", "smoother")
-DETERMINISTIC_OBJECTIVES = ("reverse", "mirror", "exaggerate")
+# Objectives that RE-QUERY a backbone over the window, vs. deterministic transforms of the window.
+# ``more_on_beat`` is deterministic: best-of-K sampling barely moves beat alignment (the backbones
+# don't target specific beats), so we TIME-WARP the window's accents onto the music beats instead.
+REGEN_OBJECTIVES = ("more_energetic", "calmer", "sharper", "smoother")
+DETERMINISTIC_OBJECTIVES = ("reverse", "mirror", "exaggerate", "more_on_beat")
 OBJECTIVES = REGEN_OBJECTIVES + DETERMINISTIC_OBJECTIVES
 
 # keyword -> objective (first hit wins, order matters: check specific phrases first)
@@ -309,11 +312,16 @@ def _window_beats(beats, a: int, b: int) -> np.ndarray:
     return mb[(mb >= a) & (mb < b)] - a
 
 
-def _deterministic_window(objective: str, clip: np.ndarray, magnitude: float) -> np.ndarray:
+def _deterministic_window(objective: str, clip: np.ndarray, magnitude: float,
+                          wbeats=None) -> np.ndarray:
     if objective == "reverse":
         return retrograde(clip)
     if objective == "mirror":
         return mirror(clip)
+    if objective == "more_on_beat":
+        # Snap the window's motion beats onto the music beats (see transition.beat_align_warp).
+        passes = 3 + (1 if magnitude >= 0.7 else 0)
+        return beat_align_warp(clip, wbeats if wbeats is not None else np.zeros(0), passes=passes)
     return amplitude_scale(clip, 1.0 + 0.4 * (0.5 + magnitude))   # exaggerate
 
 
@@ -345,9 +353,9 @@ def apply_window_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     before = window_metrics(motion[a:b], wbeats)
     _emit({"phase": "parsed", "goal": goal.to_dict(), "metrics_before": before})
 
-    # ---- deterministic geometry ops: no regeneration ----
+    # ---- deterministic transforms of the window: no regeneration ----
     if goal.objective in DETERMINISTIC_OBJECTIVES:
-        new_win = _deterministic_window(goal.objective, motion[a:b], goal.magnitude)
+        new_win = _deterministic_window(goal.objective, motion[a:b], goal.magnitude, wbeats)
         spliced = splice_window(motion, a, b, new_win, blend_frames=blend_frames)
         after = window_metrics(spliced[a:b], wbeats)
         ok, fb = _verify(goal, before, after)

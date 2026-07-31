@@ -152,6 +152,16 @@ def test_mirror_is_deterministic():
     assert np.array_equal(r.motion[:60], m[:60]) and np.array_equal(r.motion[150:], m[150:])
 
 
+def test_on_beat_is_deterministic_warp_and_raises_bas():
+    # 'more on beat' now snaps motion beats onto the music beats (deterministic), so it needs no
+    # generator, preserves everything outside the window, and reliably raises BAS.
+    m = _base(300, energy=0.5)
+    r = apply_window_edit(m, 90, 210, "make this much more on beat", None, beats=_beats())
+    assert r.ok and r.goal.objective == "more_on_beat" and r.backbone == "none"
+    assert r.metrics_after["bas"] > r.metrics_before["bas"]
+    assert np.array_equal(r.motion[:90], m[:90]) and np.array_equal(r.motion[210:], m[210:])
+
+
 # --------------------------------------------------------------------------- refine / failure paths
 class _WeakGenerator:
     """Ignores the energy request (always low energy) -> 'more energetic' can never be satisfied."""

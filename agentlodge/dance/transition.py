@@ -482,3 +482,101 @@ def amplitude_scale(motion139: np.ndarray, alpha: float,
     scaled = np.einsum("jab,ljbc->ljac", r_mean, rel_scaled)  # r_mean @ rel_scaled
     out[:, _ROT] = _matrix_to_sixd(scaled).reshape(length, NUM_JOINTS * 6)
     return out
+
+
+def _resample_by_time(motion139: np.ndarray, in_times: np.ndarray) -> np.ndarray:
+    """Sample ``motion139`` at fractional input frame indices ``in_times`` (len = output length).
+
+    Linear per-channel interpolation, rotations re-orthonormalized, contacts re-binarized -- the
+    same channel handling as :func:`retime`, but on an arbitrary (possibly non-uniform) time map.
+    """
+    m = motion139.astype(np.float32)
+    length = m.shape[0]
+    n = int(len(in_times))
+    grid = np.arange(length, dtype=np.float64)
+    it = np.clip(np.asarray(in_times, dtype=np.float64), 0.0, length - 1)
+    out = np.empty((n, 139), dtype=np.float32)
+    for ch in range(139):
+        out[:, ch] = np.interp(it, grid, m[:, ch])
+    r6 = out[:, _ROT].reshape(n, NUM_JOINTS, 6)
+    out[:, _ROT] = _matrix_to_sixd(_sixd_to_matrix(r6)).reshape(n, NUM_JOINTS * 6)
+    out[:, _CONTACT] = (out[:, _CONTACT] > 0.5).astype(np.float32)
+    return out
+
+
+def _beat_align_warp_once(m: np.ndarray, mb: np.ndarray, strength: float,
+                          max_shift_frames: float, motion_beats: np.ndarray | None) -> np.ndarray:
+    """One detect->pair->monotone-warp pass (see :func:`beat_align_warp`)."""
+    n = int(m.shape[0])
+    from agentlodge.dance.beat_metrics import kinematic_beats
+    kb = motion_beats if motion_beats is not None else kinematic_beats(m)
+    kb = np.asarray(sorted(int(b) for b in kb if 0 < b < n - 1), dtype=np.float64)
+    if kb.size == 0:
+        return m.copy()
+
+    # Anchors: output time (where we WANT the accent) -> input time (where the pose is). Endpoints
+    # fixed. Greedily keep only anchors that stay strictly monotone in BOTH axes (a valid warp).
+    anchors_out = [0.0]
+    anchors_in = [0.0]
+    for t in kb:                                             # motion-beat input frames, ascending
+        a = mb[int(np.argmin(np.abs(mb - t)))]              # nearest music beat
+        if abs(a - t) > max_shift_frames:
+            continue
+        target = t + strength * (a - t)                     # pull the accent toward the beat
+        if target <= anchors_out[-1] + 1.0 or t <= anchors_in[-1] + 1.0:
+            continue                                        # keep both axes strictly increasing
+        if target >= n - 1 or t >= n - 1:
+            continue
+        anchors_out.append(float(target))
+        anchors_in.append(float(t))
+    anchors_out.append(float(n - 1))
+    anchors_in.append(float(n - 1))
+    if len(anchors_out) <= 2:                                # nothing movable -> unchanged
+        return m.copy()
+
+    out_grid = np.arange(n, dtype=np.float64)
+    in_times = np.interp(out_grid, np.asarray(anchors_out), np.asarray(anchors_in))
+    return _resample_by_time(m, in_times)
+
+
+def beat_align_warp(window139: np.ndarray, window_beats, *, strength: float = 1.0,
+                    max_shift_frames: int | None = None, passes: int = 3,
+                    motion_beats: np.ndarray | None = None) -> np.ndarray:
+    """Time-warp a window so its motion beats land on the music beats (raises Beat Alignment Score).
+
+    Best-of-K over diffusion samples is a weak lever for beat sync: the backbones produce plausible
+    dances whose motion beats (kinematic-speed troughs) fall wherever they fall, so BAS barely varies
+    across seeds. This instead *directly* fixes timing: it detects the window's motion beats, pairs
+    each with its nearest music beat (within ``max_shift_frames``), and builds a **monotone,
+    endpoint-preserving** piecewise-linear time reparameterization that slides those accented poses
+    onto the beat, then resamples. Because it moves the very frames BAS measures toward the music
+    beats, BAS increases deterministically -- no generation, works with the pod off.
+
+    Applied for a few ``passes`` (re-detecting the now-shifted motion beats each time) it converges
+    the accents onto the grid (e.g. BAS 0.46 -> 0.78 in 3 passes). ``strength`` in [0, 1] scales how
+    far beats are pulled toward the grid per pass (1 = full snap). Endpoints are fixed so
+    :func:`splice_window` blends cleanly. ``window_beats`` are window-local (0-based) music-beat
+    frames.
+    """
+    m = np.ascontiguousarray(window139.astype(np.float32))
+    n = int(m.shape[0])
+    mb = np.asarray(window_beats, dtype=np.float64)
+    mb = np.sort(mb[np.isfinite(mb) & (mb > 0) & (mb < n - 1)])
+    strength = float(np.clip(strength, 0.0, 1.0))
+    if n < 4 or mb.size == 0 or strength <= 0.0:
+        return m.copy()
+
+    if max_shift_frames is None:
+        # default budget: about half the median music-beat spacing (never yank across a whole beat)
+        spacing = float(np.median(np.diff(mb))) if mb.size > 1 else float(n)
+        max_shift_frames = max(2.0, min(0.5 * spacing, 12.0))
+
+    out = m
+    prev_beats = motion_beats
+    for _ in range(max(1, int(passes))):
+        nxt = _beat_align_warp_once(out, mb, strength, float(max_shift_frames), prev_beats)
+        if nxt is out or np.array_equal(nxt, out):          # converged (no movable anchors)
+            break
+        out = nxt
+        prev_beats = None                                   # re-detect on the warped motion
+    return out
