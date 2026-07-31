@@ -205,3 +205,13 @@ def test_trace_carries_plan_executor_and_verify():
     assert set(("plan", "steps", "verify")).issubset(at)
     assert "checks" in at["verify"] and at["plan"]["steps"]
     assert all("status" in s for s in at["steps"])
+
+
+def test_prefer_ranks_all_goals_met_over_higher_reward():
+    # the bug: an attempt with a huge single-metric gain (but a regressed goal, so NOT ok) must not
+    # beat a balanced attempt that meets EVERY goal, even though its summed reward is larger.
+    assert AE._prefer(True, 51.6, False, 67.6)          # ok beats not-ok regardless of reward
+    assert not AE._prefer(False, 67.6, True, 51.6)
+    assert AE._prefer(True, 60.0, True, 51.6)           # ties on ok -> higher reward wins
+    assert AE._prefer(False, 70.0, False, 67.6)
+    assert not AE._prefer(False, 10.0, False, 67.6)

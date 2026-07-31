@@ -182,11 +182,14 @@ _METRIC_INTENTS: list[tuple[str, str, str, tuple[str, ...]]] = [
       "rhythm", "rhythmic", "timing", "musical", "lock to the beat", "locked", "on the grid", "beat")),
     ("energy", "down", "energy",
      ("calmer", "calm", "softer", "gentler", "gentle", "mellow", "subdued", "less energetic",
-      "less energy", "tone it down", "tone down", "smaller", "chill", "relax", "slower feel")),
+      "less energy", "tone it down", "tone down", "smaller", "chill", "relax", "slower feel",
+      "decrease energy", "lower energy", "reduce energy", "less power")),
     ("energy", "up", "energy",
      ("more energetic", "more energy", "energetic", "bigger", "stronger", "livelier", "lively",
       "more intense", "intense", "powerful", "hype", "amp up", "amp it up", "pump", "explosive",
-      "exaggerate", "amplify", "over the top", "go bigger")),
+      "exaggerate", "amplify", "over the top", "go bigger", "increase energy", "increase the energy",
+      "raise energy", "boost energy", "more power", "energize", "up the energy", "add energy",
+      "more dynamic", "high energy")),
     ("jerk", "down", "smoothness",
      ("smoother", "smooth", "flowing", "graceful", "fluid", "lyrical", "glide", "flowy", "elegant",
       "less jitter", "less jittery")),
@@ -243,6 +246,13 @@ def _reward_goals(goals, before: dict, after: dict) -> float:
         sc = _tol(metric, before.get(metric, 0.0)) or 1.0
         r += (d if direction == "up" else -d) / sc
     return r
+
+
+def _prefer(ok_a: bool, reward_a: float, ok_b: bool, reward_b: float) -> bool:
+    """True if attempt A should replace the current best B. An attempt that meets EVERY goal always
+    beats one that does not (so a huge single-metric gain that regresses another goal never wins over
+    a balanced attempt that satisfies all of them); ties on goals-met are broken by summed reward."""
+    return (1 if ok_a else 0, reward_a) > (1 if ok_b else 0, reward_b)
 
 
 # ============================================================================ plan
@@ -550,7 +560,7 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
             "steps": step_log,
             "verify": {"ok": ok, "checks": checks, "verdict": verdict},
         })
-        if best is None or reward > best[0]:
+        if best is None or _prefer(ok, reward, best[3], best[0]):
             best = (reward, spliced_try, after, ok, checks, cycle + 1)
         if ok or cycle + 1 >= total_attempts:
             break
