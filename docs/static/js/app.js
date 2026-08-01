@@ -113,7 +113,24 @@
     return el;
   }
 
+  // On a static host (e.g. GitHub Pages) there is no Python backend, so the "Launch live editor"
+  // links can't point at "/". Send them to the repo instead. When the page is served BY the editor
+  // app (localhost or a deployed server), "/" is the editor, so leave the links alone.
+  function fixEditorLinks() {
+    const h = location.hostname;
+    const localish = h === "localhost" || h === "127.0.0.1" || h === "0.0.0.0" || h === "";
+    if (localish || !h.endsWith("github.io")) return;
+    const repo = "https://github.com/midotronn/AgentLODGE";
+    document.querySelectorAll('a[href="/"]').forEach((a) => {
+      a.setAttribute("href", repo);
+      a.setAttribute("target", "_blank");
+      a.setAttribute("rel", "noopener");
+      a.setAttribute("title", "The live editor runs from the Python server; see the repo to run it locally.");
+    });
+  }
+
   async function main() {
+    fixEditorLinks();
     const host = document.getElementById("songs");
     if (!host) return;
     let songs;
