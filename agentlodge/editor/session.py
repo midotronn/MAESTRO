@@ -2,10 +2,11 @@
 
 An :class:`EditSession` owns the immutable :class:`SongAssets` (beats, optional structure/backbone
 material for real regeneration) and a :class:`CheckpointStore` whose ``head`` is the currently-shown
-dance. Editing calls :func:`agentlodge.editor.window_edit.apply_window_edit` on the head motion and
-commits the result as a new checkpoint; undo / redo / restore / branch operate on the store. The
-whole thing is GPU-free and, with a :class:`MockWindowGenerator`, fully unit-testable; a real
-pod-backed generator (Phase 2) drops in via the ``generator`` argument without other changes.
+dance. Editing calls :func:`agentlodge.editor.agent_edit.run_agent_edit` (the LLM-planned, verified,
+self-refining agent) on the head motion and commits the result as a new checkpoint; undo / redo /
+restore / branch operate on the store. The whole thing is GPU-free and, with a
+:class:`MockWindowGenerator`, fully unit-testable; a real pod-backed generator drops in via the
+``generator`` argument without other changes.
 """
 
 from __future__ import annotations
