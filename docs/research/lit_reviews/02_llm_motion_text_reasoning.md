@@ -7,14 +7,14 @@ I now have sufficient data to compile the full literature review. Let me write i
 
 # Comprehensive Literature Review: Text Descriptions for Dance Segment Reasoning in AgentLODGE
 
-**Compiled for:** AgentLODGE — LLM-Storyboard + Training-Free Assembler over LODGE & EDGE dance diffusion generators
+**Compiled for:** AgentLODGE, LLM-Storyboard + Training-Free Assembler over LODGE & EDGE dance diffusion generators
 **Goal of this review:** Establish the research foundation for using LLM-generated / motion-captioner-generated *text descriptions* of dance segments to strengthen the reasoning and selection capabilities of the storyboard agent.
 
 ---
 
 ## Executive Summary
 
-The core idea — caption a synthesized dance segment in words, feed those captions to the storyboard LLM for grounded comparison and selection, and then verify the realized segment against the intended plan using a cross-modal similarity score — rests on a mature body of work spanning three literatures: (a) **text↔motion models** that already support bidirectional translation between 3D motion sequences and natural-language descriptions; (b) **LLM reasoning methods** (CoT, self-consistency, ReAct, Reflexion) that consistently show that *intermediate natural-language representations* improve decision quality on long-horizon tasks; and (c) **retrieval-augmented and verifier-augmented generation** frameworks that demonstrate the value of grounding LLM reasoning in concrete, task-relevant descriptions. Dance-specific captioning is still nascent: no production-quality model has been explicitly trained on choreography-vocabulary text, but both MotionGPT and MotionLLM generalize usefully to dance-like motions, and the gap can be partially closed by kinematic-feature-based captions derived from velocity, energy, foot contacts, periodicity, and spatial extent. TMR (Petrovich et al., 2023) provides an immediately usable, open-source cross-modal similarity scorer that can serve as the alignment-verification critic in the pipeline.
+The core idea, caption a synthesized dance segment in words, feed those captions to the storyboard LLM for grounded comparison and selection, and then verify the realized segment against the intended plan using a cross-modal similarity score, rests on a mature body of work spanning three literatures: (a) **text↔motion models** that already support bidirectional translation between 3D motion sequences and natural-language descriptions; (b) **LLM reasoning methods** (CoT, self-consistency, ReAct, Reflexion) that consistently show that *intermediate natural-language representations* improve decision quality on long-horizon tasks; and (c) **retrieval-augmented and verifier-augmented generation** frameworks that demonstrate the value of grounding LLM reasoning in concrete, task-relevant descriptions. Dance-specific captioning is still nascent: no production-quality model has been explicitly trained on choreography-vocabulary text, but both MotionGPT and MotionLLM generalize usefully to dance-like motions, and the gap can be partially closed by kinematic-feature-based captions derived from velocity, energy, foot contacts, periodicity, and spatial extent. TMR (Petrovich et al., 2023) provides an immediately usable, open-source cross-modal similarity scorer that can serve as the alignment-verification critic in the pipeline.
 
 ---
 
@@ -22,7 +22,7 @@ The core idea — caption a synthesized dance segment in words, feed those capti
 
 ### 1.1 Motion Captioning (Motion → Text)
 
-#### TM2T — Stochastic and Tokenized Modeling for Reciprocal Generation
+#### TM2T, Stochastic and Tokenized Modeling for Reciprocal Generation
 
 **Citation:** Guo et al., "TM2T: Stochastic and Tokenized Modeling for the Reciprocal Generation of 3D Human Motions and Texts," *ECCV 2022*. arXiv:2207.01696. [[link](https://arxiv.org/abs/2207.01696)]
 
@@ -34,7 +34,7 @@ The core idea — caption a synthesized dance segment in words, feed those capti
 
 ---
 
-#### MotionGPT — Human Motion as a Foreign Language
+#### MotionGPT, Human Motion as a Foreign Language
 
 **Citation:** Jiang et al., "MotionGPT: Human Motion as a Foreign Language," *NeurIPS 2023*. arXiv:2306.14795. [[link](https://arxiv.org/abs/2306.14795)]
 
@@ -46,25 +46,25 @@ The core idea — caption a synthesized dance segment in words, feed those capti
 
 ---
 
-#### AvatarGPT — All-in-One Motion Understanding, Planning, Generation
+#### AvatarGPT, All-in-One Motion Understanding, Planning, Generation
 
 **Citation:** Zhou, Wan, Wang, "AvatarGPT: All-in-One Framework for Motion Understanding, Planning, Generation and Beyond," *CVPR 2024*. arXiv:2311.16468. [[link](https://arxiv.org/abs/2311.16468)]
 
 **Key contribution:** AvatarGPT extends the GPT-for-motion paradigm to include **motion understanding (captioning), planning, and generation** in a single closed-loop framework where language is the universal interface. A key innovation is an *unsupervised pipeline that generates natural-language descriptions of human action sequences from in-the-wild videos*, enabling training data creation without manual annotation. The closed-loop enables iterative long-motion synthesis by repeatedly: caption → plan → generate → caption.
 
-**Relevance to AgentLODGE:** Two components are directly relevant: (1) **motion captioning** that can describe dance segments in natural language; and (2) the *closed-loop architecture* which is conceptually identical to what AgentLODGE proposes — caption a segment, feed the description to a planner, plan the next segment. The unsupervised video-based annotation pipeline could be adapted to create dance-specific training data by processing dance videos labeled with choreography styles.
+**Relevance to AgentLODGE:** Two components are directly relevant: (1) **motion captioning** that can describe dance segments in natural language; and (2) the *closed-loop architecture* which is conceptually identical to what AgentLODGE proposes, caption a segment, feed the description to a planner, plan the next segment. The unsupervised video-based annotation pipeline could be adapted to create dance-specific training data by processing dance videos labeled with choreography styles.
 
 **Actionable takeaway:** AvatarGPT demonstrates the feasibility of the full AgentLODGE captioning-planning loop and provides a blueprint. Consider using its video-based caption generation approach to create training data for a dance-specific motion captioner.
 
 ---
 
-#### MotionLLM — Understanding Human Behaviors from Motions and Videos
+#### MotionLLM, Understanding Human Behaviors from Motions and Videos
 
 **Citation:** Chen, Lu, Zeng, Zhang, Wang, Zhang, Zhang, "MotionLLM: Understanding Human Behaviors from Human Motions and Videos," 2024. arXiv:2405.20340. [[link](https://arxiv.org/abs/2405.20340)]
 
 **Key contribution:** MotionLLM bridges the LLM literature with motion understanding by jointly training on both video and SMPL motion sequences. It achieves strong results on **captioning, spatial-temporal comprehension, and reasoning**. The joint video+motion training lets the model understand fine-grained body part dynamics better than video-only or motion-only models. A new dataset (MoVid) and benchmark (MoVid-Bench) are introduced for evaluation.
 
-**Relevance to AgentLODGE:** MotionLLM can caption a rendered dance segment (video) or a motion file (SMPL) and produce rich descriptions covering spatial-temporal dynamics. Because dance videos are widely available, MotionLLM's video pathway may be particularly useful — you can render a LODGE/EDGE segment as video frames and feed them directly.
+**Relevance to AgentLODGE:** MotionLLM can caption a rendered dance segment (video) or a motion file (SMPL) and produce rich descriptions covering spatial-temporal dynamics. Because dance videos are widely available, MotionLLM's video pathway may be particularly useful, you can render a LODGE/EDGE segment as video frames and feed them directly.
 
 **Actionable takeaway:** If rendering segments as video is feasible in the AgentLODGE pipeline, MotionLLM offers a **richer captioning pathway** than motion-only models, with the ability to reason about fine-grained spatial and temporal structure.
 
@@ -72,13 +72,13 @@ The core idea — caption a synthesized dance segment in words, feed those capti
 
 ### 1.2 Text-Motion Alignment/Retrieval (as Critic/Verifier)
 
-#### TMR — Text-to-Motion Retrieval Using Contrastive 3D Human Motion Synthesis
+#### TMR, Text-to-Motion Retrieval Using Contrastive 3D Human Motion Synthesis
 
 **Citation:** Petrovich, Black, Varol, "TMR: Text-to-Motion Retrieval Using Contrastive 3D Human Motion Synthesis," *ICCV 2023*. arXiv:2305.00976. [[link](https://arxiv.org/abs/2305.00976)]
 
 **Key contribution:** TMR extends TEMOS with a *contrastive loss* (CLIP-style) to build a joint text-motion embedding space. The trained encoder maps both text descriptions and 3D motion sequences into a shared latent space where cosine similarity measures semantic alignment. The contrastive loss substantially improves retrieval: median rank drops from 54 to 19 on HumanML3D. Code and models are publicly available at https://mathis.petrovich.fr/tmr.
 
-**Relevance to AgentLODGE — core critic/verifier:** TMR's cross-modal similarity score is directly usable as an **alignment metric**: given a plan-phase text description (the storyboard LLM's intended choreography), compute the TMR cosine similarity between that description and each candidate dance segment. This provides a numerically grounded verification step. The formula is:
+**Relevance to AgentLODGE, core critic/verifier:** TMR's cross-modal similarity score is directly usable as an **alignment metric**: given a plan-phase text description (the storyboard LLM's intended choreography), compute the TMR cosine similarity between that description and each candidate dance segment. This provides a numerically grounded verification step. The formula is:
 ```
 alignment_score = cosine_sim(TMR_text_encoder(description), TMR_motion_encoder(segment))
 ```
@@ -90,7 +90,7 @@ Segments that achieve high alignment score with the storyboard intent should be 
 
 ---
 
-#### TEMOS — Generating Diverse Human Motions from Textual Descriptions
+#### TEMOS, Generating Diverse Human Motions from Textual Descriptions
 
 **Citation:** Petrovich, Black, Varol, "TEMOS: Generating diverse human motions from textual descriptions," *ECCV 2022*. arXiv:2204.14109. [[link](https://arxiv.org/abs/2204.14109)]
 
@@ -98,17 +98,17 @@ Segments that achieve high alignment score with the storyboard intent should be 
 
 ---
 
-#### MDM — Human Motion Diffusion Model
+#### MDM, Human Motion Diffusion Model
 
 **Citation:** Tevet, Raab, Gordon, Shafir, Bermano, Cohen-Or, "Human Motion Diffusion Model," *ICLR 2023*. arXiv:2209.14916. [[link](https://arxiv.org/abs/2209.14916)]
 
 **Key contribution:** MDM is a transformer-based, classifier-free diffusion model for text-conditioned motion generation. A notable design choice is predicting the *sample* (rather than the noise) at each diffusion step, which enables imposing geometric losses (foot contact, velocity) during training. MDM supports multiple conditioning modalities (text, action classes, prefixes) and achieves SOTA on HumanML3D and HumanAct12.
 
-**Relevance to AgentLODGE:** MDM's foot contact loss and velocity loss framework provides a blueprint for the **kinematic quality features** used in kinematic-feature-based captions (§3.3). MDM's classifier-free guidance mechanism also demonstrates how text can be used to steer motion generation — the same text-motion alignment formalism used in TMR underlies MDM.
+**Relevance to AgentLODGE:** MDM's foot contact loss and velocity loss framework provides a blueprint for the **kinematic quality features** used in kinematic-feature-based captions (§3.3). MDM's classifier-free guidance mechanism also demonstrates how text can be used to steer motion generation, the same text-motion alignment formalism used in TMR underlies MDM.
 
 ---
 
-#### MotionCLIP — Exposing Human Motion Generation to CLIP Space
+#### MotionCLIP, Exposing Human Motion Generation to CLIP Space
 
 **Citation:** Tevet, Gordon, Hertz, Bermano, Cohen-Or, "MotionCLIP: Exposing Human Motion Generation to CLIP Space," *ECCV 2022*. arXiv submitted March 2022. [[search result](https://arxiv.org/search/?searchtype=all&query=MotionCLIP+motion+clip+tevet)]
 
@@ -118,7 +118,7 @@ Segments that achieve high alignment score with the storyboard intent should be 
 
 ---
 
-#### T2M-GPT — Generating Human Motion from Textual Descriptions with Discrete Representations
+#### T2M-GPT, Generating Human Motion from Textual Descriptions with Discrete Representations
 
 **Citation:** Zhang et al., "T2M-GPT: Generating Human Motion from Textual Descriptions with Discrete Representations," *CVPR 2023*. arXiv:2301.06052. [[link](https://arxiv.org/abs/2301.06052)]
 
@@ -126,23 +126,23 @@ Segments that achieve high alignment score with the storyboard intent should be 
 
 ---
 
-#### MoMask — Generative Masked Modeling of 3D Human Motions
+#### MoMask, Generative Masked Modeling of 3D Human Motions
 
 **Citation:** Guo et al., "MoMask: Generative Masked Modeling of 3D Human Motions," *2023*. arXiv:2312.00063. [[link](https://arxiv.org/abs/2312.00063)]
 
-**Key contribution:** MoMask applies BERT-style masked modeling to motion token sequences, enabling bidirectional generation and editing. It achieves strong text-conditioned generation with the ability to complete or edit partial motion sequences — highly relevant for the segment-stitching step in AgentLODGE's assembler.
+**Key contribution:** MoMask applies BERT-style masked modeling to motion token sequences, enabling bidirectional generation and editing. It achieves strong text-conditioned generation with the ability to complete or edit partial motion sequences, highly relevant for the segment-stitching step in AgentLODGE's assembler.
 
-**Relevance to AgentLODGE:** MoMask's bidirectional modeling could support *masked in-betweening* — given a textual intent for a segment, generate only the missing frames to stitch two segments together while respecting both the text description and the boundary constraints.
+**Relevance to AgentLODGE:** MoMask's bidirectional modeling could support *masked in-betweening*, given a textual intent for a segment, generate only the missing frames to stitch two segments together while respecting both the text description and the boundary constraints.
 
 ---
 
 ### 1.3 Dance-Specific Description and Annotation
 
-#### AIST++ — Music Conditioned 3D Dance Generation with AIST++
+#### AIST++, Music Conditioned 3D Dance Generation with AIST++
 
 **Citation:** Li et al., "AI Choreographer: Music Conditioned 3D Dance Generation with AIST++," *ICCV 2021*. arXiv:2101.08779. [[link](https://arxiv.org/abs/2101.08779)]
 
-**Key contribution:** AIST++ provides 5.2 hours of 3D dance motion in 1408 sequences across **10 dance genres** (breakdance, waacking, locking, popping, etc.) with multi-view camera poses and music. The genre labels (e.g., "breakdance," "waacking") serve as coarse, structured text descriptors of dance style — a form of dance-specific annotation.
+**Key contribution:** AIST++ provides 5.2 hours of 3D dance motion in 1408 sequences across **10 dance genres** (breakdance, waacking, locking, popping, etc.) with multi-view camera poses and music. The genre labels (e.g., "breakdance," "waacking") serve as coarse, structured text descriptors of dance style, a form of dance-specific annotation.
 
 **Relevance to AgentLODGE:** (a) AIST++ genre labels can be used as coarse dance-style tags in storyboard plans; (b) the dataset can be used to fine-tune motion captioning models (TM2T, MotionGPT) on dance-specific vocabulary; (c) AIST++ motions paired with genre labels provide training data for a dance-specific TMR fine-tuning. The FACT model (Full-Attention Cross-modal Transformer) introduced alongside AIST++ sets a baseline for music-conditioned generation quality.
 
@@ -196,7 +196,7 @@ Segments that achieve high alignment score with the storyboard intent should be 
 
 ### 2.2 Reflexion, ReAct, and Verbal Feedback Loops
 
-#### Reflexion — Language Agents with Verbal Reinforcement Learning
+#### Reflexion, Language Agents with Verbal Reinforcement Learning
 
 **Citation:** Shinn, Cassano, Gopalan, Narasimhan, Yao, "Reflexion: Language Agents with Verbal Reinforcement Learning," *NeurIPS 2023*. arXiv:2303.11366. [[link](https://arxiv.org/abs/2303.11366)]
 
@@ -208,7 +208,7 @@ Segments that achieve high alignment score with the storyboard intent should be 
 
 ---
 
-#### ReAct — Synergizing Reasoning and Acting in Language Models
+#### ReAct, Synergizing Reasoning and Acting in Language Models
 
 **Citation:** Yao, Zhao, Yu, Du, Shafran, Narasimhan, Cao, "ReAct: Synergizing Reasoning and Acting in Language Models," *ICLR 2023*. arXiv:2210.03629. [[link](https://arxiv.org/abs/2210.03629)]
 
@@ -218,7 +218,7 @@ Segments that achieve high alignment score with the storyboard intent should be 
 
 ---
 
-#### HuggingGPT / TaskMatrix — Orchestration of Specialist AI Models via LLM
+#### HuggingGPT / TaskMatrix, Orchestration of Specialist AI Models via LLM
 
 **Citation:** Shen et al., "HuggingGPT: Solving AI Tasks with ChatGPT and its Friends in Hugging Face," *ICLR 2024*. arXiv:2303.17580. [[link](https://arxiv.org/abs/2303.17580)]
 
@@ -230,7 +230,7 @@ Segments that achieve high alignment score with the storyboard intent should be 
 
 ### 2.3 LLM as Long-Horizon Planner for Creative Tasks
 
-#### Voyager — An Open-Ended Embodied Agent with Large Language Models
+#### Voyager, An Open-Ended Embodied Agent with Large Language Models
 
 **Citation:** Wang et al., "Voyager: An Open-Ended Embodied Agent with Large Language Models," *2023*. arXiv:2305.16291. [[link](https://arxiv.org/abs/2305.16291)]
 
@@ -266,9 +266,9 @@ Segments that achieve high alignment score with the storyboard intent should be 
 ### 3.2 Evidence That Richer Descriptions Improve LLM Selection Quality
 
 **Theoretical basis from CoT/ReAct literature:**
-- Wei et al. (2022) showed that intermediate text steps reduce errors in multi-step reasoning. Giving the LLM a description like "Segment A: moderate energy, hip-heavy isolations, syncopated rhythm — 0.71 TMR score; Segment B: high energy, full-body jumps, on-beat — 0.43 TMR score" lets it reason compositionally rather than choosing blindly.
-- Wang et al. (2023, self-consistency) showed that sampling multiple reasoning chains and taking a vote is more reliable — description diversity (different captions for the same segment) can serve as natural chain diversity.
-- Reflexion (Shinn et al. 2023) demonstrates verbal feedback drives iterative improvement — text descriptions of failed/successful segments enable explicit learning without fine-tuning.
+- Wei et al. (2022) showed that intermediate text steps reduce errors in multi-step reasoning. Giving the LLM a description like "Segment A: moderate energy, hip-heavy isolations, syncopated rhythm, 0.71 TMR score; Segment B: high energy, full-body jumps, on-beat, 0.43 TMR score" lets it reason compositionally rather than choosing blindly.
+- Wang et al. (2023, self-consistency) showed that sampling multiple reasoning chains and taking a vote is more reliable, description diversity (different captions for the same segment) can serve as natural chain diversity.
+- Reflexion (Shinn et al. 2023) demonstrates verbal feedback drives iterative improvement, text descriptions of failed/successful segments enable explicit learning without fine-tuning.
 
 **Specific support from motion domain:**
 - AvatarGPT (arXiv:2311.16468) explicitly uses language as the universal interface between planning and generation: the planner describes what motion is needed, the generator produces it, the captioner describes the output, and the planner assesses the gap. This *describe-then-assess* loop is precisely what AgentLODGE proposes.
@@ -295,7 +295,7 @@ Segments that achieve high alignment score with the storyboard intent should be 
 | **Vertical displacement** | Mean height of center-of-mass above floor | Low-to-ground vs. upright |
 
 **Grounding in existing works:**
-- **EDGE** (arXiv:2211.10658) introduces a physical plausibility metric based on foot contact scores — directly usable as a captioning feature: *"physical grounding: high/medium/low"*
+- **EDGE** (arXiv:2211.10658) introduces a physical plausibility metric based on foot contact scores, directly usable as a captioning feature: *"physical grounding: high/medium/low"*
 - **MDM** (arXiv:2209.14916) uses foot contact loss and velocity loss during training, establishing these as canonical quality features
 - **AIST++** (arXiv:2101.08779) evaluates beat alignment score (BAS) as a primary dance quality metric: BAS measures the fraction of dance beats that align with music beats within a window
 

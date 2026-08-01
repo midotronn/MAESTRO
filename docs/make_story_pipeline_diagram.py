@@ -79,7 +79,7 @@ def rc(b):   # right-center
     return (b[0] + b[2], b[1] + b[3] / 2)
 
 
-ax.text(50, 97.5, "AgentLODGE \u2014 LLM Story Choreography", ha="center",
+ax.text(50, 97.5, "AgentLODGE, LLM Story Choreography", ha="center",
         va="center", fontsize=16, fontweight="bold")
 
 b_song = box(38, 90, 24, 5.2, "Song", "audio in", color=C["in"], tc="white")

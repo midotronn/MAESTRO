@@ -90,7 +90,7 @@ def score_candidates(motions: Sequence[np.ndarray], music_beat_frames, *,
 
 
 def select_best(motions: Sequence[np.ndarray], music_beat_frames, **kw) -> tuple[int, list[dict]]:
-    """Return ``(best_index, per_candidate_scores)`` — argmax of the composite score."""
+    """Return ``(best_index, per_candidate_scores)``, the argmax of the composite score."""
     if not motions:
         raise ValueError("select_best: no candidates")
     scores = score_candidates(motions, music_beat_frames, **kw)

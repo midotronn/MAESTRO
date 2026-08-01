@@ -19,7 +19,7 @@ This review synthesizes the relevant literature across four intersecting domains
 
 Diffusion models generate samples by reversing a Gaussian diffusion process. The generative trajectory depends critically on the initial noise vector z_T ~ N(0, I). Two runs with different random seeds produce different outputs; the diversity comes entirely from this stochastic initialization and from the stochastic (ancestral) sampling schedule.
 
-**Core formulation (Ho & Salimans 2022, CFG)** — arXiv:2207.12598 [verified]:
+**Core formulation (Ho & Salimans 2022, CFG)**, arXiv:2207.12598 [verified]:
 
 The reverse process transition (variance-preserving formulation):
 
@@ -45,7 +45,7 @@ The earlier approach adds gradients from an auxiliary classifier during sampling
 
 where p_φ is a noisy classifier trained on corrupted images. The guidance scale s trades off diversity for class fidelity.
 
-**Key insight for dance**: A beat-alignment "classifier" that scores how well the current denoised motion aligns with music beats could theoretically substitute for p_φ, enabling **guidance toward beat-aligned samples** during diffusion sampling — with no retraining required if combined with the Universal Guidance framework.
+**Key insight for dance**: A beat-alignment "classifier" that scores how well the current denoised motion aligns with music beats could theoretically substitute for p_φ, enabling **guidance toward beat-aligned samples** during diffusion sampling, with no retraining required if combined with the Universal Guidance framework.
 
 **Citation**: Dhariwal, P. & Nichol, A. (2021). "Diffusion Models Beat GANs on Image Synthesis." *NeurIPS 2021*. arXiv:2105.05233. [Verified: ar5iv intro fetched]
 
@@ -65,7 +65,7 @@ where p_φ is a noisy classifier trained on corrupted images. The guidance scale
 
 **Demonstrated on**: classifier labels, human face identity, segmentation maps, object detection bounding boxes, inverse problems.
 
-**Application to AgentLODGE**: The BAS function (beat alignment score, see §2) is differentiable w.r.t. the predicted joint positions. If the dance generators use DDPM-style reverse diffusion (as both EDGE and LODGE do), Universal Guidance can be applied at inference time, nudging each denoising step toward better beat alignment — **without any retraining**.
+**Application to AgentLODGE**: The BAS function (beat alignment score, see §2) is differentiable w.r.t. the predicted joint positions. If the dance generators use DDPM-style reverse diffusion (as both EDGE and LODGE do), Universal Guidance can be applied at inference time, nudging each denoising step toward better beat alignment, **without any retraining**.
 
 ---
 
@@ -87,7 +87,7 @@ where x̂₀|t is again the Tweedie denoised estimate. The update per step is:
 
 where A is a measurement operator. For dance: if "y" = the music beat sequence, and A(x) = the BAS scoring function applied to generated motion x, this gives a principled Bayesian framework for beat-guided dance generation.
 
-**Practitioners' note from DPS paper**: "we generate 4 different samples for all the methods, and report the metric based on the best samples" — an explicit best-of-4 strategy for phase retrieval. This establishes precedent that best-of-N is a principled fallback when guidance is unreliable.
+**Practitioners' note from DPS paper**: "we generate 4 different samples for all the methods, and report the metric based on the best samples", an explicit best-of-4 strategy for phase retrieval. This establishes precedent that best-of-N is a principled fallback when guidance is unreliable.
 
 ---
 
@@ -100,7 +100,7 @@ This is the most directly actionable paper for AgentLODGE. It proposes **three s
 **Algorithm 1: Random Search (Best-of-N)**
 - Draw N independent noise seeds, generate N samples, score each with a verifier, return argmax.
 - Budget = N × (denoising steps) NFEs.
-- **Finding**: "Random search outperforms the other two methods in some aspects" — the simplest strategy is often strongest at scale.
+- **Finding**: "Random search outperforms the other two methods in some aspects", the simplest strategy is often strongest at scale.
 
 **Algorithm 2: Zero-Order Search**
 - Takes a candidate, perturbs its noise by adding small Gaussian, accepts if verifier improves.
@@ -115,7 +115,7 @@ This is the most directly actionable paper for AgentLODGE. It proposes **three s
 - "Random search will drastically accelerate the convergence to the bias of verifiers"
 - Verifier hacking is a real concern: CLIP and Aesthetic Score can conflict
 - "The selected samples remain within the learned data distribution, only with their mode shifted towards one of the verifiers"
-- Verifier alignment with task is crucial — use task-specific verifiers
+- Verifier alignment with task is crucial, use task-specific verifiers
 
 **For dance applications**: BAS as verifier for best-of-N on EDGE/LODGE is directly analogous to their framework. Budget = K × 50 denoising steps (typical). K=8 doubles the per-segment compute; K=4 is a practical starting point.
 
@@ -129,7 +129,7 @@ Although in the LLM domain, the analysis is directly applicable:
 
 - **Beam search vs. best-of-N**: "with smaller generation budgets, beam search significantly outperforms best-of-N. However, as the budget is scaled up, these improvements greatly diminish, with beam search often underperforming the best-of-N baseline."
 - **Difficulty-adaptive compute**: On easy prompts, best-of-N (N=4–8) suffices; on hard prompts (strong misalignment between music and motion), beam search (tree search over denoising paths) is better.
-- **Verifier over-exploitation** risk: "over-optimizing search can result in overly short solutions" — analogous to generating repetitive or degenerate dances that score high on BAS but look wrong.
+- **Verifier over-exploitation** risk: "over-optimizing search can result in overly short solutions", analogous to generating repetitive or degenerate dances that score high on BAS but look wrong.
 - **Compute-optimal rule**: "by selecting the best search setting for a given question difficulty…we can nearly outperform best-of-N using up to 4x less test-time compute"
 
 **Actionable takeaway**: Start with K=4–8 random seeds (best-of-N) as a baseline. Apply beam/tree search only for musical sections with complex rhythms or genre changes (high difficulty = high musical beat density + genre switch = segments where simple generation is likely to mis-align).
@@ -144,11 +144,11 @@ While not a primary citation found in this search, a growing body of work applie
 
 ## SECTION 2: Beat Alignment in Music-to-Dance Generation
 
-### 2.1 Beat Alignment Score (BAS) — Canonical Formula
+### 2.1 Beat Alignment Score (BAS), Canonical Formula
 
 > **Citation**: Li, R., Yang, S., Ross, D. A., & Kanazawa, A. (2021). "AI Choreographer: Music Conditioned 3D Dance Generation with AIST++." *ICCV 2021*. arXiv:2101.08779. [Verified: content fetched]
 
-**Step 1 — Kinematic Beat Detection from Motion**:
+**Step 1, Kinematic Beat Detection from Motion**:
 
 Let x_t ∈ ℝ^{J×3} be the 3D joint positions at time t. Compute the aggregate velocity signal:
 
@@ -156,11 +156,11 @@ Let x_t ∈ ℝ^{J×3} be the 3D joint positions at time t. Compute the aggregat
 
 Find local minima of v(t) (peaks in −v(t)) within a sliding window. The set of detected motion beat times is B_m = {t₁, t₂, …, t_M}.
 
-**Step 2 — Music Beat Detection**:
+**Step 2, Music Beat Detection**:
 
 Extract music beat times B_a = {τ₁, τ₂, …, τ_N} using a standard beat tracker (e.g., Librosa's `beat_track` which implements the recursive dynamic programming approach of Ellis 2007; or Madmom's DBN-based tracker which is more accurate).
 
-**Step 3 — Beat Alignment Score**:
+**Step 3, Beat Alignment Score**:
 
 > **BAS = (1/|B_m|) · Σ_{t_b ∈ B_m} exp(−‖t_b − t̂_b‖² / (2σ²))**
 
@@ -173,7 +173,7 @@ where:
 **Interpretation**: A Gaussian bump centered at each music beat; a motion beat exactly coinciding with a music beat contributes exp(0) = 1; a motion beat 2σ away contributes exp(−2) ≈ 0.14.
 
 **Known weaknesses of BAS**:
-1. **Velocity minima may not correspond to perceptually salient dance beats** — e.g., a freezing dancer has low velocity everywhere, giving spurious beat detections.
+1. **Velocity minima may not correspond to perceptually salient dance beats**, e.g., a freezing dancer has low velocity everywhere, giving spurious beat detections.
 2. **One-sided**: only scores motion beats against music beats; doesn't penalize music beats that have no corresponding motion beat.
 3. **σ sensitivity**: small σ is very strict, large σ is loose; typical dance generation papers show BAS values of 0.20–0.28 on AIST++ with σ=3.
 4. **No style control**: BAS doesn't distinguish whether the dance *style* matches the music genre.
@@ -182,7 +182,7 @@ where:
 
 ---
 
-### 2.2 Physical Foot Contact Score (PFC) — EDGE's Contribution
+### 2.2 Physical Foot Contact Score (PFC), EDGE's Contribution
 
 > **Citation**: Tseng, J., Castellon, R., & Liu, K. (2023). "EDGE: Editable Dance Generation From Music." *CVPR 2023*. arXiv:2211.10658. [Verified: confirmed via ar5iv]
 
@@ -220,7 +220,7 @@ Beat-It introduces:
 
 > L_beat = Σ_t ‖v_m(t)‖₂ · [1 − exp(−d²(t) / 2σ²_b)]
 
-This penalizes high motion velocity at times far from music beats — encouraging motion beats to co-occur with music beats. The first term ‖v_m(t)‖₂ is the motion velocity (high velocity = likely a motion beat); the second term [1 − Gaussian] is high when far from a music beat.
+This penalizes high motion velocity at times far from music beats, encouraging motion beats to co-occur with music beats. The first term ‖v_m(t)‖₂ is the motion velocity (high velocity = likely a motion beat); the second term [1 − Gaussian] is high when far from a music beat.
 
 3. **Beat-aware dilated cross-attention**: a specialized attention mechanism that routes beat-timing information to influence motion generation.
 
@@ -261,7 +261,7 @@ Multiple papers address foot-skating as an artifact that interacts with beat qua
 
 **Architecture**:
 - Transformer-based diffusion model (DDPM with ~50 denoising steps typical)
-- Conditioning: **Jukebox music features** — 4800-dim latent from OpenAI's VQ-VAE music model, pretrained on ~1.2M songs. This is a richer representation than mel-spectrograms or MFCC; it captures genre, melody, rhythm, harmonics.
+- Conditioning: **Jukebox music features**, 4800-dim latent from OpenAI's VQ-VAE music model, pretrained on ~1.2M songs. This is a richer representation than mel-spectrograms or MFCC; it captures genre, melody, rhythm, harmonics.
 - Generates 150-frame (5s at 30fps) windows of dance in SMPL pose format
 
 **Editing Capabilities**:
@@ -287,14 +287,14 @@ Multiple papers address foot-skating as an artifact that interacts with beat qua
 
 **Two-Stage Architecture**:
 
-**Stage 1 — Global Diffusion** (coarse-grained):
+**Stage 1, Global Diffusion** (coarse-grained):
 - Input: full music (entire song or long clip)
 - Output: **characteristic dance primitives** = sparse 8-frame key motions with high kinematic energy, sampled at ~1/8 rate of the final sequence
 - These are "expressive 8-frame key motions with high kinematic energy" placed at musically significant moments
 - Global diffusion "comprehends the coarse-level music-dance correlation and produces characteristic dance primitives"
 - The primitives capture: inversions, moonwalks, and other signature moves
 
-**Stage 2 — Local Diffusion** (fine-grained, parallel):
+**Stage 2, Local Diffusion** (fine-grained, parallel):
 - Input: short music window + assigned dance primitives (from Stage 1)
 - Output: detailed motion sequence for each window
 - Runs **in parallel** across all windows
@@ -306,7 +306,7 @@ Multiple papers address foot-skating as an artifact that interacts with beat qua
 
 **Seed stochasticity**: ✅ Both stages are diffusion models. Different seeds in Stage 1 produce different primitive arrangements; different seeds in Stage 2 produce different local motion textures given the same primitives.
 
-**Foot Refine Block**: Post-processing module that "generates modification values addressing foot skating" — operates in joint position space rather than rotation space to sidestep the domain gap issue of rotation-based optimization.
+**Foot Refine Block**: Post-processing module that "generates modification values addressing foot skating", operates in joint position space rather than rotation space to sidestep the domain gap issue of rotation-based optimization.
 
 ---
 
@@ -319,7 +319,7 @@ Multiple papers address foot-skating as an artifact that interacts with beat qua
 - **Foot refinement module**: improved foot-ground contact optimization  
 - **Multi-genre discriminator**: ensures genre consistency across the entire generated dance
 
-**Key addition**: "vivid choreography patterns" — richer global choreography via an improved global choreography network. Still two-stage, still parallel local generation.
+**Key addition**: "vivid choreography patterns", richer global choreography via an improved global choreography network. Still two-stage, still parallel local generation.
 
 ---
 
@@ -341,7 +341,7 @@ Multiple papers address foot-skating as an artifact that interacts with beat qua
 
 ---
 
-## SECTION 4: Actionable Design — Best-of-K-per-Segment Module
+## SECTION 4: Actionable Design, Best-of-K-per-Segment Module
 
 ### 4.1 Module Architecture
 
@@ -385,13 +385,13 @@ where E_dance = mean(‖v(t)‖) and E_music = RMS amplitude of audio. High-ener
 **Physical Foot Contact (PFC)**: Use EDGE's acceleration-based metric (requires their scorer).
 
 **Composite weights** (suggested starting point):
-> w1 = 0.6 (BAS dominates — the key weakness),  w2 = 0.25 (PFC),  w3 = 0.15 (KEM)
+> w1 = 0.6 (BAS dominates, the key weakness),  w2 = 0.25 (PFC),  w3 = 0.15 (KEM)
 
 ### 4.3 Compute Cost vs. Quality
 
 | K | Compute multiplier | Expected BAS improvement |
 |---|---|---|
-| 1 (baseline) | 1× | — |
+| 1 (baseline) | 1× |, |
 | 4 | 4× | +~0.02–0.03 BAS (empirical estimate) |
 | 8 | 8× | +~0.03–0.05 BAS |
 | 16 | 16× | +~0.04–0.06 BAS (diminishing returns) |
@@ -400,7 +400,7 @@ where E_dance = mean(‖v(t)‖) and E_music = RMS amplitude of audio. High-ener
 
 **Practical recommendation**: **K = 4–8** balances compute and quality. For sections with high musical complexity (fast tempo > 160 BPM, genre transitions, high onset density), use K = 8. For slow, ambient sections, K = 4 suffices.
 
-**Parallelization**: K samples are independent — sample all K in parallel on a multi-GPU cluster. No sequential dependency. EDGE with 50 denoising steps on a single A100 takes ~1–2s per 5s segment; K=8 on 8 A100s = same wall-clock time as K=1 on 1 A100.
+**Parallelization**: K samples are independent, sample all K in parallel on a multi-GPU cluster. No sequential dependency. EDGE with 50 denoising steps on a single A100 takes ~1–2s per 5s segment; K=8 on 8 A100s = same wall-clock time as K=1 on 1 A100.
 
 ### 4.4 Variance Reduction Strategies
 
@@ -412,7 +412,7 @@ where E_dance = mean(‖v(t)‖) and E_music = RMS amplitude of audio. High-ener
 
 4. **Quasi-random (Sobol/Halton) sequences**: instead of random seeds, use low-discrepancy sequences in the noise space. This provides more uniform coverage of the sample space for the same K. Well-established in quasi-Monte Carlo literature; applicable to any diffusion sampler.
 
-### 4.5 Guidance vs. Rejection Sampling — Which is Better?
+### 4.5 Guidance vs. Rejection Sampling, Which is Better?
 
 | Criterion | Best-of-K (Rejection) | Diffusion Guidance (DPS/Universal) |
 |---|---|---|
@@ -432,7 +432,7 @@ where E_dance = mean(‖v(t)‖) and E_music = RMS amplitude of audio. High-ener
 
 ## SECTION 5: Additional Relevant Papers
 
-### 5.1 Bailando — RL-based Beat Alignment
+### 5.1 Bailando, RL-based Beat Alignment
 
 > **Citation**: Li, S., et al. (2022). "Bailando: 3D Dance Generation by Actor-Critic GPT with Choreographic Memory." *CVPR 2022*. arXiv:2203.13055. [Verified: content fetched]
 
@@ -445,13 +445,13 @@ Bailando uses a VQ-VAE codebook of "choreographic memory" (dance positions) and 
 
 This velocity + acceleration loss is broadly applicable and could be incorporated into the scoring function for AgentLODGE.
 
-### 5.2 Beat-It — State-of-the-Art Beat Alignment
+### 5.2 Beat-It, State-of-the-Art Beat Alignment
 
 Full details already covered in §2.3. Key takeaway: the Beat-It paper is the current SOTA for explicit beat alignment optimization and provides the best blueprint for a differentiable beat alignment loss.
 
-**Nearest Beat Distance (NBD) representation** — a simple, differentiable conditioning signal that can be added to any music-to-motion model as an auxiliary input, encoding rhythmic structure explicitly.
+**Nearest Beat Distance (NBD) representation**, a simple, differentiable conditioning signal that can be added to any music-to-motion model as an auxiliary input, encoding rhythmic structure explicitly.
 
-### 5.3 BeatDance — Beat-Contrastive Music-Dance Retrieval
+### 5.3 BeatDance, Beat-Contrastive Music-Dance Retrieval
 
 > **Citation**: Yang, K., et al. (2023). "BeatDance: A Beat-Based Model-Agnostic Contrastive Learning Framework for Music-Dance Retrieval." *ICMR 2024*. arXiv:2310.10300. [Verified: content fetched]
 
@@ -460,11 +460,11 @@ While focused on retrieval, BeatDance introduces useful concepts:
 - Trans-Temporal Beat Blender: creates beat-aligned temporal representations
 - Contrastive learning framework: music and dance are brought into a shared beat-aligned embedding space
 
-**Application to AgentLODGE**: BeatDance's cross-modal beat embedding could serve as a **learned beat alignment scorer**, providing a more nuanced BAS than the simple Gaussian formula — learned from paired music-dance data, capturing genre-specific beat patterns.
+**Application to AgentLODGE**: BeatDance's cross-modal beat embedding could serve as a **learned beat alignment scorer**, providing a more nuanced BAS than the simple Gaussian formula, learned from paired music-dance data, capturing genre-specific beat patterns.
 
 ---
 
-## SECTION 6: Summary Table — Complete Reference List
+## SECTION 6: Summary Table, Complete Reference List
 
 | # | Title | Authors | Year | Venue | arXiv ID | Relevance |
 |---|---|---|---|---|---|---|
@@ -544,8 +544,8 @@ Penalizes high motion velocity far from music beats.
 
 3. **Use music-structure-aware K**: higher K for complex rhythmic sections (e.g., chorus with fast beats at 120–160 BPM), lower K for intros/outros.
 
-4. **Add Beat-It's L_beat loss** as a fine-tuning objective if retraining EDGE or LODGE is on the roadmap — this directly optimizes BAS during training, making each generated sample better on average before selection.
+4. **Add Beat-It's L_beat loss** as a fine-tuning objective if retraining EDGE or LODGE is on the roadmap, this directly optimizes BAS during training, making each generated sample better on average before selection.
 
-5. **Consider Universal Guidance** (arXiv:2302.07121) for soft guidance toward beat alignment during DDPM reverse process — implement a differentiable BAS approximation and plug into the Tweedie-estimate guidance loop.
+5. **Consider Universal Guidance** (arXiv:2302.07121) for soft guidance toward beat alignment during DDPM reverse process, implement a differentiable BAS approximation and plug into the Tweedie-estimate guidance loop.
 
 6. **Reward weighting**: begin with w_BAS = 0.6, w_PFC = 0.25, w_KEM = 0.15 and sweep via cross-validation on a held-out music set; Snell et al.'s findings suggest that task-specific verifier alignment is critical.

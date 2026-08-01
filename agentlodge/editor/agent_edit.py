@@ -310,7 +310,7 @@ def _smoothness_polish(win_cur, motion, a, b, goals, before, wbeats, blend_frame
     if chosen is None:
         return None
     spl, m, checks, amt = chosen
-    return spl, m, checks, (f"smoothed (amount {amt:.2f}) to preserve quality \u2014 "
+    return spl, m, checks, (f"smoothed (amount {amt:.2f}) to preserve quality, "
                             f"jerk {j0:.3f}\u2192{m['jerk']:.3f}")
 
 
@@ -575,7 +575,7 @@ def _execute_plan(base_clip: np.ndarray, plan: AgentPlan, ctx: dict, wbeats, *,
                                              m_after[target[0]], target[1]) == "regressed":
             metric = target[0]
             reason = (f"rejected: would move {METRIC_LABEL[metric]} the wrong way "
-                      f"({m_before[metric]:.3f}\u2192{m_after[metric]:.3f}) \u2014 kept the previous motion")
+                      f"({m_before[metric]:.3f}\u2192{m_after[metric]:.3f}), kept the previous motion")
             entry.update(status="rejected", note=note, reject_reason=reason)
             log.append(entry); _emit_step(i, step.tool, step.why, reason, "rejected", m_before)
             continue                                        # cur unchanged -> regression discarded
@@ -714,7 +714,7 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     refined = f" (refined {n_attempts - 1}x)" if n_attempts > 1 else ""
     if kept_original:
         detail = ", ".join(f"{lbl} {before.get(m, 0.0):.3f}" for m, _d, lbl in goals)
-        feedback = f"left unchanged \u2014 no edit beat the current {detail} without hurting it" + refined
+        feedback = f"left unchanged: no edit beat the current {detail} without hurting it" + refined
     else:
         parts = "  ".join(f"{c['label']} {c['before']:.3f}\u2192{c['after']:.3f}" for c in checks) or "applied"
         feedback = (parts if ok else f"couldn't fully satisfy: {parts}") + refined

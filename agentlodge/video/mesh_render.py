@@ -2,11 +2,11 @@
 
 Two modes, chosen automatically:
 
-* **SMPL-X mesh** — if a SMPL-X body model (``SMPLX_NEUTRAL.npz``) is available, the
+* **SMPL-X mesh**: if a SMPL-X body model (``SMPLX_NEUTRAL.npz``) is available, the
   139-dim motion is turned into a full SMPL-X body mesh per frame and rendered as a solid
   character (like the EDGE / LODGE / AIST++ visualisations). The body model is licence
   gated (https://smpl-x.is.tue.mpg.de), so it must be supplied by the user.
-* **Articulated body (fallback)** — when no body model is present, a shaded 3D figure is
+* **Articulated body (fallback)**: when no body model is present, a shaded 3D figure is
   built directly from the forward-kinematics joints (spheres at joints + tapered capsules
   along the bones). No gated assets required, so this always works.
 

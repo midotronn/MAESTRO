@@ -1,4 +1,4 @@
-# Literature reviews — choreography strengthening
+# Literature reviews, choreography strengthening
 
 Detailed, citation-backed literature reviews compiled to ground the design in
 [`../choreography_strengthening.md`](../choreography_strengthening.md). Kept here as a durable

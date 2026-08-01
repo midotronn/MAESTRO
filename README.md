@@ -6,27 +6,27 @@ End-to-end pipeline that accepts a song, generates dances with **LODGE** and **E
 
 ## Pipeline
 
-1. **Audio preprocessing** — Librosa 35-dim features (LODGE) and Jukebox embeddings (EDGE) at 30 FPS
-2. **Parallel dance generation** — LODGE global+PDDM and EDGE long-form (5s clips, 2.5s overlap)
-3. **Dance selection agent** — an LLM reasons over per-window **long-term coherence** signals (seam smoothness, jitter, foot stability, sustained beat-sync trend, variety), scores each dance on a coherence rubric, and picks the more coherent long-form dance; beat alignment and diversity are secondary tie-breakers. *(Alternatively, enable [Hybrid mode](#hybrid-intertwined-mode) to intertwine LODGE and EDGE per section instead of picking one.)*
-4. **Dance video** — the selected motion is rendered to an mp4 (audio muxed). Backends (set with `AGENTLODGE_RENDER_BACKEND`): a fast **stick figure** (SMPL forward kinematics + matplotlib, no extra assets, default), or **Blender** 3D rendering in an EDGE-style studio (cyclorama backdrop, spotlight vignette, follow camera). The Blender character is chosen with `AGENTLODGE_RENDER_CHARACTER`: `smplx` (smooth SMPL-X mesh, needs the licence-gated SMPL-X body model) or `ybot` (EDGE's segmented Mixamo Y-Bot robot, needs EDGE's `ybot.fbx` — no SMPL-X model required)
-5. **Costume description agent** — an LLM turns the song's acoustic features (tempo, energy, timbre, key/mode, rhythmic density) plus the `LODGE_GENRE` hint into a costume description
-6. **Costume image generation** — OpenAI (`gpt-image-1`) or Gemini Imagen renders the audio-derived description
+1. **Audio preprocessing**, Librosa 35-dim features (LODGE) and Jukebox embeddings (EDGE) at 30 FPS
+2. **Parallel dance generation**, LODGE global+PDDM and EDGE long-form (5s clips, 2.5s overlap)
+3. **Dance selection agent**, an LLM reasons over per-window **long-term coherence** signals (seam smoothness, jitter, foot stability, sustained beat-sync trend, variety), scores each dance on a coherence rubric, and picks the more coherent long-form dance; beat alignment and diversity are secondary tie-breakers. *(Alternatively, enable [Hybrid mode](#hybrid-intertwined-mode) to intertwine LODGE and EDGE per section instead of picking one.)*
+4. **Dance video**, the selected motion is rendered to an mp4 (audio muxed). Backends (set with `AGENTLODGE_RENDER_BACKEND`): a fast **stick figure** (SMPL forward kinematics + matplotlib, no extra assets, default), or **Blender** 3D rendering in an EDGE-style studio (cyclorama backdrop, spotlight vignette, follow camera). The Blender character is chosen with `AGENTLODGE_RENDER_CHARACTER`: `smplx` (smooth SMPL-X mesh, needs the licence-gated SMPL-X body model) or `ybot` (EDGE's segmented Mixamo Y-Bot robot, needs EDGE's `ybot.fbx`, no SMPL-X model required)
+5. **Costume description agent**, an LLM turns the song's acoustic features (tempo, energy, timbre, key/mode, rhythmic density) plus the `LODGE_GENRE` hint into a costume description
+6. **Costume image generation**, OpenAI (`gpt-image-1`) or Gemini Imagen renders the audio-derived description
 
 ## Hybrid (intertwined) mode
 
 By default the pipeline picks **one** generator's whole dance. Setting `AGENTLODGE_HYBRID=1`
 instead assembles **one** dance from time-segments of **both** LODGE and EDGE, so the style
 source changes across the song wherever that improves the overall composition. It is
-**training-free** — each segment keeps its generator's native quality, and switches are made
+**training-free**, each segment keeps its generator's native quality, and switches are made
 seamless afterward rather than by cross-conditioning the models.
 
 How it works:
 
-1. **Segmentation** — the song is cut on musical downbeats; every segment is at least
+1. **Segmentation**, the song is cut on musical downbeats; every segment is at least
    `AGENTLODGE_HYBRID_MIN_SEG` seconds (≈ each generator's native window), which is the only floor
    on switch frequency (there is no switch penalty).
-2. **Scheduling** — a scheduler assigns LODGE or EDGE to each segment to minimise a single
+2. **Scheduling**, a scheduler assigns LODGE or EDGE to each segment to minimise a single
    **whole-dance objective** that balances smoothness (jerk, jitter, seam spikiness) against
    musicality/energy/variety (weighted by `AGENTLODGE_HYBRID_EXPRESSIVENESS`). The default
    `greedy_global` scheduler is a deterministic coordinate descent over the *assembled* dance
@@ -34,7 +34,7 @@ How it works:
    against the same objective (needs `OPENAI_API_KEY`). Both are seeded from all-EDGE / all-LODGE,
    so the hybrid **never scores worse than the better parent**, and **beats both** when the
    generators are complementary (each more coherent in different sections).
-3. **Seamless assembly** — at every LODGE↔EDGE switch the segments are joined with **inertialized
+3. **Seamless assembly**, at every LODGE↔EDGE switch the segments are joined with **inertialized
    blending** (Bollo 2016) over `AGENTLODGE_HYBRID_BLEND` frames: the seam starts exactly at the
    previous pose and eases into the next, avoiding teleports/pops. Facing is normalised so the
    dancer stays camera-front throughout.
@@ -53,29 +53,29 @@ AGENTLODGE_HYBRID=1 python run_pipeline.py --audio path/to/song.wav --output_dir
 dance reads as a *composed* piece rather than freestyle: it is organized around the song's
 **musical form** (intro / verse / chorus / bridge / drop / outro) with a deliberate energy arc
 (build → climax → resolution), sectional contrast, and optional recurring motifs. It remains
-**training-free** — an LLM agent authors a high-level plan, which is realized by arranging LODGE
+**training-free**, an LLM agent authors a high-level plan, which is realized by arranging LODGE
 and EDGE material with inertialized joins.
 
 ![Story choreography pipeline](docs/story_pipeline_diagram.png)
 
 How it works:
 
-1. **Structure analysis** (`agentlodge/audio/structure.py`) — librosa segments the song into
+1. **Structure analysis** (`agentlodge/audio/structure.py`), librosa segments the song into
    sections (Laplacian/agglomerative over chroma+MFCC), labels musically repeated sections
    (self-similarity), and builds a per-frame energy arc (RMS + spectral flux). Boundaries snap to
    downbeats; a robust fallback yields downbeat/uniform sections.
-2. **Storyboard agent** (`agentlodge/agent/storyboard.py`) — an LLM authors a `SectionPlan` per
+2. **Storyboard agent** (`agentlodge/agent/storyboard.py`), an LLM authors a `SectionPlan` per
    section (role, target intensity along the arc, movement vocabulary, preferred generator, and
    optional motif reuse). A deterministic rule-based fallback runs when no `OPENAI_API_KEY` is set,
    so the mode works offline.
-3. **Structure-aware assembly** (`agentlodge/dance/story.py`) — per section it picks the material
+3. **Structure-aware assembly** (`agentlodge/dance/story.py`), per section it picks the material
    (LODGE / EDGE / a retimed·mirrored·retrograded motif reuse) that best matches the plan while
    staying smooth, and joins source changes with the same inertialized (Bollo 2016) transition as
    the hybrid.
 
 The assembled dance becomes `selected_dance.npy` (`selected_model = "story"`); the detected
 structure, storyboard, and structure metrics (arc adherence, sectional contrast, motif recurrence,
-boundary alignment, seam jerk, and — when beats are available — **beat alignment (BAS)**, beat
+boundary alignment, seam jerk, and, when beats are available, **beat alignment (BAS)**, beat
 coverage, and foot-contact consistency) are logged to `pipeline_log.json`. On any failure the
 pipeline falls back to hybrid, then single-model selection.
 
@@ -142,7 +142,7 @@ python run_pipeline.py \
   --output_dir ./outputs
 ```
 
-The costume is derived automatically from the input audio — there is no costume text
+The costume is derived automatically from the input audio, there is no costume text
 argument. The generated description is printed and saved to `pipeline_log.json`.
 
 ## Outputs

@@ -111,7 +111,7 @@ function applyState(st, opts) {
 const GEN_INFO = {
   live: ["live pod", "Live pod mode: every new seed runs a fresh LODGE/EDGE diffusion sample on the GPU pod (minutes per new take), so edits search an unbounded space. Falls back to the local bank if the pod can't answer."],
   bank: ["bank", "Editing selects from a pre-generated bank of real LODGE/EDGE takes for this song. Instant, and works with the pod switched off, but only as diverse as the number of cached seeds."],
-  mock: ["offline demo", "No real backbone takes for this song yet — using the offline stand-in generator. Connect a GPU pod (bank or live mode) for real search."],
+  mock: ["offline demo", "No real backbone takes for this song yet, using the offline stand-in generator. Connect a GPU pod (bank or live mode) for real search."],
 };
 function setGenBadge(kind) {
   const el = $("genbadge"); if (!el) return;
@@ -238,7 +238,7 @@ function onProgress(ev) {
   } else if (ev.phase === "step") {
     const p = ev.n_steps ? Math.round(20 + (ev.step / ev.n_steps) * 60) : 50;
     $("progbar").style.width = p + "%";
-    const tag = ev.status === "rejected" ? " \u2014 rejected \u21a9" : ev.status === "applied" ? " \u2713" : "";
+    const tag = ev.status === "rejected" ? " \u21a9 rejected" : ev.status === "applied" ? " \u2713" : "";
     $("progtext").textContent = `attempt ${ev.cycle || 1} \u00b7 step ${ev.step}/${ev.n_steps}: ${ev.tool}${tag}`;
   } else if (ev.phase === "verify") {
     $("progtext").textContent = `attempt ${ev.cycle}: ${ev.ok ? "goals met \u2714" : "short of goal, refining\u2026"}`;
@@ -298,7 +298,7 @@ function renderTrace(trace) {
     html += `<div class="rz-sub">\ud83e\udde0 Planner <span class="rz-src ${pl}">${escapeHtml(PLANNER_LABEL[pl] || pl)}</span></div>`
       + `<div class="rz-plan">\u201c${escapeHtml(at.plan.summary || "")}\u201d</div>`;
     html += `<ol class="rz-steps">` + (at.plan.steps || []).map((s) =>
-      `<li><span class="rz-tool">${escapeHtml(s.tool)}</span>${s.why ? " \u2014 " + escapeHtml(s.why) : ""}${paramsStr(s.params)}</li>`
+      `<li><span class="rz-tool">${escapeHtml(s.tool)}</span>${s.why ? ": " + escapeHtml(s.why) : ""}${paramsStr(s.params)}</li>`
     ).join("") + `</ol>`;
     html += `<div class="rz-sub">\u2699\ufe0f Executor</div><ol class="rz-steps">` + (at.steps || []).map((s) => {
       const delta = metricDeltaStr(s.metrics_before, s.metrics_after);
@@ -327,7 +327,7 @@ function onFinal(payload) {
     if (pl && pl !== "llm") {
       const note = (res.trace && res.trace.planner_note) || "offline keyword planner";
       g += ` <span class="planner-tag" title="${escapeHtml(note)}">\u2699 ${pl === "keyword_fallback" ? "offline fallback" : "offline planner"}</span>`;
-      if (pl === "keyword_fallback") toast("LLM planning failed \u2014 used the offline keyword planner");
+      if (pl === "keyword_fallback") toast("LLM planning failed, used the offline keyword planner");
     }
     $("goal").innerHTML = g;
   }
@@ -356,10 +356,10 @@ function metricHeader() {
 }
 function metricRow(k, before, after) {
   const tr = document.createElement("tr");
-  const d = (after - before);
+  const d = Math.round((after - before) * 1000) / 1000;    // match the 3-decimal display exactly
   const better = HIGHER_BETTER[k];
-  let cls = ""; if (better !== null && Math.abs(d) > 1e-6) cls = ((d > 0) === better) ? "up" : "down";
-  const arrow = Math.abs(d) < 1e-6 ? "" : (d > 0 ? " \u25b2" : " \u25bc");
+  let cls = ""; if (better !== null && d !== 0) cls = ((d > 0) === better) ? "up" : "down";
+  const arrow = d === 0 ? "" : (d > 0 ? " \u25b2" : " \u25bc");
   tr.innerHTML = labelCell(k)
     + `<td class="num">${before.toFixed(3)}</td>`
     + `<td class="num">${after.toFixed(3)}</td>`

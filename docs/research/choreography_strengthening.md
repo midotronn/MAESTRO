@@ -1,4 +1,4 @@
-# Strengthening Choreography in AgentLODGE — Research & Design
+# Strengthening Choreography in AgentLODGE, Research & Design
 
 > Status: **research/design** (branch `choreography-research`). This document synthesizes a
 > literature review across five threads and proposes a grounded, phased design. It is a plan,
@@ -18,7 +18,7 @@ enhancements to make the choreography meaningfully stronger.
 - LLM plan: `agentlodge/agent/storyboard.py` (arc + per-section role/intensity/vocabulary/
   generator_bias/reuse/variation).
 - Assembly + primitives: `agentlodge/dance/story.py` (cost-based per-section selection +
-  inertialized blend), `transition.py` — **`mirror` (spatial L/R), `retime`, `amplitude_scale`,
+  inertialized blend), `transition.py`, **`mirror` (spatial L/R), `retime`, `amplitude_scale`,
   `blend_onto`, `rotate_root_yaw` already implemented**; motif reuse is already wired through the
   storyboard `variation` dict.
 - Structure metrics: `agentlodge/dance/story_metrics.py` (arc adherence, sectional contrast,
@@ -27,11 +27,11 @@ enhancements to make the choreography meaningfully stronger.
 **Key gaps this design targets:**
 1. Structure detection is local/energy-driven; it under-uses **sectional repetition** (which
    sections are the *same*) and never exploits it for **recapitulation/mirroring** (ABA).
-2. **No beat-alignment metric exists** anywhere in the codebase — the exact weakness the user
+2. **No beat-alignment metric exists** anywhere in the codebase, the exact weakness the user
    flagged is not even measured.
 3. The LLM reasons over **numbers only**; candidate segments are never *described*.
-4. Diffusion generation uses **one seed** — the stochasticity of LODGE/EDGE is untapped.
-5. There is **no interactive editing** path — the user cannot refine a result in natural language.
+4. Diffusion generation uses **one seed**, the stochasticity of LODGE/EDGE is untapped.
+5. There is **no interactive editing** path, the user cannot refine a result in natural language.
 
 ---
 
@@ -42,10 +42,10 @@ enhancements to make the choreography meaningfully stronger.
   section → whole-song form (ABA/rondo/AABA/EDM-drop). Lerdahl & Jackendoff's *GTTM* (1983)
   formalizes grouping + metrical structure + tension/release; Huron's *Sweet Anticipation* (2006)
   shows **repetition creates expectation and the return of an earlier section yields
-  satisfaction** — i.e., recapitulation is perceptually the strongest structural device.
+  satisfaction**, i.e., recapitulation is perceptually the strongest structural device.
 - **MSA algorithms**: Foote-novelty over a self-similarity matrix (SSM) for boundaries;
   **McFee & Ellis (ISMIR 2014) Laplacian spectral clustering** assigns *section-type identity*
-  (A/B/A/C…) — not just boundaries — so it detects that "chorus @30s == chorus @90s". Toolkits:
+  (A/B/A/C…), not just boundaries, so it detects that "chorus @30s == chorus @90s". Toolkits:
   `librosa.segment.recurrence_matrix`/spectral clustering, `MSAF` (`boundaries_id="sf"`,
   `labels_id="scluster"`). **Jukebox embeddings** (already used by EDGE) beat MFCC/chroma for
   structural feeling.
@@ -66,24 +66,24 @@ Deepen `structure.py` from "energy-segmentation" to "form-aware":
 
 ---
 
-## 2. Motif recurrence, recapitulation & mirroring — ABA (Thread 2)
+## 2. Motif recurrence, recapitulation & mirroring, ABA (Thread 2)
 
 ### Findings
 - Dance-composition scholarship (Blom & Chaplin *The Intimate Act of Choreography*; Humphrey
   *The Art of Making Dances*; Smith-Autard; Laban) names the exact devices the user asked for:
-  **ABA / recapitulation** (restate A after B), **retrograde** (temporal reversal — "mirror in
+  **ABA / recapitulation** (restate A after B), **retrograde** (temporal reversal, "mirror in
   time"), **spatial mirroring** (L/R reflection), **augmentation/diminution** (slower/faster =
   retime), **inversion**, **fragmentation**.
-- Closest prior systems — Aristidou et al. *"Rhythm is a Dancer"* (TVCG 2022, pose→motif→
+- Closest prior systems, Aristidou et al. *"Rhythm is a Dancer"* (TVCG 2022, pose→motif→
   choreography hierarchy) and *"Music-to-Dance via Atomic Movements"* (2025, LLM-plan → synthesis)
-  — validate the **plan-then-realize** paradigm AgentLODGE already uses, **but none implement
+ , validate the **plan-then-realize** paradigm AgentLODGE already uses, **but none implement
   explicit ABA recapitulation or retrograde/mirror as principled variation.** That is our novelty.
 - The pipeline **already has `mirror` (spatial), `retime`, `amplitude_scale`** and a reuse path in
   `select_sources` (`reuse:{i}` with mirror/retime/amplitude). **Missing: temporal `retrograde`.**
 
 ### Design
 Turn the existing (under-used) reuse machinery into a first-class **recapitulation** feature:
-- **R1. Add `retrograde()` to `transition.py`** — reverse frame order of the 139-dim clip; reverse
+- **R1. Add `retrograde()` to `transition.py`**, reverse frame order of the 139-dim clip; reverse
   L/R foot-contact channels; Gaussian-smooth (σ≈3 frames) the joins to remove velocity
   discontinuities. Unit-testable pure-numpy, like `mirror`/`retime`. (`retrograde(retrograde(x))≈x`.)
 - **R2. Recapitulation routing in `story.py`.** Using `Section.repeat_of` (S3): when a later
@@ -95,9 +95,9 @@ Turn the existing (under-used) reuse machinery into a first-class **recapitulati
   and roles, explicitly plans recapitulation and picks the variation (mirror at the return,
   retrograde for a B→A′, etc.), setting `reuse_of` + `variation` it already supports.
 - **R4. "Mirror the intro at the end."** A common special case: if the outro shares the intro's
-  label (or the user asks), reuse the intro clip **mirrored/retrograded** as the outro — a direct,
+  label (or the user asks), reuse the intro clip **mirrored/retrograded** as the outro, a direct,
   perceptually strong ABA close.
-- **R5. Structuredness metric** — add **Section-Repetition-Correlation (SRC)** to
+- **R5. Structuredness metric**, add **Section-Repetition-Correlation (SRC)** to
   `story_metrics.py`: pose-feature cosine similarity between motion of same-label sections
   (extends the existing `motif_recurrence`), so we can measure that the dance mirrors the music's
   ABA form. (See §6.)
@@ -107,7 +107,7 @@ Turn the existing (under-used) reuse machinery into a first-class **recapitulati
 ## 3. Best-of-K seed sampling for beat alignment (Thread 3)
 
 ### Findings
-- **Both EDGE and LODGE are diffusion models and fully seed-stochastic** — different initial noise
+- **Both EDGE and LODGE are diffusion models and fully seed-stochastic**, different initial noise
   `z_T` gives independent, differently-beat-aligned dances for the same music. Neither explicitly
   optimizes beat alignment, so **BAS variance across seeds is substantial (~±0.03–0.06)** → picking
   the best of several is effective.
@@ -143,22 +143,22 @@ Turn the existing (under-used) reuse machinery into a first-class **recapitulati
 
 ### Findings
 - **Text↔motion models exist**: **TMR** (Petrovich et al., ICCV 2023, open-source) gives a
-  cross-modal cosine similarity between a text description and a motion clip — usable directly as a
+  cross-modal cosine similarity between a text description and a motion clip, usable directly as a
   **verifier/critic**. **MotionGPT / TM2T / MotionLLM** can *caption* a clip in natural language.
 - Cheap baseline without a learned model: **kinematic-feature captions** derived from what we
   already compute (energy, velocity profile, foot contacts, spatial extent, periodicity,
   symmetry) → a templated sentence per segment.
 - LLM-reasoning literature (CoT, self-consistency, ReAct, Reflexion) consistently shows
-  **intermediate natural-language representations improve decision quality** — i.e., letting the
+  **intermediate natural-language representations improve decision quality**, i.e., letting the
   storyboard LLM reason over *descriptions* rather than raw energy numbers should help selection.
 
 ### Design
 - **D1. Segment captioner** (`agentlodge/agent/segment_caption.py`): start with a **kinematic
-  templated caption** (no new heavy model) — e.g. "high-energy, wide traveling movement with sharp
+  templated caption** (no new heavy model), e.g. "high-energy, wide traveling movement with sharp
   accents on the beat, symmetric arms." Optional upgrade: a learned captioner (MotionGPT/TM2T).
 - **D2. Description-grounded selection.** Feed each candidate's caption into the storyboard/
   selection prompt so the LLM compares *described* options; this also makes `vocabulary` (currently
-  inert — see prior analysis) *meaningful* by matching plan-vocabulary to candidate captions.
+  inert, see prior analysis) *meaningful* by matching plan-vocabulary to candidate captions.
 - **D3. Plan↔realization verifier.** Use **TMR** cosine similarity between the plan's intended
   description and the realized segment as a numeric check that the assembly matched intent; surface
   it in metrics and reuse it as the critic in Thread 5.
@@ -171,13 +171,13 @@ Turn the existing (under-used) reuse machinery into a first-class **recapitulati
 - **"Nano Banana"** = Gemini's native image gen; **"AgentBanana"** = the engineering pattern that
   wraps it in a **propose → apply → verify → refine** loop (planner/parser → editor → VLM/LLM
   critic → stop-condition, typically **3–5 iterations**). Backed academically by **Self-Refine**
-  and **Reflexion** (both NeurIPS 2023). Caveat: self-correction has limits (Huang et al. 2023) —
+  and **Reflexion** (both NeurIPS 2023). Caveat: self-correction has limits (Huang et al. 2023) -
   keep the loop bounded and use an *objective* verifier where possible.
 - **NL motion editing prior art**: MotionFix (text-based 3D motion editing), Goel et al.'s
   LLM-driven **iterative motion editing via programs** (SIGGRAPH 2024), EDGE's editing/inpainting,
   DNO/OmniControl. Verification via **TMR** (text-motion critic) + kinematic-metric deltas.
 
-### Design — an editing agent over AgentLODGE's *own* bounded operations
+### Design, an editing agent over AgentLODGE's *own* bounded operations
 The pipeline already has a small, safe operation set. Map NL → those ops, apply, verify, loop:
 - **E1. Instruction parser (LLM).** Map a request to a bounded op set already available:
   re-select segment source (LODGE↔EDGE), **re-sample K seeds** (Thread 3), `retime`,
@@ -202,10 +202,10 @@ The pipeline already has a small, safe operation set. Map NL → those ops, appl
 
 Add the missing measurements so improvements are quantifiable (feeds every thread + the editor's
 verifier):
-- **Beat Alignment Score (BAS)** and **PFC** — new `beat_metrics.py` (Thread 3, prerequisite).
-- **Section-Repetition-Correlation (SRC)** — same-label motion similarity (Thread 2).
-- **Energy-Arc Correlation (EAC)** — already ≈ `arc_adherence`; keep.
-- **Plan↔realization TMR alignment** — Thread 4 verifier.
+- **Beat Alignment Score (BAS)** and **PFC**, new `beat_metrics.py` (Thread 3, prerequisite).
+- **Section-Repetition-Correlation (SRC)**, same-label motion similarity (Thread 2).
+- **Energy-Arc Correlation (EAC)**, already ≈ `arc_adherence`; keep.
+- **Plan↔realization TMR alignment**, Thread 4 verifier.
 - Optional aggregate **Choreographic Structure Score**: `CSS = α·BAS + β·SRC + γ·EAC + δ·PFC`.
 
 ---
@@ -238,39 +238,39 @@ New modules: `dance/beat_metrics.py`, `dance/best_of_k.py`, `agent/segment_capti
 
 ## 8. Phased roadmap
 
-**Phase 0 — Measure the weakness (fast, high-value).** ✅ **DONE** (commit 561e60f)
+**Phase 0, Measure the weakness (fast, high-value).** ✅ **DONE** (commit 561e60f)
 `beat_metrics.py` (BAS + beat coverage + FK-free foot-contact consistency) wired into
 `compute_story_metrics` + `pipeline_log`. Beat alignment is now visible and every later change is
 measurable. Also landed `transition.retrograde` (Phase-1 primitive) + wired into the motif-reuse
 path + storyboard schema. 9 new tests (21 total pass). **Song-150 baseline:** BAS LODGE 0.406 /
 EDGE 0.391 / STORY 0.408; foot-consistency LODGE 0.513 / EDGE 1.000 / STORY 0.786. *No model work.*
 
-**Phase 1 — Structure & recapitulation (mostly training-free, high payoff).** ✅ **DONE** (af15561)
+**Phase 1, Structure & recapitulation (mostly training-free, high payoff).** ✅ **DONE** (af15561)
 `Section.repeat_of` + normalized-Laplacian **spectral labels** (opt-in `AGENTLODGE_STRUCTURE_SPECTRAL`)
 + `retrograde` primitive + **recapitulation** close (`AGENTLODGE_STORY_RECAP`: reuse the opening
 mirrored+retrograded at the final section) + storyboard directive + **SRC** metric. Pure-numpy + tested.
 
-**Phase 2 — Best-of-K for beat alignment.** ✅ **DONE** (1387e20 + integration)
-`dance/best_of_k.py` — generator-agnostic best-of-K: a `generate_fn(seed)` closure, scored by
+**Phase 2, Best-of-K for beat alignment.** ✅ **DONE** (1387e20 + integration)
+`dance/best_of_k.py`, generator-agnostic best-of-K: a `generate_fn(seed)` closure, scored by
 composite BAS(0.6)+foot(0.25)+energy(0.15), returns the argmax + per-seed report. **Now fully wired
 into the pipeline:** seed control end-to-end (`generate_lodge_dance`/`generate_edge_dance` +
 `run_lodge_inference.py`/`run_edge_inference.py --seed` + `subprocess_runner`), a `best_of_k_job`
 orchestrator + `_lodge/_edge_score_transform`, and `AGENTLODGE_BEST_OF_K` (generate K seeded
 whole-song candidates per generator, keep the most beat-aligned). Selection validated on real
 motions + unit tests. *Live seeded-generation run needs the pod's model env (torch + checkpoints)
-restored — the migrated pod lost them.*
+restored, the migrated pod lost them.*
 
-**Phase 3 — Description-grounded reasoning.** ✅ **DONE** (b1e816f)
-`agent/segment_caption.py` — FK-free kinematic captions + vocabulary↔energy match (makes `vocabulary`
+**Phase 3, Description-grounded reasoning.** ✅ **DONE** (b1e816f)
+`agent/segment_caption.py`, FK-free kinematic captions + vocabulary↔energy match (makes `vocabulary`
 meaningful) + `plan_realization_alignment` verifier (optional TMR hook). Surfaced per section in the
 assembler's decisions. *Optional upgrade:* learned captioner (MotionGPT/TM2T) + TMR critic.
 
-**Phase 4 — Natural-language editing agent.** ✅ **DONE** (218e69c)
-`agent/edit_agent.py` — parse NL → bounded `EditOp` → apply → re-assemble → verify → bounded refine
+**Phase 4, Natural-language editing agent.** ✅ **DONE** (218e69c)
+`agent/edit_agent.py`, parse NL → bounded `EditOp` → apply → re-assemble → verify → bounded refine
 loop over existing controls (recapitulate / set_intensity / set_bias / mirror·retrograde·amplitude /
 beat), plus per-section `post_variations` in the assembler. Tested offline. *Optional:* VLM critic.
 
-**Phase 5 (stretch) — Guidance & learned components.**
+**Phase 5 (stretch), Guidance & learned components.**
 Universal-Guidance beat steering (B4); learned captioner (MotionGPT); TMR fine-tuned on dance.
 
 Suggested order: **Phase 0 → 1 → 2** give the biggest structural + beat-alignment wins with the

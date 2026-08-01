@@ -23,14 +23,14 @@ $env:AGENTLODGE_POD_HOST="213.173.107.238"; $env:AGENTLODGE_POD_PORT="20642"
 $env:AGENTLODGE_POD_KEY="$HOME\.ssh\id_ed25519"
 ```
 
-## 2. Provision the pod (idempotent — re-run after every restart)
+## 2. Provision the pod (idempotent, re-run after every restart)
 
 ```powershell
 .\scripts\pod.ps1 setup
 ```
 
 `setup_pod.sh` installs, idempotently:
-1. the system libs Blender/ffmpeg need — `libXrender/libXi/libEGL/libglvnd/...` + `ffmpeg`
+1. the system libs Blender/ffmpeg need, `libXrender/libXi/libEGL/libglvnd/...` + `ffmpeg`
    (these are wiped on **every** restart);
 2. a Python venv (`/root/al_venv`, fast local disk) with `torch` + `pytorch3d` + the LODGE/EDGE
    generation deps (`pytorch-lightning`, `accelerate`, ...);
@@ -62,19 +62,19 @@ uvicorn server.app:app --host 127.0.0.1 --port 8000
 # http://127.0.0.1:8000  (auto-loads the bank from server/media/<sid>/bank/)
 ```
 
-## Why edits are instant — and how to switch on **live pod mode**
+## Why edits are instant, and how to switch on **live pod mode**
 
-By default the editor does **best-of-K selection over a pre-generated bank** — real LODGE/EDGE
+By default the editor does **best-of-K selection over a pre-generated bank**, real LODGE/EDGE
 material, but generated ahead of time (step 3), so editing is a fast select + splice that works even
 with the pod switched off. Its only limit is variety: an edit can only pick from the seeds you baked.
 
 **Live pod mode** removes that ceiling: instead of a fixed bank, every unseen seed runs a *fresh*
 LODGE/EDGE diffusion sample **on the pod, on demand**, so the search space is unbounded. It plugs in
-through the same `WindowGenerator` protocol and degrades gracefully — if the pod can't produce a take
+through the same `WindowGenerator` protocol and degrades gracefully, if the pod can't produce a take
 (unreachable, or the song isn't preprocessed for generation) it falls back to the local bank, then to
 the offline mock, so the UI never breaks.
 
-### Requirements — provision a generation pod
+### Requirements, provision a generation pod
 Live mode needs a **generation-provisioned** pod, *not* a render-only one. One command does the whole
 stack (verified on an RTX PRO 4500 Blackwell / sm_120, CUDA 13 driver):
 
@@ -83,16 +83,16 @@ stack (verified on an RTX PRO 4500 Blackwell / sm_120, CUDA 13 driver):
 ```
 
 `setup_gen_pod.sh` is idempotent and bakes in the hard-won fixes:
-- **CUDA torch that works on Blackwell** — it *uninstalls* any pre-existing `torch==*+cpu` first (a
+- **CUDA torch that works on Blackwell**, it *uninstalls* any pre-existing `torch==*+cpu` first (a
   leftover CPU wheel has a higher version string than every `cu128` wheel, so a plain install is a
   silent no-op), installs `cu128`, and **gates on a real GPU matmul** before continuing.
 - **LODGE + EDGE weights** via `scripts/download_gdrive.py` (the pods' `gdown` is a broken 6.1.0 that
   fails on Google's large-file "virus scan" page; the helper parses the confirm form instead).
-- **`pyrender` + OSMesa** (LODGE's `render.py` imports pyrender at module load — miss it and every
+- **`pyrender` + OSMesa** (LODGE's `render.py` imports pyrender at module load, miss it and every
   LODGE gen dies with `ModuleNotFoundError: pyrender`).
 - **EDGE venv + Jukebox** (`/workspace/EDGE/.venv` shares the CUDA venv via a `.pth`; jukebox +
-  jukemirlib install `--no-deps` so they don't downgrade torch) — verified importing under torch 2.11.
-- **LODGE on GPU** — repoints `/workspace/LODGE/.venv` at the CUDA venv.
+  jukemirlib install `--no-deps` so they don't downgrade torch), verified importing under torch 2.11.
+- **LODGE on GPU**, repoints `/workspace/LODGE/.venv` at the CUDA venv.
 
 Then preprocess each song you want to live-edit (LODGE feats are fast; EDGE Jukebox slices need the
 ~10GB 5B prior, downloaded once):
@@ -132,6 +132,6 @@ time (LODGE and EDGE each spawn a subprocess, so a single new seed can pay this 
   `AGENTLODGE_LIVE_CYCLES` small (default 2/1), and remember seeds already pulled are cached (instant).
 - For much faster iteration, copy the CUDA venv to local SSD (`cp -a /workspace/AgentLODGE/.venv
   /root/al_gpu`), repoint `LODGE/.venv` + the EDGE `.pth` at it, and set
-  `AGENTLODGE_POD_PYTHON=/root/al_gpu/bin/python` — imports drop to ~10s. This is **ephemeral** (lost
+  `AGENTLODGE_POD_PYTHON=/root/al_gpu/bin/python`, imports drop to ~10s. This is **ephemeral** (lost
   on restart), so re-copy after each pod start.
 
