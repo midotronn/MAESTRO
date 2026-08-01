@@ -1,6 +1,6 @@
 # MAESTRO
 
-**M**otion **A**gent for **E**diting: **S**ynchronized, **T**ext-driven **R**easoning & **O**rchestration.
+**M**usic-to-motion **A**gent for **E**xpressive, **S**tructured, **T**ext-guided **R**easoning & **O**rchestration.
 
 End-to-end pipeline that accepts a song, generates dances with **LODGE** and **EDGE** in parallel, then either **selects** the more coherent whole dance with an LLM agent **or intertwines both** into a single hybrid whose style source changes per musical section (see [Hybrid mode](#hybrid-intertwined-mode)), and generates a costume illustration derived entirely from the audio. An interactive, agent-driven editor then lets you refine any time window of the dance with natural-language instructions.
 
