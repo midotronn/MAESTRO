@@ -81,11 +81,19 @@ def _tool_reverse(clip, ctx):
 
 
 def _tool_regenerate(clip, ctx, *, backbone: str = "auto", energy: float = 0.5, k: int = 3):
-    """Resample a fresh dance for JUST this window from a diffusion backbone (best of a few seeds)."""
+    """Resample a fresh dance for JUST this window from a diffusion backbone (best of a few seeds).
+
+    Candidates are ranked by how well they advance the edit's DECLARED goals (``ctx['goals']``) --
+    e.g. "regenerate this more on beat" keeps the highest-BAS seed, "bigger" keeps the most energetic
+    -- rather than a fixed energy target. Only when there is no measurable goal (e.g. "give me
+    different moves") does it fall back to matching the requested intensity.
+    """
     gen = ctx.get("generator")
     if gen is None:
         return clip, "no backbone available - kept the current motion"
     a, b, wbeats = ctx["a"], ctx["b"], ctx["wbeats"]
+    goals = ctx.get("goals") or []
+    base_m = window_metrics(clip, wbeats)                    # rank candidates relative to the current window
     bbs = ["edge", "lodge"] if backbone == "auto" else [backbone]
     best, best_score, chosen = None, None, None
     for bb in bbs:
@@ -96,8 +104,10 @@ def _tool_regenerate(clip, ctx, *, backbone: str = "auto", energy: float = 0.5, 
                 continue
             cand = np.asarray(cand, dtype=np.float32)
             m = window_metrics(cand, wbeats)
-            # prefer the requested intensity: score by closeness of energy to target
-            score = -abs(m["energy"] - (0.2 + 0.8 * float(energy)))
+            if goals:                                        # advance the goals the agent declared
+                score = _reward_goals(goals, base_m, m)
+            else:                                            # goalless: match the requested intensity
+                score = -abs(m["energy"] - (0.2 + 0.8 * float(energy)))
             if best_score is None or score > best_score:
                 best, best_score, chosen = cand, score, bb
     if best is None:
@@ -105,7 +115,8 @@ def _tool_regenerate(clip, ctx, *, backbone: str = "auto", energy: float = 0.5, 
     if best.shape[0] != clip.shape[0]:                       # fit to the window length
         from agentlodge.dance.transition import retime
         best = retime(best, clip.shape[0])
-    return best, f"regenerated the window with {chosen} (best of {k} seeds)"
+    goal_txt = (" toward " + ", ".join(lbl for _m, _d, lbl in goals)) if goals else ""
+    return best, f"regenerated the window with {chosen} (best of {k} seeds{goal_txt})"
 
 
 @dataclass
@@ -559,6 +570,7 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     # agent dropped, and is the sole source offline (no api key). Neither has to be exhaustive alone.
     plan = plan_edit(instruction, before, a_sec, b_sec, api_key=api_key)
     goals = _merge_goals(list(plan.goals), _requested_metrics(instruction))
+    ctx["goals"] = goals                               # let regenerate rank seeds by the declared goals
     goals_json = [{"metric": m, "dir": d, "label": lbl} for m, d, lbl in goals]
 
     _emit({"phase": "plan", "summary": plan.summary,

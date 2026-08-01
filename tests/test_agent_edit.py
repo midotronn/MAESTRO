@@ -103,6 +103,23 @@ def test_regenerate_tool_uses_generator():
     assert np.array_equal(r.motion[:90], m[:90]) and np.array_equal(r.motion[210:], m[210:])
 
 
+def test_regenerate_ranks_seeds_by_declared_goals(monkeypatch):
+    # regenerate must pick the seed that best ADVANCES the declared goals, not one matching a fixed
+    # energy target. 3 seeds: seed0=high-energy/low-BAS, seed1=low-energy/HIGH-BAS, seed2=middling.
+    class FakeGen:
+        def generate(self, bb, a, b, s, energy=0.5, beats=None, context=None):
+            c = np.zeros((120, 139), np.float32); c[0, 0] = float(s); return c
+    by_tag = {0: {"energy": 0.9, "bas": 0.5, "jerk": 0.1, "foot": 1.0},
+              1: {"energy": 0.3, "bas": 0.9, "jerk": 0.1, "foot": 1.0},
+              2: {"energy": 0.5, "bas": 0.6, "jerk": 0.1, "foot": 1.0}}
+    monkeypatch.setattr(AE, "window_metrics", lambda clip, beats=None: by_tag[int(round(float(clip[0, 0])))])
+    base = np.zeros((120, 139), np.float32); base[0, 0] = 2.0            # current window ~ seed2 (BAS 0.6)
+    ctx = {"a": 0, "b": 120, "wbeats": np.array([10.0, 20.0]), "generator": FakeGen(),
+           "goals": [("bas", "up", "beat alignment")], "context": None}
+    out, _note = AE._tool_regenerate(base, ctx, backbone="edge", energy=0.9, k=3)
+    assert int(round(float(out[0, 0]))) == 1               # highest-BAS seed, NOT the energy-target one (0)
+
+
 def test_regenerate_without_generator_degrades_gracefully():
     m = _base(200)
     plan = AE.AgentPlan("resample", steps=[AE.PlanStep("regenerate", {}, "x")],
