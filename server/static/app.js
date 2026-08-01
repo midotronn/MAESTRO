@@ -71,6 +71,85 @@ async function pollRender() {
   setTimeout(pollRender, 3000);
 }
 
+// -------------------------------------------------------------- before/after window comparison
+async function startCompare() {
+  const panel = $("compare"); panel.hidden = false;
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const st = $("cmpStatus"); st.style.display = "block"; st.className = "render-status";
+  st.textContent = "starting before/after render\u2026";
+  $("compareBtn").disabled = true;
+  try {
+    await api(`/api/session/${ST.sid}/compare`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    pollCompare();
+  } catch (e) {
+    st.className = "render-status bad"; st.textContent = "\u26a0 " + e.message;
+    $("compareBtn").disabled = false;
+  }
+}
+
+async function pollCompare() {
+  let j;
+  try { j = await api(`/api/session/${ST.sid}/compare`); }
+  catch (e) { setTimeout(pollCompare, 3000); return; }
+  const st = $("cmpStatus");
+  st.textContent = (j.status === "rendering" ? "\u{1F3AC} " : "") + (j.message || j.status);
+  if (j.status === "done") {
+    setupCompareVideos(j.before_video, j.after_video, j.metrics || {});
+    st.className = "render-status ok";
+    st.textContent = `\u2714 before/after ready${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
+    $("compareBtn").disabled = false;
+    setTimeout(() => { st.style.display = "none"; }, 5000);
+    toast("Before/after ready");
+    return;
+  }
+  if (j.status === "error") {
+    st.className = "render-status bad"; st.textContent = "\u26a0 " + (j.message || "compare failed");
+    $("compareBtn").disabled = false; toast("Compare failed");
+    return;
+  }
+  setTimeout(pollCompare, 3000);
+}
+
+function showCompareMetrics(m) {
+  const t = $("cmpMetrics"); t.innerHTML = "";
+  const b = m.before || {}, a = m.after || {};
+  if (m.window_sec) $("cmpWin").textContent = `(${m.window_sec[0]}\u2013${m.window_sec[1]}s)`;
+  if (b.bas === undefined) return;
+  t.appendChild(metricHeader());
+  ["energy", "bas", "jerk", "foot"].forEach((k) => {
+    if (b[k] === undefined || a[k] === undefined) return;
+    t.appendChild(metricRow(k, b[k], a[k]));
+  });
+}
+
+function setupCompareVideos(beforeName, afterName, metrics) {
+  const A = $("cmpAfter"), B = $("cmpBefore");
+  const bust = "?t=" + Date.now();
+  A.src = `/api/session/${ST.sid}/media/${afterName}${bust}`;
+  B.src = `/api/session/${ST.sid}/media/${beforeName}${bust}`;
+  A.load(); B.load();
+  showCompareMetrics(metrics);
+  const setPlayLabel = () => { $("cmpPlay").textContent = A.paused ? "\u25b6 Play both" : "\u23f8 Pause"; };
+  const playBoth = () => { A.play().catch(() => {}); B.play().catch(() => {}); setPlayLabel(); };
+  const pauseBoth = () => { A.pause(); B.pause(); setPlayLabel(); };
+  $("cmpPlay").onclick = () => { A.paused ? playBoth() : pauseBoth(); };
+  A.onplay = () => { if (B.paused) B.play().catch(() => {}); setPlayLabel(); };
+  A.onpause = () => { if (!B.paused) B.pause(); setPlayLabel(); };
+  A.ontimeupdate = () => {                                  // keep "before" locked to "after"
+    const d = A.duration || 1;
+    $("cmpScrub").value = Math.round((A.currentTime / d) * 1000);
+    if (isFinite(A.currentTime) && Math.abs((B.currentTime || 0) - A.currentTime) > 0.08) {
+      try { B.currentTime = A.currentTime; } catch (e) {}
+    }
+  };
+  $("cmpScrub").oninput = () => {
+    const d = A.duration || 1, t = ($("cmpScrub").value / 1000) * d;
+    try { A.currentTime = t; B.currentTime = t; } catch (e) {}
+  };
+  A.onloadeddata = () => { playBoth(); };
+}
+
 // -------------------------------------------------------------- load songs + session
 async function init() {
   const { songs } = await api("/api/songs");
@@ -83,6 +162,11 @@ async function init() {
   wireUpload();
   $("apply").onclick = runEdit;
   $("renderBtn").onclick = startRender;
+  $("compareBtn").onclick = startCompare;
+  $("cmpClose").onclick = () => {
+    $("compare").hidden = true;
+    try { $("cmpAfter").pause(); $("cmpBefore").pause(); } catch (e) {}
+  };
   $("undo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/undo`, { method: "POST" }));
   $("redo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/redo`, { method: "POST" }));
   $("instruction").addEventListener("keydown", (e) => { if (e.key === "Enter") runEdit(); });

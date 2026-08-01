@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MAESTRO: Agentic Music-to-Dance with Structure-Aware Choreography</title>
+  <meta name="description" content="MAESTRO is a training-free, agent-driven system that turns a song into a structured dance and lets you refine it with natural language. Motion Agent for Editing: Synchronized, Text-driven Reasoning and Orchestration." />
+  <meta name="keywords" content="dance generation, music to motion, LLM agent, choreography, LODGE, EDGE, structure, motif, beat alignment" />
+  <meta property="og:title" content="MAESTRO: Agentic Music-to-Dance with Structure-Aware Choreography" />
+  <meta property="og:description" content="Structure-aware, training-free choreography plus a natural-language dance editor." />
+  <meta property="og:image" content="static/images/pipeline_diagram.png" />
+  <meta property="og:type" content="website" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@500;700;800&family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="static/css/style.css" />
+</head>
+<body>
+
+  <!-- ============ hero ============ -->
+  <header class="hero-maestro">
+    <div class="container is-max-desktop">
+      <div class="wordmark">
+        <span style="color:#7c5cff">M</span><span style="color:#8f57ff">A</span><span style="color:#a755f2">E</span><span style="color:#c24fd6">S</span><span style="color:#e0508f">T</span><span style="color:#f0674f">R</span><span style="color:#f59e0b">O</span>
+      </div>
+      <div class="backronym"><b>M</b>otion <b>A</b>gent for <b>E</b>diting: <b>S</b>ynchronized, <b>T</b>ext-driven <b>R</b>easoning &amp; <b>O</b>rchestration</div>
+      <p class="hero-tag">A training-free, agent-driven system that turns a song into a structured, well-composed dance, then lets you refine any moment of it with plain-English instructions.</p>
+      <p class="authors" id="authors"></p>
+      <div class="btns">
+        <a class="btn primary" href="/" id="editorBtn"><span class="ic">&#9654;</span> Launch live editor</a>
+        <a class="btn" href="https://github.com/midotronn/AgentLODGE" target="_blank" rel="noopener"><span class="ic">&#9733;</span> Code</a>
+        <a class="btn" href="#citation"><span class="ic">&#128196;</span> Paper (soon)</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============ abstract ============ -->
+  <section class="section">
+    <div class="container is-max-desktop">
+      <h2 class="sec-title">Abstract</h2>
+      <div class="card-m">
+        <p class="prose">
+          MAESTRO generates dance from music without any task-specific training. It runs two complementary
+          motion generators, <b>LODGE</b> and <b>EDGE</b>, then uses LLM agents to <b>compose</b> a single coherent
+          performance rather than emit freestyle motion. A structure agent reads the song's musical form
+          (intro, verse, chorus, drop, outro) and energy arc; a <b>storyboard</b> agent authors a per-section plan
+          (role, intensity, movement vocabulary, preferred generator, and recurring motifs); and a
+          structure-aware assembler realizes that plan by arranging LODGE and EDGE material, reusing and
+          transforming motifs (mirror / retrograde) for recapitulation, and joining every switch with an
+          inertialized blend. Finally, an <b>interactive editor</b> lets a user select any time window and refine it
+          with natural language, with an agent that plans, verifies against the requested goals, and keeps the
+          motion smooth. The result reads as a deliberately composed piece and, on beat alignment, matches or
+          beats the stronger single generator.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ method ============ -->
+  <section class="section alt-bg">
+    <div class="container is-max-desktop">
+      <h2 class="sec-title">How it works</h2>
+      <p class="sec-sub">Two generators, three agentic stages, one composed dance.</p>
+      <figure class="figure card-m">
+        <img src="static/images/pipeline_diagram.png" alt="MAESTRO pipeline" />
+        <figcaption>Parallel LODGE and EDGE generation, agentic selection or structure-aware assembly, then rendering.</figcaption>
+      </figure>
+      <div class="stages">
+        <div class="stage">
+          <div class="n">STAGE 1</div>
+          <h4>Structure analysis</h4>
+          <p>Librosa segments the song into sections over chroma and MFCC, labels musically repeated
+          sections, and builds an energy arc. Boundaries snap to downbeats.</p>
+        </div>
+        <div class="stage">
+          <div class="n">STAGE 2</div>
+          <h4>Storyboard agent</h4>
+          <p>An LLM authors a plan per section: its role in the arc, target intensity, movement vocabulary,
+          preferred generator, and any motif to recall (optionally mirrored or reversed).</p>
+        </div>
+        <div class="stage">
+          <div class="n">STAGE 3</div>
+          <h4>Structure-aware assembly</h4>
+          <p>Per section, the assembler picks LODGE, EDGE, or a transformed motif that best matches the plan
+          while staying smooth, joining every source change with an inertialized transition.</p>
+        </div>
+      </div>
+      <figure class="figure card-m" style="margin-top:1.4rem">
+        <img src="static/images/story_pipeline_diagram.png" alt="Story choreography pipeline" />
+        <figcaption>Structured (story) mode: musical form and an energy arc drive a composed, motif-aware choreography.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ results + structure ============ -->
+  <section class="section">
+    <div class="container is-max-desktop">
+      <h2 class="sec-title">Structure-aware choreography</h2>
+      <p class="sec-sub">For each song: the 3-way comparison, the detected structure and per-section source, the storyboard, and the metrics.</p>
+      <div id="songs"><p class="loading">Loading demos&hellip;</p></div>
+    </div>
+  </section>
+
+  <!-- ============ live editor ============ -->
+  <section class="section alt-bg">
+    <div class="container is-max-desktop">
+      <h2 class="sec-title">The live editor</h2>
+      <p class="sec-sub">Refine any moment of the dance with natural language.</p>
+      <div class="editor-cta card-m">
+        <img src="static/images/editor_screenshot.png" alt="MAESTRO interactive editor" />
+        <div>
+          <p class="prose" style="font-size:1rem">
+            Select a time window on the beat-aligned timeline and describe the change in your own words:
+            <i>&ldquo;calmer but keep it tight to the beat&rdquo;</i>, <i>&ldquo;explosive hits on the drop&rdquo;</i>,
+            <i>&ldquo;flip and reverse this&rdquo;</i>. A planner and executor agent apply the edit, verify it against every
+            requested goal, keep the motion smooth, and show their reasoning. Then compare the window
+            <b>before and after</b> side by side.
+          </p>
+          <div class="btns" style="justify-content:flex-start;margin-top:1rem">
+            <a class="btn primary" href="/"><span class="ic">&#9654;</span> Launch live editor</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ citation ============ -->
+  <section class="section" id="citation">
+    <div class="container is-max-desktop">
+      <h2 class="sec-title">Citation</h2>
+      <pre class="bibtex">@misc{maestro2026,
+  title  = {MAESTRO: Motion Agent for Editing, Synchronized, Text-driven Reasoning and Orchestration},
+  author = {MAESTRO contributors},
+  year   = {2026},
+  note   = {https://github.com/midotronn/AgentLODGE}
+}</pre>
+    </div>
+  </section>
+
+  <footer class="footer-m">
+    <p>MAESTRO builds on <a href="https://github.com/li-ronghui/LODGE" target="_blank" rel="noopener">LODGE</a>
+      and <a href="https://github.com/Stanford-TML/EDGE" target="_blank" rel="noopener">EDGE</a>.</p>
+    <p style="margin-top:0.4rem">Page design adapted from the <a href="https://github.com/eliahuhorwitz/Academic-project-page-template" target="_blank" rel="noopener">Academic Project Page</a> template style.</p>
+  </footer>
+
+  <script src="static/js/app.js"></script>
+</body>
+</html>

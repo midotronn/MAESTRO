@@ -1,0 +1,124 @@
+{
+  "song": "195",
+  "K": 4,
+  "n_sections": 5,
+  "storyboard_used_fallback": false,
+  "schedule": [
+    [
+      0,
+      136,
+      "lodge",
+      "intro"
+    ],
+    [
+      136,
+      417,
+      "lodge",
+      "intro"
+    ],
+    [
+      417,
+      1006,
+      "lodge",
+      "drop"
+    ],
+    [
+      1006,
+      1370,
+      "lodge",
+      "outro"
+    ],
+    [
+      1370,
+      2304,
+      "reuse:0",
+      "drop"
+    ]
+  ],
+  "lodge_per_seed": [
+    {
+      "seed": 0,
+      "beat_alignment": 0.5627,
+      "beat_coverage": 0.7095,
+      "foot_contact_consistency": 0.5044,
+      "n_motion_beats": 250.0
+    },
+    {
+      "seed": 1,
+      "beat_alignment": 0.5517,
+      "beat_coverage": 0.6816,
+      "foot_contact_consistency": 0.5014,
+      "n_motion_beats": 247.0
+    },
+    {
+      "seed": 2,
+      "beat_alignment": 0.5684,
+      "beat_coverage": 0.7207,
+      "foot_contact_consistency": 0.505,
+      "n_motion_beats": 247.0
+    },
+    {
+      "seed": 3,
+      "beat_alignment": 0.5848,
+      "beat_coverage": 0.7374,
+      "foot_contact_consistency": 0.5049,
+      "n_motion_beats": 247.0
+    }
+  ],
+  "edge_per_seed": [
+    {
+      "seed": 0,
+      "beat_alignment": 0.5825,
+      "beat_coverage": 0.7005,
+      "foot_contact_consistency": 1.0,
+      "n_motion_beats": 243.0
+    },
+    {
+      "seed": 1,
+      "beat_alignment": 0.6214,
+      "beat_coverage": 0.7701,
+      "foot_contact_consistency": 1.0,
+      "n_motion_beats": 237.0
+    },
+    {
+      "seed": 2,
+      "beat_alignment": 0.5745,
+      "beat_coverage": 0.7005,
+      "foot_contact_consistency": 1.0,
+      "n_motion_beats": 246.0
+    },
+    {
+      "seed": 3,
+      "beat_alignment": 0.5846,
+      "beat_coverage": 0.7273,
+      "foot_contact_consistency": 1.0,
+      "n_motion_beats": 249.0
+    }
+  ],
+  "lodge_best_seed": 3,
+  "lodge_best_bas": 0.5848,
+  "lodge_mean_bas": 0.5669,
+  "edge_best_seed": 1,
+  "edge_best_bas": 0.6214,
+  "edge_mean_bas": 0.5907,
+  "columns": {
+    "LODGE_1seed": {
+      "beat_alignment": 0.5627,
+      "beat_coverage": 0.7095,
+      "foot_contact_consistency": 0.5044,
+      "n_motion_beats": 250.0
+    },
+    "EDGE_1seed": {
+      "beat_alignment": 0.5825,
+      "beat_coverage": 0.7005,
+      "foot_contact_consistency": 1.0,
+      "n_motion_beats": 243.0
+    },
+    "AgentLODGE_multiseed": {
+      "beat_alignment": 0.5827,
+      "beat_coverage": 0.4693,
+      "foot_contact_consistency": 0.4923,
+      "n_motion_beats": 156.0
+    }
+  }
+}

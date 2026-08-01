@@ -249,3 +249,175 @@ def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
              elapsed=round(time.time() - _RJOBS[sid].get("started", time.time())))
     except Exception as exc:  # noqa: BLE001
         _set(sid, status="error", progress=0, message=f"render error: {exc}")
+
+
+# =========================================================================== before/after compare
+# Renders the edited window twice -- the pre-edit ("before") and current ("after") motion -- as two
+# short window clips, launched in PARALLEL on the pod so the wall time stays close to a single render.
+# The UI plays them side by side, synced, with the before/after window metrics.
+_CJOBS: dict[str, dict] = {}
+
+
+def get_compare_job(sid: str) -> dict:
+    with _RLOCK:
+        return dict(_CJOBS.get(sid, {"status": "idle", "message": "", "progress": 0}))
+
+
+def _cset(sid: str, **kw) -> None:
+    with _RLOCK:
+        _CJOBS.setdefault(sid, {}).update(kw)
+
+
+def start_compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
+                         media_dir: Path, *, metrics: dict | None = None) -> None:
+    _cset(sid, status="queued", message="queued", progress=3, started=time.time(),
+          metrics=metrics or {}, before_video=None, after_video=None)
+    threading.Thread(
+        target=_compare_render,
+        args=(sid, np.asarray(before_motion), np.asarray(after_motion), media_dir),
+        daemon=True).start()
+
+
+def _launch_window_render(cfg, sid: str, tag: str, motion: np.ndarray, media_dir: Path,
+                          ws: str) -> str | None:
+    """Server-FK a window motion, upload it, and launch a background Blender window render on the pod.
+
+    Returns the remote base path (``.../cmp_<tag>_<sid>``) whose ``.mp4``/``.done``/``.fail`` markers to
+    poll, or ``None`` on failure. Mirrors the warm (server-FK) path of :func:`_render`.
+    """
+    al_py = os.environ.get("AGENTLODGE_POD_PYTHON", f"{ws}/AgentLODGE/.venv/bin/python")
+    base = f"{ws}/cmp_{tag}_{sid}"
+    remote_in = f"{base}.npy"
+    render_script = "render_one_ybot.sh"
+    warm_ok = False
+    if os.environ.get("AGENTLODGE_RENDER_WARM", "1") != "0":
+        try:
+            from server import fk
+            local_poses = media_dir / f"_cmp_{tag}_poses.npz"
+            fk.save_poses_npz(motion, str(local_poses))
+            remote_poses = f"{base}_poses.npz"
+            if _scp_to(cfg, str(local_poses), remote_poses).returncode == 0:
+                remote_in, render_script, warm_ok = remote_poses, "render_poses_ybot.sh", True
+        except Exception as exc:  # noqa: BLE001 - fall back to the pod torch FK
+            logger.warning("compare FK failed (%s); falling back to pod torch FK", exc)
+    if not warm_ok:
+        local_npy = media_dir / f"_cmp_{tag}.npy"
+        np.save(local_npy, motion.astype(np.float32))
+        if _scp_to(cfg, str(local_npy), remote_in).returncode != 0:
+            return None
+    rw = os.environ.get("AGENTLODGE_RENDER_WIN_W", "448")
+    rh = os.environ.get("AGENTLODGE_RENDER_WIN_H", "448")
+    rs = os.environ.get("AGENTLODGE_RENDER_WIN_SAMPLES", "8")
+    render_env = f"RENDER_W={rw} RENDER_H={rh} RENDER_SAMPLES={rs} CUDA_VISIBLE_DEVICES="
+    launch = _ssh(
+        cfg,
+        f"cd {ws}/AgentLODGE && sed -i 's/\\r$//' scripts/{render_script}; "
+        f"rm -f {base}.mp4 {base}.done {base}.fail {base}.log; "
+        f"setsid bash -c 'AL_PY={al_py} WORKSPACE={ws} {render_env} bash scripts/{render_script} "
+        f"{remote_in} {base}.mp4 \"\" >> {base}.log 2>&1 && touch {base}.done || touch {base}.fail' "
+        f"</dev/null >/dev/null 2>&1 & echo LAUNCHED",
+        timeout=40)
+    return base if "LAUNCHED" in (launch.stdout or "") else None
+
+
+def _compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
+                    media_dir: Path) -> None:
+    cfg = pod_config()
+    if not cfg.host:
+        _cset(sid, status="error", progress=0,
+              message="No GPU pod configured (set AGENTLODGE_POD_HOST).")
+        return
+    if before_motion.shape[0] < 2 or after_motion.shape[0] < 2:
+        _cset(sid, status="error", progress=0, message="nothing to compare (empty window).")
+        return
+    try:
+        _cset(sid, status="rendering", progress=8, message="checking the GPU pod\u2026")
+        reachable = False
+        for _ in range(4):
+            try:
+                if _ssh(cfg, "echo ok", timeout=30).returncode == 0:
+                    reachable = True
+                    break
+            except Exception:  # noqa: BLE001 - transient connect timeout: retry
+                pass
+            time.sleep(5)
+        if not reachable:
+            _cset(sid, status="error", progress=0,
+                  message=f"can't reach the GPU pod at {cfg.host}:{cfg.port} (retried).")
+            return
+        ws = cfg.ws
+        media_dir.mkdir(parents=True, exist_ok=True)
+        _cset(sid, progress=16, message="preparing before + after renders\u2026")
+        _upload_scripts(cfg)
+        base_b = _launch_window_render(cfg, sid, "before", before_motion, media_dir, ws)
+        base_a = _launch_window_render(cfg, sid, "after", after_motion, media_dir, ws)
+        if not base_b or not base_a:
+            _cset(sid, status="error", progress=0, message="could not start the compare render on the pod.")
+            return
+        frames = int(max(before_motion.shape[0], after_motion.shape[0]))
+        est_sec = 20 + int(frames * 0.28)                    # two parallel window renders
+        _cset(sid, progress=24, frames=frames,
+              message=f"rendering before & after ({frames} frames each) on the GPU "
+                      f"(~{est_sec}s)\u2026")
+
+        deadline = time.time() + 60 * 45
+        done_b = done_a = False
+        while time.time() < deadline:
+            time.sleep(3)
+            try:
+                chk = _ssh(
+                    cfg,
+                    f"st(){{ if [ -f $1.done ]; then echo D; elif [ -f $1.fail ]; then echo F; else echo R; fi; }}; "
+                    f"echo B=$(st {base_b}) A=$(st {base_a})",
+                    timeout=25)
+                line = ((chk.stdout or "").strip().splitlines()[-1:] or [""])[0]
+            except Exception:  # noqa: BLE001 - transient ssh hiccup: keep polling
+                line = ""
+            sb = "R"
+            sa = "R"
+            for tok in line.split():
+                if tok.startswith("B="):
+                    sb = tok[2:]
+                elif tok.startswith("A="):
+                    sa = tok[2:]
+            if sb == "F" or sa == "F":
+                bad = base_b if sb == "F" else base_a
+                try:
+                    tail = _ssh(cfg, f"tail -c 400 {bad}.log 2>/dev/null", timeout=25).stdout or ""
+                except Exception:  # noqa: BLE001
+                    tail = ""
+                _cset(sid, status="error", progress=0,
+                      message=f"compare render failed: {tail.strip()[-260:]}")
+                return
+            done_b = done_b or sb == "D"
+            done_a = done_a or sa == "D"
+            if done_b and done_a:
+                break
+            frac = min(0.95, (time.time() - _CJOBS[sid].get("started", time.time())) / est_sec)
+            _cset(sid, progress=int(24 + 64 * frac))
+        else:
+            _cset(sid, status="error", progress=0, message="compare render timed out on the pod.")
+            return
+
+        _cset(sid, progress=90, message="downloading before + after\u2026")
+        outs = {"before": (base_b, media_dir / "cmp_before.mp4"),
+                "after": (base_a, media_dir / "cmp_after.mp4")}
+        for _tag, (base, dst) in outs.items():
+            ok = False
+            for _ in range(3):
+                try:
+                    if _scp_from(cfg, f"{base}.mp4", str(dst)).returncode == 0:
+                        ok = True
+                        break
+                except Exception:  # noqa: BLE001
+                    pass
+                time.sleep(5)
+            if not ok:
+                _cset(sid, status="error", progress=0,
+                      message=f"could not fetch the {_tag} video.")
+                return
+        _cset(sid, status="done", progress=100, message="ready",
+              before_video="cmp_before.mp4", after_video="cmp_after.mp4",
+              elapsed=round(time.time() - _CJOBS[sid].get("started", time.time())))
+    except Exception as exc:  # noqa: BLE001
+        _cset(sid, status="error", progress=0, message=f"compare error: {exc}")

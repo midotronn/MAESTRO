@@ -1,0 +1,50 @@
+[
+  {
+    "id": "002",
+    "title": "FineDance 002",
+    "tagline": "Retrograde recap: the opening motif returns to close the piece.",
+    "video": "story_002_3way.mp4",
+    "metrics": "metrics_002.json",
+    "story": null
+  },
+  {
+    "id": "037",
+    "title": "FineDance 037",
+    "tagline": "Structure-aware hybrid of LODGE and EDGE material across contrasting sections.",
+    "video": "story_037_3way.mp4",
+    "metrics": "metrics_037.json",
+    "story": null
+  },
+  {
+    "id": "150",
+    "title": "FineDance 150",
+    "tagline": "An LLM-authored storyboard drives a deliberate build toward the climax.",
+    "video": "story_150_3way.mp4",
+    "metrics": "metrics_150.json",
+    "story": "story_150.json"
+  },
+  {
+    "id": "195",
+    "title": "FineDance 195",
+    "tagline": "Energetic intro with a recurring drop motif carried across the arc.",
+    "video": "story_195_3way.mp4",
+    "metrics": "metrics_195.json",
+    "story": null
+  },
+  {
+    "id": "208",
+    "title": "FineDance 208",
+    "tagline": "Sectional contrast assembled from both generators with inertialized joins.",
+    "video": "story_208_3way.mp4",
+    "metrics": "metrics_208.json",
+    "story": null
+  },
+  {
+    "id": "trs",
+    "title": "Bruno Mars, Treasure",
+    "tagline": "The song loaded in the live editor; the outro recalls the intro, mirrored and in retrograde.",
+    "video": "story_trs_3way.mp4",
+    "metrics": null,
+    "story": "story_trs.json"
+  }
+]

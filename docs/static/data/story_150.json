@@ -1,0 +1,222 @@
+{
+  "song": "150",
+  "storyboard": {
+    "arc": "3 sections building toward the drop at section 1, then resolving: intro -> drop -> outro",
+    "reasoning": "rule-based storyboard from detected structure",
+    "used_fallback": true,
+    "plans": [
+      {
+        "section_index": 0,
+        "role": "intro",
+        "target_intensity": 0.0,
+        "vocabulary": "grounded_minimal",
+        "generator_bias": "lodge",
+        "reuse_of": null,
+        "variation": {
+          "mirror": false,
+          "retime": 1.0,
+          "amplitude": 1.0
+        }
+      },
+      {
+        "section_index": 1,
+        "role": "drop",
+        "target_intensity": 1.0,
+        "vocabulary": "explosive_fast",
+        "generator_bias": "edge",
+        "reuse_of": null,
+        "variation": {
+          "mirror": false,
+          "retime": 1.0,
+          "amplitude": 1.0
+        }
+      },
+      {
+        "section_index": 2,
+        "role": "outro",
+        "target_intensity": 0.868,
+        "vocabulary": "explosive_fast",
+        "generator_bias": "edge",
+        "reuse_of": null,
+        "variation": {
+          "mirror": false,
+          "retime": 1.0,
+          "amplitude": 1.0
+        }
+      }
+    ]
+  },
+  "structure": {
+    "n_sections": 3,
+    "climax_index": 1,
+    "tempo": 100.0,
+    "used_fallback": false,
+    "sections": [
+      {
+        "start_sec": 0.0,
+        "end_sec": 25.4,
+        "start_frame": 0,
+        "end_frame": 762,
+        "label": 0,
+        "role": "intro",
+        "energy": 0.0
+      },
+      {
+        "start_sec": 25.4,
+        "end_sec": 74.77,
+        "start_frame": 762,
+        "end_frame": 2243,
+        "label": 1,
+        "role": "drop",
+        "energy": 1.0
+      },
+      {
+        "start_sec": 74.77,
+        "end_sec": 119.47,
+        "start_frame": 2243,
+        "end_frame": 3584,
+        "label": 2,
+        "role": "outro",
+        "energy": 0.868
+      }
+    ],
+    "energy_curve_ds": [
+      0.326,
+      0.19,
+      0.196,
+      0.361,
+      0.306,
+      0.333,
+      0.32,
+      0.443,
+      0.441,
+      0.515,
+      0.643,
+      0.779,
+      0.687,
+      0.938,
+      0.71,
+      0.849,
+      0.765,
+      0.869,
+      0.728,
+      0.86,
+      0.833,
+      0.745,
+      0.665,
+      0.623,
+      0.652,
+      0.737,
+      0.678,
+      0.674,
+      0.639,
+      0.663,
+      0.502,
+      0.719,
+      0.758,
+      0.782,
+      0.784,
+      0.786,
+      0.756,
+      0.767,
+      0.558,
+      0.826,
+      0.777,
+      0.79,
+      0.717,
+      0.737,
+      0.623,
+      0.794,
+      0.343,
+      0.368
+    ]
+  },
+  "story_schedule": [
+    [
+      0,
+      762,
+      "lodge",
+      "intro"
+    ],
+    [
+      762,
+      2243,
+      "edge",
+      "drop"
+    ],
+    [
+      2243,
+      3584,
+      "edge",
+      "outro"
+    ]
+  ],
+  "story_section_scores": [
+    {
+      "a": 0,
+      "b": 762,
+      "source": "lodge",
+      "role": "intro",
+      "costs": {
+        "lodge": -0.5,
+        "edge": 0.9214
+      },
+      "target_intensity": 0.0,
+      "plan_bias": "lodge",
+      "matched_bias": true,
+      "vocabulary": "grounded_minimal",
+      "energies": {
+        "lodge": 0.113,
+        "edge": 0.17
+      },
+      "chosen_cost": -0.5
+    },
+    {
+      "a": 762,
+      "b": 2243,
+      "source": "edge",
+      "role": "drop",
+      "costs": {
+        "lodge": 0.6,
+        "edge": -0.4059
+      },
+      "target_intensity": 1.0,
+      "plan_bias": "edge",
+      "matched_bias": true,
+      "vocabulary": "explosive_fast",
+      "energies": {
+        "lodge": 0.1776,
+        "edge": 0.1838
+      },
+      "chosen_cost": -0.4059
+    },
+    {
+      "a": 2243,
+      "b": 3584,
+      "source": "edge",
+      "role": "outro",
+      "costs": {
+        "lodge": 0.5207,
+        "edge": -0.1801
+      },
+      "target_intensity": 0.8678901695288241,
+      "plan_bias": "edge",
+      "matched_bias": true,
+      "vocabulary": "explosive_fast",
+      "energies": {
+        "lodge": 0.1548,
+        "edge": 0.1786
+      },
+      "chosen_cost": -0.1801
+    }
+  ],
+  "story_metrics": {
+    "arc_adherence": 0.4362,
+    "sectional_contrast": 1.0351,
+    "motif_recurrence": 0.0,
+    "boundary_alignment": 0.0143,
+    "peak_jerk": 1.1786,
+    "area_under_jerk": 6.7723
+  },
+  "reasoning": "story assembly: 3 sections (1 LODGE, 2 EDGE, 0 motif-reuse); storyboard bias honored in 3/3 explicitly-biased sections; schedule: 0.0-25.4s:lodge[intro], 25.4-74.8s:edge[drop], 74.8-119.5s:edge[outro]"
+}

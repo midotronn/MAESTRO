@@ -60,6 +60,7 @@ select {
   cursor: pointer; font-size: 13px; color: var(--text); transition: .12s;
 }
 .ghost-btn:hover { border-color: var(--accent); color: var(--accent); }
+.proj-link { text-decoration: none; display: inline-flex; align-items: center; }
 .hist-btns { display: flex; gap: 6px; }
 .icon-btn {
   width: 34px; height: 34px; border-radius: 9px; background: var(--card2); border: 1px solid var(--line2);
@@ -105,6 +106,27 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
 }
 .render-status.ok { color: var(--ok); border-color: rgba(53,208,127,.4); }
 .render-status.bad { color: var(--warn); border-color: rgba(240,180,106,.4); }
+
+/* before/after comparison panel */
+.render-btn.ghost { background: rgba(0,0,0,.5); color: var(--text); border: 1px solid var(--line); font-weight: 600; }
+.compare {
+  margin-top: 10px; background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow);
+  max-height: 62vh; overflow-y: auto;
+}
+.compare[hidden] { display: none; }
+.cmp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.cmp-title { font-size: 13px; font-weight: 650; color: var(--text); }
+.cmp-title em { color: var(--muted); font-style: normal; font-size: 11px; margin-left: 4px; }
+.compare .render-status { position: static; display: none; max-width: none; margin: 0 0 8px; }
+.cmp-vids { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cmp-vids figure { margin: 0; }
+.cmp-vids figcaption { font-size: 11px; color: var(--muted); text-align: center; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .06em; }
+.cmp-vids video { width: 100%; border-radius: 8px; border: 1px solid var(--line); background: #000; display: block; }
+.cmp-ctl { display: flex; align-items: center; gap: 10px; margin: 10px 0 6px; }
+.cmp-ctl #cmpScrub { flex: 1; accent-color: var(--accent); }
+#cmpMetrics { width: 100%; margin-top: 6px; }
+@media (max-width: 720px) { .cmp-vids { grid-template-columns: 1fr; } }
 
 /* timeline */
 .tl-wrap { flex: none; }

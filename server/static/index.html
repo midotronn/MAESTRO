@@ -28,6 +28,7 @@
         <button id="undo" class="icon-btn" title="Undo" disabled>↶</button>
         <button id="redo" class="icon-btn" title="Redo" disabled>↷</button>
       </div>
+      <a href="/project/" class="ghost-btn proj-link" title="MAESTRO project page">Project ↗</a>
     </div>
   </header>
 
@@ -44,8 +45,26 @@
             <option value="full">full dance + music</option>
           </select>
           <button id="renderBtn" class="render-btn" title="Render the edited dance on the GPU (Blender)">🎬 Render</button>
+          <button id="compareBtn" class="render-btn ghost" title="Render the edited window before vs after, side by side">⇄ Compare</button>
         </div>
         <div id="renderStatus" class="render-status"></div>
+      </div>
+
+      <div id="compare" class="compare" hidden>
+        <div class="cmp-head">
+          <span class="cmp-title">Before / after — edited window <em id="cmpWin"></em></span>
+          <button id="cmpClose" class="icon-btn" title="Close comparison">✕</button>
+        </div>
+        <div id="cmpStatus" class="render-status"></div>
+        <div class="cmp-vids">
+          <figure><figcaption>Before</figcaption><video id="cmpBefore" muted playsinline preload="auto" loop></video></figure>
+          <figure><figcaption>After</figcaption><video id="cmpAfter" muted playsinline preload="auto" loop></video></figure>
+        </div>
+        <div class="cmp-ctl">
+          <button id="cmpPlay" class="ghost-btn">▶ Play both</button>
+          <input id="cmpScrub" type="range" min="0" max="1000" value="0" title="Scrub both clips" />
+        </div>
+        <table id="cmpMetrics" class="metrics"></table>
       </div>
 
       <div class="tl-wrap">

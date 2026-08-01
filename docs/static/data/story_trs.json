@@ -1,0 +1,104 @@
+{
+  "arc": "The dance begins subtly and introspectively, builds energy through a series of dynamic contrasts, reaches a high-energy climax, and resolves into a reflective conclusion.",
+  "reasoning": "The structure leverages contrasting sections to enhance the overall energy rising towards the climax, allowing the motifs from earlier sections to create a satisfying return in the outro, mirroring the introduction.",
+  "plans": [
+    {
+      "section_index": 0,
+      "role": "intro",
+      "target_intensity": 0.9,
+      "vocabulary": "grounded_minimal",
+      "generator_bias": "lodge",
+      "reuse_of": null,
+      "variation": {
+        "mirror": false,
+        "retrograde": false,
+        "retime": 1.0,
+        "amplitude": 1.0
+      }
+    },
+    {
+      "section_index": 1,
+      "role": "chorus",
+      "target_intensity": 0.3,
+      "vocabulary": "sustained_lyrical",
+      "generator_bias": "auto",
+      "reuse_of": null,
+      "variation": {
+        "mirror": false,
+        "retrograde": false,
+        "retime": 1.0,
+        "amplitude": 1.0
+      }
+    },
+    {
+      "section_index": 2,
+      "role": "chorus",
+      "target_intensity": 0.4,
+      "vocabulary": "sustained_lyrical",
+      "generator_bias": "lodge",
+      "reuse_of": 0,
+      "variation": {
+        "mirror": false,
+        "retrograde": false,
+        "retime": 1.0,
+        "amplitude": 1.0
+      }
+    },
+    {
+      "section_index": 3,
+      "role": "chorus",
+      "target_intensity": 0.6,
+      "vocabulary": "expansive_traveling",
+      "generator_bias": "edge",
+      "reuse_of": 1,
+      "variation": {
+        "mirror": false,
+        "retrograde": false,
+        "retime": 1.0,
+        "amplitude": 1.0
+      }
+    },
+    {
+      "section_index": 4,
+      "role": "outro",
+      "target_intensity": 0.8,
+      "vocabulary": "percussive_sharp",
+      "generator_bias": "edge",
+      "reuse_of": 3,
+      "variation": {
+        "mirror": false,
+        "retrograde": false,
+        "retime": 1.0,
+        "amplitude": 1.0
+      }
+    },
+    {
+      "section_index": 5,
+      "role": "chorus",
+      "target_intensity": 1.0,
+      "vocabulary": "explosive_fast",
+      "generator_bias": "edge",
+      "reuse_of": 1,
+      "variation": {
+        "mirror": false,
+        "retrograde": false,
+        "retime": 1.0,
+        "amplitude": 1.0
+      }
+    },
+    {
+      "section_index": 6,
+      "role": "outro",
+      "target_intensity": 0.2,
+      "vocabulary": "grounded_minimal",
+      "generator_bias": "lodge",
+      "reuse_of": 1,
+      "variation": {
+        "mirror": true,
+        "retrograde": true,
+        "retime": 1.0,
+        "amplitude": 1.0
+      }
+    }
+  ]
+}

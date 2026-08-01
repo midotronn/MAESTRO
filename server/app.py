@@ -304,6 +304,40 @@ def render_status(sid: str) -> dict:
     return rendering.get_render_job(sid)
 
 
+@app.post("/api/session/{sid}/compare")
+def compare(sid: str) -> dict:
+    """Render the edited window BEFORE (pre-edit/parent state) and AFTER (current) as two synced clips.
+
+    The head checkpoint already carries the window and the before/after window metrics; the pre-edit
+    motion is the parent checkpoint's snapshot. Renders both windows in parallel on the pod.
+    """
+    sess = _load_session(sid)
+    head = sess.current()
+    if head is None or not head.edit or not head.parent_id:
+        raise HTTPException(400, "make an edit first, then compare before and after.")
+    win = (head.edit or {}).get("window")
+    if not win or len(win) != 2:
+        raise HTTPException(400, "the last edit has no window to compare.")
+    after = sess.current_motion()
+    before = sess.store.motion(head.parent_id)
+    n = min(int(before.shape[0]), int(after.shape[0]))
+    a = int(max(0, min(int(win[0]), n - 2)))
+    b = int(max(a + 1, min(int(win[1]), n)))
+    metrics = {
+        "before": head.edit.get("metrics_before") or {},
+        "after": head.edit.get("metrics_after") or {},
+        "window": [a, b],
+        "window_sec": [round(a / FPS, 2), round(b / FPS, 2)],
+    }
+    rendering.start_compare_render(sid, before[a:b], after[a:b], _song_dir(sid), metrics=metrics)
+    return rendering.get_compare_job(sid)
+
+
+@app.get("/api/session/{sid}/compare")
+def compare_status(sid: str) -> dict:
+    return rendering.get_compare_job(sid)
+
+
 @app.post("/api/session/{sid}/undo")
 def undo(sid: str) -> dict:
     sess = _load_session(sid)
@@ -380,3 +414,7 @@ async def edit_ws(ws: WebSocket, sid: str) -> None:
 
 if STATIC.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+
+DOCS = HERE.parent / "docs"
+if DOCS.is_dir():
+    app.mount("/project", StaticFiles(directory=str(DOCS), html=True), name="project")

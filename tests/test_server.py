@@ -89,3 +89,38 @@ def test_websocket_streams_progress_then_final(client):
 
 def test_unknown_song_404(client):
     assert client.post("/api/session/nope").status_code == 404
+
+
+def test_compare_requires_an_edit_first(client):
+    client.post("/api/session/sng")
+    # no edit yet -> nothing to compare
+    assert client.post("/api/session/sng/compare").status_code == 400
+
+
+def test_compare_after_edit_renders_before_and_after(client, monkeypatch):
+    import server.rendering as R
+    captured: dict = {}
+
+    def fake_start(sid, before, after, media_dir, *, metrics=None):
+        captured["sid"] = sid
+        captured["before"] = np.asarray(before)
+        captured["after"] = np.asarray(after)
+        captured["metrics"] = metrics
+        R._cset(sid, status="rendering", progress=10)
+
+    monkeypatch.setattr(R, "start_compare_render", fake_start)
+    client.post("/api/session/sng")
+    client.post("/api/session/sng/edit",
+                json={"a_sec": 3, "b_sec": 6, "instruction": "more energetic"})
+    j = client.post("/api/session/sng/compare").json()
+    assert captured["sid"] == "sng"
+    # window 3-6s at 30 fps -> 90 frames for BOTH the pre-edit and current clips
+    assert captured["before"].shape[0] == 90 and captured["after"].shape[0] == 90
+    # the before/after clips differ (the edit changed the window)
+    assert not np.allclose(captured["before"], captured["after"])
+    m = captured["metrics"]
+    assert set(("before", "after", "window", "window_sec")) <= set(m)
+    assert "bas" in m["before"] and "bas" in m["after"]
+    assert m["window_sec"] == [3.0, 6.0]
+    assert j["status"] in ("queued", "rendering", "idle")
+    assert client.get("/api/session/sng/compare").json()["status"] in ("queued", "rendering", "idle")
