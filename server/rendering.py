@@ -9,6 +9,7 @@ UI, mirroring :mod:`server.processing`.
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -17,6 +18,8 @@ from pathlib import Path
 import numpy as np
 
 from server.processing import REPO, _scp_from, _scp_to, _ssh, pod_config
+
+logger = logging.getLogger(__name__)
 
 _RJOBS: dict[str, dict] = {}
 _RLOCK = threading.Lock()
@@ -57,7 +60,22 @@ def prewarm_pod() -> None:
 
     def _w() -> None:
         try:
+            # The SMPL-X-derived FK joint template is licence gated (not bundled); fetch it locally so
+            # server-side FK works. If it never arrives, rendering falls back to the pod's torch FK.
+            tmpl = REPO / "server" / "data" / "smplx_neu_J_1.npy"
+            if not tmpl.exists():
+                tmpl.parent.mkdir(parents=True, exist_ok=True)
+                _scp_from(cfg, f"{cfg.ws}/LODGE/data/smplx_neu_J_1.npy", str(tmpl))
             _upload_scripts(cfg)
+            egl = "/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
+            bb = f"{cfg.ws}/blender/blender"
+            # Build the cached Blender scene once (rig + studio baked) so renders skip the FBX import.
+            _ssh(cfg, f"test -f {cfg.ws}/ybot_scene.blend || (cd {cfg.ws}/AgentLODGE && "
+                      f"__EGL_VENDOR_LIBRARY_FILENAMES={egl} {bb} -b -noaudio -P "
+                      f"scripts/blender_render_ybot.py -- --build-scene {cfg.ws}/ybot_scene.blend "
+                      f"--ybot {cfg.ws}/EDGE/SMPL-to-FBX/ybot.fbx --width 448 --height 448 --samples 8 "
+                      f">/dev/null 2>&1)", timeout=150)
+            # Warm torch too, for the pod-torch-FK fallback path only.
             _ssh(cfg, f"CUDA_VISIBLE_DEVICES= {al_py} -c 'import torch, numpy, scipy.signal' "
                       f">/dev/null 2>&1; echo warmed", timeout=180)
         except Exception:  # noqa: BLE001 - warming is best-effort
@@ -72,8 +90,8 @@ def _upload_scripts(cfg) -> None:
         return
     _ssh(cfg, f"mkdir -p {cfg.ws}/AgentLODGE/scripts")
     scripts = [REPO / "scripts" / s for s in
-               ("render_one_ybot.sh", "render_blender_dance.py", "blender_render_ybot.py",
-                "blender_studio.py")]
+               ("render_one_ybot.sh", "render_poses_ybot.sh", "render_blender_dance.py",
+                "blender_render_ybot.py", "blender_studio.py")]
     scripts = [p for p in scripts if p.exists()]
     r = _scp_many(cfg, scripts, f"{cfg.ws}/AgentLODGE/scripts")
     if r is not None and r.returncode == 0:
@@ -124,31 +142,48 @@ def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
             return
         ws = cfg.ws
         media_dir.mkdir(parents=True, exist_ok=True)
-        local_npy = media_dir / f"_render_{scope}.npy"
-        np.save(local_npy, motion.astype(np.float32))
 
-        _set(sid, progress=16, message="uploading the edited motion\u2026")
+        # Server-side FK: compute the render poses locally (pure numpy, validated identical to the pod's
+        # torch FK) and upload the small npz. The pod then renders with NO torch import at all -- killing
+        # the single biggest source of render-time variance (~12-24s cold torch import off the network
+        # volume). Falls back to uploading the raw motion + the torch-FK script if anything goes wrong.
+        use_warm = os.environ.get("AGENTLODGE_RENDER_WARM", "1") != "0"
+        warm_ok = False
+        remote_in = f"{ws}/edit_render_{sid}.npy"
+        render_script = "render_one_ybot.sh"
+        _set(sid, progress=16, message="preparing the render\u2026")
         _upload_scripts(cfg)                                 # once per process (pre-done at startup)
-        remote_npy = f"{ws}/edit_render_{sid}.npy"
-        if _scp_to(cfg, str(local_npy), remote_npy).returncode != 0:
-            _set(sid, status="error", progress=0, message="upload of the motion failed.")
-            return
+        if use_warm:
+            try:
+                from server import fk
+                local_poses = media_dir / f"_render_{scope}_poses.npz"
+                fk.save_poses_npz(motion, str(local_poses))
+                remote_poses = f"{ws}/edit_render_{sid}_poses.npz"
+                if _scp_to(cfg, str(local_poses), remote_poses).returncode == 0:
+                    remote_in, render_script, warm_ok = remote_poses, "render_poses_ybot.sh", True
+            except Exception as exc:  # noqa: BLE001 - fall back to the pod torch FK
+                logger.warning("server-side FK failed (%s); falling back to pod torch FK", exc)
+        if not warm_ok:
+            local_npy = media_dir / f"_render_{scope}.npy"
+            np.save(local_npy, motion.astype(np.float32))
+            if _scp_to(cfg, str(local_npy), remote_in).returncode != 0:
+                _set(sid, status="error", progress=0, message="upload of the motion failed.")
+                return
 
         frames = int(motion.shape[0])
         base = f"{ws}/edit_render_{sid}"
         audio_sid = sid if with_audio else ""
         # Render FK runs in the persistent CUDA venv (the old /root/al_venv is wiped on pod restart).
         al_py = os.environ.get("AGENTLODGE_POD_PYTHON", f"{ws}/AgentLODGE/.venv/bin/python")
-        # Fast preview vs high-quality export. The window preview drops resolution/samples AND runs the
-        # SMPL forward-kinematics on CPU (CUDA_VISIBLE_DEVICES= empty) -- torch's CUDA context init alone
-        # costs ~12s and EEVEE renders through EGL/OpenGL, not CUDA, so the GPU render is unaffected.
-        # Measured: 180-frame window in ~36s at 480x480/16 (well under a minute) vs ~65s with GPU-FK/540.
+        # Fast preview vs high-quality export. The window preview drops resolution/samples; with warm
+        # (server-FK) mode the pod render is Blender-only. Full export keeps 1080/96.
         if scope == "window":
             rw = os.environ.get("AGENTLODGE_RENDER_WIN_W", "448")
             rh = os.environ.get("AGENTLODGE_RENDER_WIN_H", "448")
             rs = os.environ.get("AGENTLODGE_RENDER_WIN_SAMPLES", "8")
+            # CUDA_VISIBLE_DEVICES= only matters for the pod-torch-FK fallback (EEVEE renders via EGL).
             render_env = f"RENDER_W={rw} RENDER_H={rh} RENDER_SAMPLES={rs} CUDA_VISIBLE_DEVICES="
-            est_sec = 25 + int(frames * 0.25)
+            est_sec = (15 if warm_ok else 25) + int(frames * 0.2)
         else:
             rw = os.environ.get("AGENTLODGE_RENDER_FULL_W", "1080")
             rh = os.environ.get("AGENTLODGE_RENDER_FULL_H", "1080")
@@ -159,10 +194,10 @@ def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
         # a multi-minute render tends to hang its channel even after the render finishes.
         launch = _ssh(
             cfg,
-            f"cd {ws}/AgentLODGE && sed -i 's/\\r$//' scripts/render_one_ybot.sh; "
+            f"cd {ws}/AgentLODGE && sed -i 's/\\r$//' scripts/{render_script}; "
             f"rm -f {base}.mp4 {base}.done {base}.fail {base}.log; "
-            f"setsid bash -c 'AL_PY={al_py} WORKSPACE={ws} {render_env} bash scripts/render_one_ybot.sh "
-            f"{remote_npy} {base}.mp4 {audio_sid} >> {base}.log 2>&1 && touch {base}.done || touch {base}.fail' "
+            f"setsid bash -c 'AL_PY={al_py} WORKSPACE={ws} {render_env} bash scripts/{render_script} "
+            f"{remote_in} {base}.mp4 {audio_sid} >> {base}.log 2>&1 && touch {base}.done || touch {base}.fail' "
             f"</dev/null >/dev/null 2>&1 & echo LAUNCHED",
             timeout=40)
         if "LAUNCHED" not in (launch.stdout or ""):

@@ -44,9 +44,9 @@ TARGET_HEIGHT = 1.7  # metres; normalise the robot so the shared studio framing 
 def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     p = argparse.ArgumentParser()
-    p.add_argument("--poses", required=True)
+    p.add_argument("--poses", default="")
     p.add_argument("--ybot", required=True)
-    p.add_argument("--frames-dir", required=True)
+    p.add_argument("--frames-dir", default="")
     p.add_argument("--width", type=int, default=720)
     p.add_argument("--height", type=int, default=720)
     p.add_argument("--samples", type=int, default=32)
@@ -61,6 +61,9 @@ def parse_args():
                    help="Extra degrees about Z to face the dancer toward the camera")
     p.add_argument("--stride", type=int, default=1,
                    help="Render every Nth frame (validation only; alignment still uses all)")
+    p.add_argument("--build-scene", default="",
+                   help="Import the rig + studio, save this .blend and exit (skips the per-render "
+                        "FBX import when render opens the cached scene).")
     p.add_argument("--force-align", action="store_true",
                    help="Skip alignment auto-detect; use exactly --align-x about X (0 = identity)")
     p.add_argument("--fk-npz", default="",
@@ -163,20 +166,65 @@ def normalise_scale(arm):
     bpy.context.view_layer.update()
 
 
+def setup_studio():
+    """Studio: dancer centred at origin, floor at z=0, static follow-camera + lights. Pose-independent,
+    so it can be baked into the cached scene once."""
+    body_size = TARGET_HEIGHT
+    studio.setup_world_and_ground(np.array([-1.5, -1.5, 0.0]), np.array([1.5, 1.5, body_size]))
+    spot = studio.setup_lights(0.0, 0.0, body_size)
+    centroids = np.array([[0.0, 0.0, 0.55 * body_size]])       # static camera -> one centroid suffices
+    cam, target, offset, target_z, follow_xy = studio.setup_follow_camera(centroids, body_size, 0.0)
+    spot_front, spot_high = studio.attach_follow_spot(spot, target, 0.0, body_size, offset)
+    target.location = (0.0, 0.0, target_z)
+    cam.location = (offset[0], offset[1], target_z + offset[2])
+    spot.location = (0.0, spot_front, spot_high)
+
+
+def build_scene(args, color):
+    """Import the Y-Bot + build the studio and SAVE it as a .blend, then exit. A later render can open
+    this scene (rig + material + scale + lights + camera baked) and skip the ~10s FBX import."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    arm = import_ybot(args.ybot)
+    style_robot(arm, color)
+    normalise_scale(arm)
+    arm.rotation_mode = "QUATERNION"
+    for pb in arm.pose.bones:
+        pb.rotation_mode = "QUATERNION"
+    setup_studio()
+    studio.configure_render(args.width, args.height, args.samples,
+                            engine=args.engine, denoise=bool(args.denoise))
+    bpy.ops.wm.save_as_mainfile(filepath=args.build_scene)
+    print(f"YBOT_SCENE_BUILT {args.build_scene}")
+
+
 def main():
     args = parse_args()
-    data = np.load(args.poses)
-    poses = data["poses"].astype(np.float32)  # (L, J, 3)
-    L = poses.shape[0]
     try:
         color = tuple(float(c) for c in args.color.split(","))[:3]
     except Exception:
         color = (0.5, 0.5, 0.52)
 
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    arm = import_ybot(args.ybot)
-    robot_meshes = style_robot(arm, color)
-    normalise_scale(arm)
+    if args.build_scene:
+        build_scene(args, color)
+        return
+    if not args.poses or not args.frames_dir:
+        raise SystemExit("--poses and --frames-dir are required to render")
+    data = np.load(args.poses)
+    poses = data["poses"].astype(np.float32)  # (L, J, 3)
+    L = poses.shape[0]
+
+    # Reuse the cached scene if this Blender was opened with one (rig + studio already loaded), else
+    # do the full one-time setup (import FBX, style, scale, studio).
+    preloaded = any(o.type == "ARMATURE" for o in bpy.data.objects)
+    if preloaded:
+        arm = next(o for o in bpy.data.objects if o.type == "ARMATURE")
+        robot_meshes = [o for o in bpy.data.objects if o.type == "MESH" and o.name.startswith("Alpha_")]
+        print("YBOT_SCENE cached scene reused (skipped FBX import)")
+    else:
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        arm = import_ybot(args.ybot)
+        robot_meshes = style_robot(arm, color)
+        normalise_scale(arm)
 
     # Keep the FBX import's Y-up -> Z-up object rotation: it is what actually stands the
     # Y-up SMPL body upright in Blender's Z-up world. (Resetting it to identity tips the
@@ -250,20 +298,10 @@ def main():
     def pose_frame(i):
         apply_pose(i)
 
-    # Studio: dancer centred at origin, floor at z=0.
-    body_size = TARGET_HEIGHT
-    studio.setup_world_and_ground(
-        np.array([-1.5, -1.5, 0.0]), np.array([1.5, 1.5, body_size])
-    )
-    spot = studio.setup_lights(0.0, 0.0, body_size)
-    centroids = np.tile(np.array([[0.0, 0.0, 0.55 * body_size]]), (L, 1))
-    cam, target, offset, target_z, follow_xy = studio.setup_follow_camera(
-        centroids, body_size, 0.0
-    )
-    spot_front, spot_high = studio.attach_follow_spot(spot, target, 0.0, body_size, offset)
-    target.location = (0.0, 0.0, target_z)
-    cam.location = (offset[0], offset[1], target_z + offset[2])
-    spot.location = (0.0, spot_front, spot_high)
+    # Studio (world/ground/lights/camera): baked in the cached scene; only build it when not preloaded.
+    if not preloaded:
+        setup_studio()
+    # Render settings are cheap -> always (re)set so any resolution/samples work with a cached scene.
     studio.configure_render(args.width, args.height, args.samples,
                             engine=args.engine, denoise=bool(args.denoise))
 
