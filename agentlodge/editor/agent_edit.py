@@ -279,6 +279,38 @@ def _merge_goals(primary: list, secondary: list) -> list:
     return out
 
 
+def _smoothness_polish(win_cur, motion, a, b, goals, before, wbeats, blend_frames):
+    """Quality guard: keep the edit from making the dance jittery. Amplitude scaling and the beat
+    time-warp raise jerk as a side effect, so -- UNLESS the user asked for sharper (jerk up) -- apply
+    the smallest light temporal smooth that pulls the window's jerk back toward baseline WITHOUT
+    regressing any declared goal. Smoothing removes high-frequency jitter but leaves the lower-frequency
+    energy/beat content, so the goals survive (measured). Returns (spliced, after, checks, note) or
+    None when no polish is needed or none preserves the goals."""
+    if any(m == "jerk" and d == "up" for m, d, _lbl in goals):
+        return None
+    spliced0 = crossfade_edit(motion, a, b, win_cur, blend_frames=blend_frames)
+    j0 = window_metrics(spliced0[a:b], wbeats)["jerk"]
+    base_j = float(before.get("jerk", 0.0))
+    if base_j <= 0 or j0 <= base_j * 1.08:                 # already about as smooth as the original
+        return None
+    chosen = None
+    for amt in (0.12, 0.22, 0.34):
+        cand = temporal_smooth(win_cur, amt)
+        spl = crossfade_edit(motion, a, b, cand, blend_frames=blend_frames)
+        m = window_metrics(spl[a:b], wbeats)
+        ok, checks, _ = _verify_goals(goals, before, m) if goals else (True, [], "")
+        if not ok:
+            break                                          # this much smoothing broke a goal -> stop
+        chosen = (spl, m, checks, amt)
+        if m["jerk"] <= base_j * 1.05:
+            break                                          # restored to baseline smoothness
+    if chosen is None:
+        return None
+    spl, m, checks, amt = chosen
+    return spl, m, checks, (f"smoothed (amount {amt:.2f}) to preserve quality \u2014 "
+                            f"jerk {j0:.3f}\u2192{m['jerk']:.3f}")
+
+
 # ============================================================================ plan
 @dataclass
 class PlanStep:
@@ -399,7 +431,10 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         '[{"metric":"energy","direction":"up"},{"metric":"bas","direction":"up"}]; '
         '"calmer but keep it tight" -> [{"metric":"energy","direction":"down"},{"metric":"bas","direction":"up"}]; '
         '"flip it" or "reverse this" -> [] (no measurable goal). '
-        "Pick tools by meaning, not keywords; you may combine (e.g. energy down + beat_align)."
+        "Pick tools by meaning, not keywords; you may combine (e.g. energy down + beat_align). "
+        "Unless the user wants sharper/snappier motion, PRESERVE smoothness: energy scaling and "
+        "beat_align add jitter, so end the plan with a light 'smooth' (amount ~0.1-0.2) so the dance "
+        "does not get jerky."
     )
     if goals:                                              # refine: remind of the graded constraints
         gl = ", ".join(f"{lbl} must go {d}" for _m, d, lbl in goals)
@@ -589,7 +624,7 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     # alignment is already tight and any change (plus the edge-blend) would only lower it.
     if goals:
         ok0, checks0, _ = _verify_goals(goals, before, before)
-        best = (0.0, motion, before, ok0, checks0, 0)   # (reward, spliced_motion, after, ok, checks, cycle)
+        best = (0.0, motion, before, ok0, checks0, 0, base_clip)   # (reward, spliced, after, ok, checks, cycle, win_cur)
     else:
         best = None                                     # a goalless op (reverse/mirror) always applies
 
@@ -618,7 +653,7 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
             "verify": {"ok": ok, "checks": checks, "verdict": verdict},
         })
         if best is None or _prefer(ok, reward, best[3], best[0]):
-            best = (reward, spliced_try, after, ok, checks, cycle + 1)
+            best = (reward, spliced_try, after, ok, checks, cycle + 1, cur)
         if ok or cycle + 1 >= total_attempts:
             break
         # ---- refine: feed EVERY unmet metric back to the planner ----
@@ -631,9 +666,31 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
                "planner": plan.planner, "planner_note": plan.planner_note,
                "steps": [{"tool": s.tool, "why": s.why} for s in plan.steps]})
 
-    reward, spliced, after, ok, checks, win_cycle = best
+    reward, spliced, after, ok, checks, win_cycle, win_cur = best
     n_attempts = len(trace["attempts"])
     kept_original = win_cycle == 0
+
+    # Quality guard: unless the user asked for sharper, don't ship a jitterier dance than we started
+    # with. Amplitude/beat-align edits raise jerk; pull it back toward baseline with a light smooth
+    # that keeps every declared goal met. (No-op edits and goalless ops are skipped.)
+    polished = _smoothness_polish(win_cur, motion, a, b, goals, before, wbeats, blend_frames) \
+        if (goals and not kept_original) else None
+    if polished is not None:
+        spliced, after, checks, pol_note = polished
+        ok = True                                          # the polish only applies if goals stay met
+        polish_step = {"cycle": win_cycle, "step": len(trace["attempts"][win_cycle - 1]["steps"]) + 1,
+                       "tool": "smooth", "params": {}, "why": "quality guard: keep it smooth",
+                       "note": pol_note, "status": "applied", "target": ["jerk", "down"],
+                       "metrics_before": trace["attempts"][win_cycle - 1]["steps"][-1].get("metrics_after", before)
+                       if trace["attempts"][win_cycle - 1]["steps"] else before,
+                       "metrics_after": after, "polish": True}
+        full_log.append(polish_step)
+        trace["attempts"][win_cycle - 1]["steps"].append(polish_step)
+        trace["attempts"][win_cycle - 1]["verify"]["checks"] = checks
+        _emit({"phase": "step", "cycle": win_cycle, "step": polish_step["step"],
+               "n_steps": polish_step["step"], "tool": "smooth", "why": polish_step["why"],
+               "note": pol_note, "status": "applied", "metrics": after})
+
     refined = f" (refined {n_attempts - 1}x)" if n_attempts > 1 else ""
     if kept_original:
         detail = ", ".join(f"{lbl} {before.get(m, 0.0):.3f}" for m, _d, lbl in goals)

@@ -242,6 +242,39 @@ def test_merge_goals_planner_wins_keyword_fills_gaps():
     assert merged["bas"] == "up"                                 # keyword fills the metric it missed
 
 
+def test_smoothness_polish_picks_smooth_that_restores_jerk(monkeypatch):
+    # deterministic logic test (the random-walk mock entangles energy+jerk, so use controlled metrics):
+    # tag the clip with the smooth amount; map amount -> jerk. The polish should pick the smallest
+    # amount that restores jerk to ~baseline while the energy goal stays met.
+    def fake_smooth(clip, amt):
+        c = clip.copy(); c[0, 1] = amt; return c
+    JERK = {0.0: 0.30, 0.12: 0.18, 0.22: 0.12, 0.34: 0.09}
+    def fake_metrics(clip, beats=None):
+        return {"energy": 0.6, "bas": 0.7, "jerk": JERK.get(round(float(clip[0, 1]), 2), 0.30), "foot": 1.0}
+    monkeypatch.setattr(AE, "temporal_smooth", fake_smooth)
+    monkeypatch.setattr(AE, "crossfade_edit", lambda motion, a, b, cur, blend_frames=12: cur)
+    monkeypatch.setattr(AE, "window_metrics", fake_metrics)
+    win_cur = np.zeros((120, 139), np.float32)                  # tag 0 -> jerk 0.30 (jittery edit)
+    before = {"energy": 0.4, "bas": 0.7, "jerk": 0.12, "foot": 1.0}   # baseline jerk 0.12
+    pol = AE._smoothness_polish(win_cur, win_cur, 0, 120,
+                                [("energy", "up", "energy")], before, np.array([10.0, 20.0]), 12)
+    assert pol is not None
+    _spl, after, checks, note = pol
+    assert after["jerk"] <= before["jerk"] * 1.05              # restored to ~baseline smoothness
+    assert after["energy"] > before["energy"]                 # energy goal kept
+    assert all(c["met"] for c in checks) and "smoothed" in note
+
+
+def test_smoothness_polish_skipped_when_sharper_requested():
+    from agentlodge.editor.window_edit import window_metrics, _window_beats
+    m = _base(300, energy=0.5)
+    wb = _window_beats(_beats(), 90, 210)
+    before = window_metrics(m[90:210], wb)
+    # jerk-up is a declared goal -> the guard must NOT smooth (short-circuits before any work)
+    assert AE._smoothness_polish(m[90:210].copy(), m, 90, 210,
+                                 [("jerk", "up", "smoothness")], before, wb, 12) is None
+
+
 def test_planner_declared_goals_drive_verification(monkeypatch):
     # goals come from the planning agent's reasoning, NOT a keyword match on the instruction
     plan = AE.AgentPlan("boost intensity",
