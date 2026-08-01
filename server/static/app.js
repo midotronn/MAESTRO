@@ -282,17 +282,21 @@ function paramsStr(p) {
 
 // the expandable walk-through: for each attempt, the PLANNER's plan, the EXECUTOR's applied/rejected
 // steps (with metric deltas), and the VERIFY checks. Collapsed by default to keep the panel calm.
+const PLANNER_LABEL = { llm: "AI agent (LLM)", keyword: "offline keyword planner", keyword_fallback: "offline fallback (LLM failed)" };
 function renderTrace(trace) {
   const det = $("reasoning"), body = $("reasoningBody");
   if (!trace || !(trace.attempts || []).length) { det.hidden = true; body.innerHTML = ""; return; }
   det.hidden = false;
   const goalLine = (trace.goals || []).map((g) => `${g.label} ${g.dir === "up" ? "\u2191" : "\u2193"}`).join(", ");
   let html = goalLine ? `<div class="rz-goals">Goals: ${escapeHtml(goalLine)}</div>` : "";
+  if (trace.planner_note) html += `<div class="rz-goals">Planned by: ${escapeHtml(trace.planner_note)}</div>`;
   for (const at of trace.attempts) {
     const v = at.verify || {};
+    const pl = at.plan.planner || "llm";
     html += `<div class="rz-attempt"><div class="rz-head">Attempt ${at.n}`
       + `<span class="rz-verdict ${v.ok ? "ok" : "bad"}">${v.ok ? "goals met" : "short of goal"}</span></div>`;
-    html += `<div class="rz-sub">\ud83e\udde0 Planner</div><div class="rz-plan">\u201c${escapeHtml(at.plan.summary || "")}\u201d</div>`;
+    html += `<div class="rz-sub">\ud83e\udde0 Planner <span class="rz-src ${pl}">${escapeHtml(PLANNER_LABEL[pl] || pl)}</span></div>`
+      + `<div class="rz-plan">\u201c${escapeHtml(at.plan.summary || "")}\u201d</div>`;
     html += `<ol class="rz-steps">` + (at.plan.steps || []).map((s) =>
       `<li><span class="rz-tool">${escapeHtml(s.tool)}</span>${s.why ? " \u2014 " + escapeHtml(s.why) : ""}${paramsStr(s.params)}</li>`
     ).join("") + `</ol>`;
@@ -317,7 +321,16 @@ function onFinal(payload) {
   const res = payload.result, st = payload.state;
   $("progbar").style.width = "100%";
   $("progtext").textContent = "";
-  if (res.agent_summary) $("goal").innerHTML = `<b>Agent plan:</b> ${escapeHtml(res.agent_summary)}`;
+  if (res.agent_summary) {
+    let g = `<b>Agent plan:</b> ${escapeHtml(res.agent_summary)}`;
+    const pl = res.trace && res.trace.planner;
+    if (pl && pl !== "llm") {
+      const note = (res.trace && res.trace.planner_note) || "offline keyword planner";
+      g += ` <span class="planner-tag" title="${escapeHtml(note)}">\u2699 ${pl === "keyword_fallback" ? "offline fallback" : "offline planner"}</span>`;
+      if (pl === "keyword_fallback") toast("LLM planning failed \u2014 used the offline keyword planner");
+    }
+    $("goal").innerHTML = g;
+  }
   renderChecks(res.trace);
   renderTrace(res.trace);
   const fb = $("feedback");

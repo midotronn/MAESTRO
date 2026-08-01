@@ -283,6 +283,8 @@ class AgentPlan:
     expect_metric: str | None = None      # bas|energy|jerk|foot (legacy single-target hint)
     expect_dir: str | None = None         # up|down
     goals: list = field(default_factory=list)   # [(metric, dir, label)] the plan will be graded on
+    planner: str = "llm"                   # llm | keyword | keyword_fallback
+    planner_note: str = ""                 # human-readable source / why-fallback (for the UI)
 
 
 # objective (keyword parser) -> a single-tool plan, used as the offline fallback.
@@ -450,11 +452,19 @@ def plan_edit(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
     """
     if api_key:
         try:
-            return _llm_plan(instruction, ctx_metrics, a_sec, b_sec, api_key,
-                             feedback=feedback, goals=goals)
+            p = _llm_plan(instruction, ctx_metrics, a_sec, b_sec, api_key,
+                          feedback=feedback, goals=goals)
+            p.planner, p.planner_note = "llm", "AI agent (LLM reasoning)"
+            return p
         except Exception as exc:  # noqa: BLE001 - robust offline fallback
             logger.warning("agent plan via LLM failed (%s); using keyword plan", exc)
-    return _keyword_plan(instruction, feedback=feedback)
+            p = _keyword_plan(instruction, feedback=feedback)
+            p.planner = "keyword_fallback"
+            p.planner_note = f"offline keyword planner (LLM call failed: {str(exc)[:120]})"
+            return p
+    p = _keyword_plan(instruction, feedback=feedback)
+    p.planner, p.planner_note = "keyword", "offline keyword planner (no API key configured)"
+    return p
 
 
 # ============================================================================ execute
@@ -553,9 +563,11 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
 
     _emit({"phase": "plan", "summary": plan.summary,
            "steps": [{"tool": s.tool, "why": s.why, "params": s.params} for s in plan.steps],
-           "goals": goals_json, "metrics_before": before})
+           "goals": goals_json, "planner": plan.planner, "planner_note": plan.planner_note,
+           "metrics_before": before})
 
-    trace: dict = {"instruction": instruction, "goals": goals_json, "attempts": []}
+    trace: dict = {"instruction": instruction, "goals": goals_json,
+                   "planner": plan.planner, "planner_note": plan.planner_note, "attempts": []}
     full_log: list = []
     plan_summary0 = plan.summary                       # what the agent proposed (kept for the UI header)
     total_attempts = (max(0, int(max_refine)) + 1) if goals else 1
@@ -587,7 +599,8 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
                "checks": checks, "metrics_after": after})
         trace["attempts"].append({
             "n": cycle + 1,
-            "plan": {"summary": plan.summary,
+            "plan": {"summary": plan.summary, "planner": plan.planner,
+                     "planner_note": plan.planner_note,
                      "steps": [{"tool": s.tool, "params": s.params, "why": s.why} for s in plan.steps]},
             "steps": step_log,
             "verify": {"ok": ok, "checks": checks, "verdict": verdict},
@@ -603,6 +616,7 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
               "misses": misses, "cycle": cycle + 1}
         plan = plan_edit(instruction, after, a_sec, b_sec, api_key=api_key, feedback=fb, goals=goals)
         _emit({"phase": "refine", "cycle": cycle + 2, "summary": plan.summary,
+               "planner": plan.planner, "planner_note": plan.planner_note,
                "steps": [{"tool": s.tool, "why": s.why} for s in plan.steps]})
 
     reward, spliced, after, ok, checks, win_cycle = best
