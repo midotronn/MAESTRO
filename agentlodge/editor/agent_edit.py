@@ -255,6 +255,19 @@ def _prefer(ok_a: bool, reward_a: float, ok_b: bool, reward_b: float) -> bool:
     return (1 if ok_a else 0, reward_a) > (1 if ok_b else 0, reward_b)
 
 
+def _merge_goals(primary: list, secondary: list) -> list:
+    """Union two goal lists as [(metric, dir, label)]. ``primary`` (the planning agent's declared
+    goals) wins; ``secondary`` (the deterministic keyword safety net) only contributes metrics the
+    primary didn't mention. A metric appears at most once."""
+    out = list(primary)
+    have = {m for m, _d, _lbl in out}
+    for m, d, lbl in secondary:
+        if m not in have:
+            out.append((m, d, lbl))
+            have.add(m)
+    return out
+
+
 # ============================================================================ plan
 @dataclass
 class PlanStep:
@@ -267,8 +280,9 @@ class PlanStep:
 class AgentPlan:
     summary: str
     steps: list
-    expect_metric: str | None = None      # bas|energy|jerk|foot
+    expect_metric: str | None = None      # bas|energy|jerk|foot (legacy single-target hint)
     expect_dir: str | None = None         # up|down
+    goals: list = field(default_factory=list)   # [(metric, dir, label)] the plan will be graded on
 
 
 # objective (keyword parser) -> a single-tool plan, used as the offline fallback.
@@ -332,7 +346,7 @@ def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
         labels = list(dict.fromkeys(lbl for _, _, lbl in reqs))
         primary = reqs[0]
         return AgentPlan(summary=("push harder: " if feedback else "") + "adjust " + ", ".join(labels),
-                         steps=steps, expect_metric=primary[0], expect_dir=primary[1])
+                         steps=steps, expect_metric=primary[0], expect_dir=primary[1], goals=list(reqs))
 
     goal = parse_window_instruction(instruction, api_key=None)
     tool, params, metric, direction, why = _OBJ_PLAN.get(
@@ -343,8 +357,9 @@ def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
     if feedback:                                            # refine: push the same tool harder
         p = _escalate_params(tool, p, cycle)
         why = f"push harder ({why})"
+    g = [(metric, direction, METRIC_LABEL.get(metric, metric))] if metric and direction else []
     return AgentPlan(summary=f"{goal.objective.replace('_', ' ')} the selected window",
-                     steps=[PlanStep(tool, p, why)], expect_metric=metric, expect_dir=direction)
+                     steps=[PlanStep(tool, p, why)], expect_metric=metric, expect_dir=direction, goals=g)
 
 
 def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
@@ -363,10 +378,17 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         "Return JSON ONLY:\n"
         '{"summary": "<one plain-English line describing your plan>",\n'
         ' "steps": [{"tool": "<name>", "params": {...}, "why": "<short reason>"}],\n'
-        ' "expect": {"metric": "bas"|"energy"|"jerk"|"foot"|null, "direction": "up"|"down"|null}}\n'
+        ' "goals": [{"metric": "bas"|"energy"|"jerk"|"foot", "direction": "up"|"down"}]}\n'
+        "\"goals\" = the measurable outcomes that MUST hold for the user's request to be satisfied -- you "
+        "will be GRADED on exactly these. Read the request and list EVERY metric it implies and ONLY "
+        "those (metric meanings: bas=beat alignment, energy=intensity, jerk=lower is smoother, "
+        "foot=foot-plant). Examples: \"more energetic and on beat\" -> "
+        '[{"metric":"energy","direction":"up"},{"metric":"bas","direction":"up"}]; '
+        '"calmer but keep it tight" -> [{"metric":"energy","direction":"down"},{"metric":"bas","direction":"up"}]; '
+        '"flip it" or "reverse this" -> [] (no measurable goal). '
         "Pick tools by meaning, not keywords; you may combine (e.g. energy down + beat_align)."
     )
-    if goals:                                              # hard constraints the verifier enforces
+    if goals:                                              # refine: remind of the graded constraints
         gl = ", ".join(f"{lbl} must go {d}" for _m, d, lbl in goals)
         prompt += ("\n\nThe user's request REQUIRES: " + gl + ". Every one of these will be checked; "
                    "a plan that lets any of them get WORSE is rejected. If a metric is already high "
@@ -400,21 +422,31 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
             steps.append(PlanStep(name, dict(s.get("params") or {}), str(s.get("why", ""))))
     if not steps:
         raise ValueError("agent plan had no valid tool steps")
-    exp = raw.get("expect") or {}
+    parsed_goals = []
+    for g in (raw.get("goals") or []):
+        gm = str(g.get("metric", "")).strip()
+        gd = str(g.get("direction", "")).strip()
+        if gm in ("bas", "energy", "jerk", "foot") and gd in ("up", "down"):
+            parsed_goals.append((gm, gd, METRIC_LABEL.get(gm, gm)))
+    exp = raw.get("expect") or {}                          # legacy single-target (optional)
     metric = exp.get("metric") if exp.get("metric") in ("bas", "energy", "jerk", "foot") else None
     direction = exp.get("direction") if exp.get("direction") in ("up", "down") else None
+    if metric is None and parsed_goals:                    # keep the legacy hint populated
+        metric, direction = parsed_goals[0][0], parsed_goals[0][1]
     return AgentPlan(str(raw.get("summary", "")).strip() or "edit the selected window",
-                     steps, metric, direction)
+                     steps, metric, direction, goals=parsed_goals)
 
 
 def plan_edit(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
               *, api_key: str | None = None, feedback: dict | None = None,
               goals: list | None = None) -> AgentPlan:
-    """Plan an edit as an ordered tool sequence (LLM agent if ``api_key`` else keyword fallback).
+    """Plan an edit as an ordered tool sequence AND declare the goal metrics (LLM agent if ``api_key``
+    else keyword fallback). The returned ``AgentPlan.goals`` is what the request will be graded on --
+    reasoned by the LLM, or derived from the keyword matcher offline.
 
-    ``goals`` are the metrics the user asked to move (deterministically extracted); they are passed
-    to the LLM as hard constraints. ``feedback`` (from a failed prior attempt) drives Self-Refine:
-    the LLM is told which goals it missed and by how much; the keyword planner escalates magnitude.
+    ``goals`` (input) is only used on a REFINE call, to remind the LLM of the graded constraints it
+    must fix. ``feedback`` (from a failed prior attempt) drives Self-Refine: the LLM is told which
+    goals it missed and by how much; the keyword planner escalates magnitude.
     """
     if api_key:
         try:
@@ -512,11 +544,11 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     ctx = {"wbeats": wbeats, "a": a, "b": b, "generator": generator, "context": context,
            "blend_frames": blend_frames, "k": k}
 
-    goals = _requested_metrics(instruction)
-    plan = plan_edit(instruction, before, a_sec, b_sec, api_key=api_key, goals=goals)
-    if not goals and plan.expect_metric and plan.expect_dir:   # fall back to the planner's own target
-        goals = [(plan.expect_metric, plan.expect_dir,
-                  METRIC_LABEL.get(plan.expect_metric, plan.expect_metric))]
+    # The planning agent DECLARES the goals it will be graded on (semantic reasoning over the request).
+    # The deterministic keyword matcher is only a safety net: it contributes any obvious metric the
+    # agent dropped, and is the sole source offline (no api key). Neither has to be exhaustive alone.
+    plan = plan_edit(instruction, before, a_sec, b_sec, api_key=api_key)
+    goals = _merge_goals(list(plan.goals), _requested_metrics(instruction))
     goals_json = [{"metric": m, "dir": d, "label": lbl} for m, d, lbl in goals]
 
     _emit({"phase": "plan", "summary": plan.summary,

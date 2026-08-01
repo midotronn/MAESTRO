@@ -215,3 +215,23 @@ def test_prefer_ranks_all_goals_met_over_higher_reward():
     assert AE._prefer(True, 60.0, True, 51.6)           # ties on ok -> higher reward wins
     assert AE._prefer(False, 70.0, False, 67.6)
     assert not AE._prefer(False, 10.0, False, 67.6)
+
+
+def test_merge_goals_planner_wins_keyword_fills_gaps():
+    primary = [("energy", "up", "energy")]                       # planner-declared
+    secondary = [("energy", "down", "energy"), ("bas", "up", "beat alignment")]  # keyword net
+    merged = {m: d for m, d, _ in AE._merge_goals(primary, secondary)}
+    assert merged["energy"] == "up"                              # planner wins the conflict
+    assert merged["bas"] == "up"                                 # keyword fills the metric it missed
+
+
+def test_planner_declared_goals_drive_verification(monkeypatch):
+    # goals come from the planning agent's reasoning, NOT a keyword match on the instruction
+    plan = AE.AgentPlan("boost intensity",
+                        [AE.PlanStep("energy", {"direction": "up", "amount": 0.7}, "livelier")],
+                        expect_metric="energy", expect_dir="up", goals=[("energy", "up", "energy")])
+    monkeypatch.setattr(AE, "plan_edit", lambda *a, **k: plan)
+    m = _base(300, energy=0.3)
+    r = AE.run_agent_edit(m, 90, 210, "zhoozh this bit up", beats=_beats())   # no keyword would match
+    assert any(g["metric"] == "energy" and g["dir"] == "up" for g in r.trace["goals"])
+    assert r.metrics_after["energy"] > r.metrics_before["energy"]
