@@ -259,11 +259,14 @@ def _reward_goals(goals, before: dict, after: dict) -> float:
     return r
 
 
-def _prefer(ok_a: bool, reward_a: float, ok_b: bool, reward_b: float) -> bool:
-    """True if attempt A should replace the current best B. An attempt that meets EVERY goal always
-    beats one that does not (so a huge single-metric gain that regresses another goal never wins over
-    a balanced attempt that satisfies all of them); ties on goals-met are broken by summed reward."""
-    return (1 if ok_a else 0, reward_a) > (1 if ok_b else 0, reward_b)
+def _prefer(ok_a: bool, no_reg_a: bool, reward_a: float,
+            ok_b: bool, no_reg_b: bool, reward_b: float) -> bool:
+    """True if attempt A should replace the current best B. Ranking, most important first:
+    (1) meets EVERY goal, (2) regresses NO declared goal (holding is fine), (3) higher summed reward.
+    So a balanced attempt that satisfies all goals beats a big single-metric gain that regressed
+    another goal, and -- crucially -- an edit that regresses a goal never beats simply keeping the
+    original (which regresses nothing). The user asked for X up; we never ship X down."""
+    return (int(ok_a), int(no_reg_a), reward_a) > (int(ok_b), int(no_reg_b), reward_b)
 
 
 def _merge_goals(primary: list, secondary: list) -> list:
@@ -294,7 +297,7 @@ def _smoothness_polish(win_cur, motion, a, b, goals, before, wbeats, blend_frame
     if base_j <= 0 or j0 <= base_j * 1.08:                 # already about as smooth as the original
         return None
     chosen = None
-    for amt in (0.12, 0.22, 0.34):
+    for amt in (0.06, 0.14, 0.24, 0.34):
         cand = temporal_smooth(win_cur, amt)
         spl = crossfade_edit(motion, a, b, cand, blend_frames=blend_frames)
         m = window_metrics(spl[a:b], wbeats)
@@ -424,17 +427,30 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         '{"summary": "<one plain-English line describing your plan>",\n'
         ' "steps": [{"tool": "<name>", "params": {...}, "why": "<short reason>"}],\n'
         ' "goals": [{"metric": "bas"|"energy"|"jerk"|"foot", "direction": "up"|"down"}]}\n'
-        "\"goals\" = the measurable outcomes that MUST hold for the user's request to be satisfied -- you "
-        "will be GRADED on exactly these. Read the request and list EVERY metric it implies and ONLY "
-        "those (metric meanings: bas=beat alignment, energy=intensity, jerk=lower is smoother, "
-        "foot=foot-plant). Examples: \"more energetic and on beat\" -> "
+        "CRITICAL RULE for \"goals\": include ONLY the metric(s) the user EXPLICITLY asked to change, and "
+        "NOTHING else -- extra goals conflict and make the edit do nothing. If the user says 'smooth it "
+        "out' the ONLY goal is jerk-down; 'make it calmer' -> energy-down ONLY; 'reverse this'/'mirror "
+        "it' -> [] (empty). Do NOT add energy, beat, or jerk goals the user did not mention. You are "
+        "GRADED on exactly this list.\n"
+        "Metric meanings: bas=beat alignment; energy=intensity; jerk=lower is smoother, so "
+        "sharper/snappier/staccato/punchy/crisp = jerk UP and smoother/flowing/graceful = jerk DOWN; "
+        "foot=foot-plant. List jerk ONLY when the user explicitly asked for smoother or sharper.\n"
+        "Examples: \"more energetic and on beat\" -> "
         '[{"metric":"energy","direction":"up"},{"metric":"bas","direction":"up"}]; '
+        '"smooth it out so it flows" -> [{"metric":"jerk","direction":"down"}]; '
         '"calmer but keep it tight" -> [{"metric":"energy","direction":"down"},{"metric":"bas","direction":"up"}]; '
-        '"flip it" or "reverse this" -> [] (no measurable goal). '
+        '"snappier staccato hits" -> [{"metric":"jerk","direction":"up"}]; '
+        '"reverse this"/"mirror it" -> []. '
         "Pick tools by meaning, not keywords; you may combine (e.g. energy down + beat_align). "
-        "Unless the user wants sharper/snappier motion, PRESERVE smoothness: energy scaling and "
-        "beat_align add jitter, so end the plan with a light 'smooth' (amount ~0.1-0.2) so the dance "
-        "does not get jerky."
+        "Use 'regenerate' ONLY when the user wants genuinely DIFFERENT choreography/moves (it samples a "
+        "slow diffusion backbone); for beat/energy/smoothness/sharpness use the FAST deterministic tools "
+        "(beat_align/energy/smooth/sharpen). For a pure transform (reverse/mirror/flip) the plan is JUST "
+        "that one tool and goals MUST be []. "
+        "beat_align LOWERS energy and amplitude scaling can drift the beat, so when both energy-up and "
+        "beat are goals, scale energy generously (amount >=0.7) so it stays up AFTER beat_align. "
+        "Unless the user asked for sharper, you MAY end the plan with a light 'smooth' STEP (amount "
+        "~0.1-0.2) as a finishing touch to shed jitter -- but that is a STEP, not a goal; do NOT put "
+        "jerk in goals for it. If the user asked for sharper, do NOT smooth."
     )
     if goals:                                              # refine: remind of the graded constraints
         gl = ", ".join(f"{lbl} must go {d}" for _m, d, lbl in goals)
@@ -451,8 +467,11 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         prompt += (
             "\n\nYOUR PREVIOUS ATTEMPT under-delivered. Previous steps: "
             f"{json.dumps(feedback.get('prev_steps'))}. Unmet goals: " + (miss_txt or "the target metric")
-            + ". REVISE: push HARDER (larger amounts / more passes / more seeds), add or swap tools, and "
-            "ensure the corrective tool for each unmet metric is present. Do not repeat the same weak plan."
+            + ". A metric that REGRESSED (moved the WRONG way) is the worst outcome -- for it, increase "
+            "its own tool's magnitude a lot AND order it so it survives the others (e.g. if beat_align "
+            "dropped energy, scale energy higher and/or after beat_align). REVISE: push HARDER (larger "
+            "amounts / more passes / more seeds), add or swap tools, and ensure the corrective tool for "
+            "each unmet metric is present. Do not repeat the same weak plan."
         )
     client = OpenAI(api_key=api_key)
     resp = client.chat.completions.create(
@@ -624,7 +643,7 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     # alignment is already tight and any change (plus the edge-blend) would only lower it.
     if goals:
         ok0, checks0, _ = _verify_goals(goals, before, before)
-        best = (0.0, motion, before, ok0, checks0, 0, base_clip)   # (reward, spliced, after, ok, checks, cycle, win_cur)
+        best = (0.0, motion, before, ok0, True, checks0, 0, base_clip)   # (reward, spliced, after, ok, no_reg, checks, cycle, win_cur)
     else:
         best = None                                     # a goalless op (reverse/mirror) always applies
 
@@ -640,8 +659,9 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
         if goals:
             ok, checks, verdict = _verify_goals(goals, before, after)
             reward = _reward_goals(goals, before, after)
+            no_reg = not any(c.get("status") == "regressed" for c in checks)
         else:
-            ok, checks, verdict, reward = True, [], "applied the planned edit", 0.0
+            ok, checks, verdict, reward, no_reg = True, [], "applied the planned edit", 0.0, True
         _emit({"phase": "verify", "cycle": cycle + 1, "ok": ok, "feedback": verdict,
                "checks": checks, "metrics_after": after})
         trace["attempts"].append({
@@ -652,8 +672,8 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
             "steps": step_log,
             "verify": {"ok": ok, "checks": checks, "verdict": verdict},
         })
-        if best is None or _prefer(ok, reward, best[3], best[0]):
-            best = (reward, spliced_try, after, ok, checks, cycle + 1, cur)
+        if best is None or _prefer(ok, no_reg, reward, best[3], best[4], best[0]):
+            best = (reward, spliced_try, after, ok, no_reg, checks, cycle + 1, cur)
         if ok or cycle + 1 >= total_attempts:
             break
         # ---- refine: feed EVERY unmet metric back to the planner ----
@@ -666,7 +686,7 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
                "planner": plan.planner, "planner_note": plan.planner_note,
                "steps": [{"tool": s.tool, "why": s.why} for s in plan.steps]})
 
-    reward, spliced, after, ok, checks, win_cycle, win_cur = best
+    reward, spliced, after, ok, no_reg, checks, win_cycle, win_cur = best
     n_attempts = len(trace["attempts"])
     kept_original = win_cycle == 0
 

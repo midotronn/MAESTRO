@@ -225,13 +225,13 @@ def test_trace_carries_plan_executor_and_verify():
 
 
 def test_prefer_ranks_all_goals_met_over_higher_reward():
-    # the bug: an attempt with a huge single-metric gain (but a regressed goal, so NOT ok) must not
-    # beat a balanced attempt that meets EVERY goal, even though its summed reward is larger.
-    assert AE._prefer(True, 51.6, False, 67.6)          # ok beats not-ok regardless of reward
-    assert not AE._prefer(False, 67.6, True, 51.6)
-    assert AE._prefer(True, 60.0, True, 51.6)           # ties on ok -> higher reward wins
-    assert AE._prefer(False, 70.0, False, 67.6)
-    assert not AE._prefer(False, 10.0, False, 67.6)
+    # (1) meets-all-goals beats not-ok regardless of reward; (2) no-regression beats a regressing
+    # attempt even with higher reward; (3) ties broken by reward.
+    assert AE._prefer(True, True, 51.6, False, True, 67.6)         # ok beats not-ok
+    assert not AE._prefer(False, True, 67.6, True, True, 51.6)
+    assert AE._prefer(False, True, 5.0, False, False, 99.0)        # no-regression beats big-but-regressing
+    assert not AE._prefer(False, False, 99.0, False, True, 5.0)
+    assert AE._prefer(True, True, 60.0, True, True, 51.6)          # ties on (ok, no_reg) -> higher reward
 
 
 def test_merge_goals_planner_wins_keyword_fills_gaps():
@@ -248,7 +248,7 @@ def test_smoothness_polish_picks_smooth_that_restores_jerk(monkeypatch):
     # amount that restores jerk to ~baseline while the energy goal stays met.
     def fake_smooth(clip, amt):
         c = clip.copy(); c[0, 1] = amt; return c
-    JERK = {0.0: 0.30, 0.12: 0.18, 0.22: 0.12, 0.34: 0.09}
+    JERK = {0.0: 0.30, 0.06: 0.20, 0.14: 0.12, 0.24: 0.10, 0.34: 0.09}
     def fake_metrics(clip, beats=None):
         return {"energy": 0.6, "bas": 0.7, "jerk": JERK.get(round(float(clip[0, 1]), 2), 0.30), "foot": 1.0}
     monkeypatch.setattr(AE, "temporal_smooth", fake_smooth)
@@ -285,3 +285,22 @@ def test_planner_declared_goals_drive_verification(monkeypatch):
     r = AE.run_agent_edit(m, 90, 210, "zhoozh this bit up", beats=_beats())   # no keyword would match
     assert any(g["metric"] == "energy" and g["dir"] == "up" for g in r.trace["goals"])
     assert r.metrics_after["energy"] > r.metrics_before["energy"]
+
+
+def test_no_regression_guard_blocks_conflicting_edit(monkeypatch):
+    # goals conflict: energy UP and jerk DOWN. energy scaling raises jerk -> would regress the jerk
+    # goal. The no-regression guard must NOT ship an edit that regresses a declared goal; it keeps the
+    # original (which regresses nothing) rather than trading one goal for another.
+    plan = AE.AgentPlan("boost", [AE.PlanStep("energy", {"direction": "up", "amount": 0.8}, "x")],
+                        goals=[("energy", "up", "energy"), ("jerk", "down", "smoothness")])
+    monkeypatch.setattr(AE, "plan_edit", lambda *a, **k: plan)
+    r = AE.run_agent_edit(_base(300, energy=0.5), 90, 210, "energetic and smooth",
+                          beats=_beats(), max_refine=0)
+    assert not any(c["status"] == "regressed" for c in r.trace["final"]["checks"])
+    assert r.trace["final"]["kept_original"] is True
+
+
+def test_offline_planner_declares_only_requested_goal():
+    # the offline keyword planner must not over-declare: "more energetic" -> energy only (not jerk/bas)
+    r = AE.run_agent_edit(_base(300, energy=0.4), 90, 210, "make it more energetic", beats=_beats())
+    assert {g["metric"] for g in r.trace["goals"]} == {"energy"}
