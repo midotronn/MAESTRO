@@ -24,8 +24,10 @@ Run:  uvicorn server.app:app --host 127.0.0.1 --port 8000
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
+import secrets
 import shutil
 from pathlib import Path
 
@@ -51,8 +53,54 @@ STATIC = HERE / "static"
 SESSIONS = HERE / "sessions"
 FPS = 30
 
-app = FastAPI(title="AgentLODGE Interactive Editor")
+app = FastAPI(title="MAESTRO Interactive Editor")
 _sessions: dict[str, EditSession] = {}
+
+
+class BasicAuthMiddleware:
+    """Env-gated HTTP Basic Auth over the whole app (HTTP + WebSocket).
+
+    Enabled only when ``MAESTRO_AUTH_USER`` and ``MAESTRO_AUTH_PASS`` are set, so local dev stays
+    open while a publicly-hosted instance (e.g. on the RunPod proxy) is protected. Checks the
+    ``Authorization`` header directly so it also guards WebSocket upgrades, which
+    ``@app.middleware('http')`` would miss. The browser caches the credentials from the first prompt
+    and replays them on same-origin subresource + WS requests.
+    """
+
+    def __init__(self, app, user: str, password: str):
+        self.app = app
+        self.user = user
+        self.password = password
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            headers = dict(scope.get("headers") or [])
+            if not self._authorized(headers.get(b"authorization", b"").decode()):
+                if scope["type"] == "http":
+                    await send({"type": "http.response.start", "status": 401, "headers": [
+                        (b"www-authenticate", b'Basic realm="MAESTRO"'),
+                        (b"content-type", b"text/plain; charset=utf-8")]})
+                    await send({"type": "http.response.body", "body": b"Authentication required"})
+                else:
+                    await send({"type": "websocket.close", "code": 1008})
+                return
+        await self.app(scope, receive, send)
+
+    def _authorized(self, header: str) -> bool:
+        if not header.startswith("Basic "):
+            return False
+        try:
+            user, _, pw = base64.b64decode(header[6:]).decode().partition(":")
+        except Exception:  # noqa: BLE001 - malformed header -> unauthorized
+            return False
+        return (secrets.compare_digest(user, self.user)
+                and secrets.compare_digest(pw, self.password))
+
+
+_AUTH_USER = os.environ.get("MAESTRO_AUTH_USER")
+_AUTH_PASS = os.environ.get("MAESTRO_AUTH_PASS")
+if _AUTH_USER and _AUTH_PASS:
+    app.add_middleware(BasicAuthMiddleware, user=_AUTH_USER, password=_AUTH_PASS)
 
 
 @app.on_event("startup")

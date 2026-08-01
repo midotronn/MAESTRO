@@ -113,24 +113,41 @@
     return el;
   }
 
-  // On a static host (e.g. GitHub Pages) there is no Python backend, so the "Launch live editor"
-  // links can't point at "/". Send them to the repo instead. When the page is served BY the editor
-  // app (localhost or a deployed server), "/" is the editor, so leave the links alone.
-  function fixEditorLinks() {
+  // The live editor runs on a GPU host (the RunPod pod), not on this static page. Its public URL
+  // lives in static/data/config.json so switching pods is a one-line change (the host_on_pod.ps1
+  // launcher rewrites it). A "?editor=<url>" query param overrides it for quick testing. When the
+  // page is served BY the editor app itself (localhost / the pod), the same-origin "/" already IS
+  // the editor, so we leave the links alone in that case.
+  async function fixEditorLinks() {
+    const links = document.querySelectorAll('a[href="/"]');
+    if (!links.length) return;
     const h = location.hostname;
-    const localish = h === "localhost" || h === "127.0.0.1" || h === "0.0.0.0" || h === "";
-    if (localish || !h.endsWith("github.io")) return;
-    const repo = "https://github.com/midotronn/MAESTRO";
-    document.querySelectorAll('a[href="/"]').forEach((a) => {
-      a.setAttribute("href", repo);
-      a.setAttribute("target", "_blank");
-      a.setAttribute("rel", "noopener");
-      a.setAttribute("title", "The live editor runs from the Python server; see the repo to run it locally.");
+    const servedByApp = h === "localhost" || h === "127.0.0.1" || h === "0.0.0.0"
+      || h.endsWith(".proxy.runpod.net");
+    if (servedByApp) return;                                   // "/" is already the editor here
+
+    let url = new URLSearchParams(location.search).get("editor") || "";
+    if (!url) {
+      try { url = (await getJSON(DATA + "config.json")).editorUrl || ""; }
+      catch (e) { url = ""; }
+    }
+    links.forEach((a) => {
+      if (url) {
+        a.setAttribute("href", url);
+        a.setAttribute("target", "_blank");
+        a.setAttribute("rel", "noopener");
+        a.setAttribute("title", "Opens the live MAESTRO editor (runs on the GPU host)");
+      } else {                                                  // no editor hosted -> link the repo
+        a.setAttribute("href", "https://github.com/midotronn/MAESTRO");
+        a.setAttribute("target", "_blank");
+        a.setAttribute("rel", "noopener");
+        a.setAttribute("title", "The live editor runs from the Python server; see the repo to run it.");
+      }
     });
   }
 
   async function main() {
-    fixEditorLinks();
+    await fixEditorLinks();
     const host = document.getElementById("songs");
     if (!host) return;
     let songs;

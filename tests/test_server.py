@@ -91,6 +91,32 @@ def test_unknown_song_404(client):
     assert client.post("/api/session/nope").status_code == 404
 
 
+def test_basic_auth_middleware_guards_when_env_set():
+    """With MAESTRO_AUTH_* set, requests without/with-wrong credentials get 401; correct creds pass."""
+    import importlib
+    import server.app as A
+    A = importlib.reload(A)  # re-evaluate module-level auth wiring with the env in place
+    from fastapi.testclient import TestClient
+    import base64
+    try:
+        import os
+        os.environ["MAESTRO_AUTH_USER"] = "maestro"
+        os.environ["MAESTRO_AUTH_PASS"] = "s3cret"
+        A2 = importlib.reload(A)
+        c = TestClient(A2.app)
+        assert c.get("/project/").status_code in (401, 404)  # 401 when guarded (docs may be absent -> still 401 first)
+        assert c.get("/api/songs").status_code == 401
+        good = base64.b64encode(b"maestro:s3cret").decode()
+        assert c.get("/api/songs", headers={"Authorization": f"Basic {good}"}).status_code == 200
+        bad = base64.b64encode(b"maestro:wrong").decode()
+        assert c.get("/api/songs", headers={"Authorization": f"Basic {bad}"}).status_code == 401
+    finally:
+        import os
+        os.environ.pop("MAESTRO_AUTH_USER", None)
+        os.environ.pop("MAESTRO_AUTH_PASS", None)
+        importlib.reload(A)  # restore the open (unguarded) app for other tests
+
+
 def test_compare_requires_an_edit_first(client):
     client.post("/api/session/sng")
     # no edit yet -> nothing to compare
