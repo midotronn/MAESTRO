@@ -120,7 +120,7 @@
     const h = location.hostname;
     const localish = h === "localhost" || h === "127.0.0.1" || h === "0.0.0.0" || h === "";
     if (localish || !h.endsWith("github.io")) return;
-    const repo = "https://github.com/midotronn/AgentLODGE";
+    const repo = "https://github.com/midotronn/MAESTRO";
     document.querySelectorAll('a[href="/"]').forEach((a) => {
       a.setAttribute("href", repo);
       a.setAttribute("target", "_blank");
