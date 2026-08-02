@@ -70,10 +70,29 @@ nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader ||
 # ---- 3. repos -----------------------------------------------------------------------------
 step "repos"
 cd "$WORK"
-[ -d AgentLODGE ] || git clone -q https://github.com/midotronn/AgentLODGE.git
-[ -d LODGE ]      || git clone -q https://github.com/li-ronghui/LODGE.git
-# EDGE: a partial clone (only .venv/SMPL-to-FBX) has no model code -> re-clone if EDGE.py is missing.
-if [ ! -f EDGE/EDGE.py ]; then rm -rf EDGE && git clone -q https://github.com/Stanford-TML/EDGE.git; fi
+[ -d AgentLODGE ] || git clone -q https://github.com/midotronn/MAESTRO.git AgentLODGE
+# LODGE: a bare/empty dir (fresh, or a volume migration that dropped file contents) has no code.
+# Guard on the code package (dld/), and preserve downloaded weights (exp/) + the licence-gated
+# SMPL-X template across a re-clone via mv (instant on the same fs, no multi-GB copy).
+if [ ! -d LODGE/dld ]; then
+  _lbak=$(mktemp -d)
+  [ -d LODGE/exp ] && mv LODGE/exp "$_lbak/exp" 2>/dev/null || true
+  [ -f LODGE/data/smplx_neu_J_1.npy ] && mkdir -p "$_lbak/data" && mv LODGE/data/smplx_neu_J_1.npy "$_lbak/data/" 2>/dev/null || true
+  rm -rf LODGE && git clone -q https://github.com/li-ronghui/LODGE.git
+  [ -d "$_lbak/exp" ] && mv "$_lbak/exp" LODGE/exp 2>/dev/null || true
+  mkdir -p LODGE/data; [ -f "$_lbak/data/smplx_neu_J_1.npy" ] && mv "$_lbak/data/smplx_neu_J_1.npy" LODGE/data/ 2>/dev/null || true
+  rm -rf "$_lbak"
+fi
+# EDGE: a partial clone (only .venv/SMPL-to-FBX) has no model code -> re-clone if EDGE.py is missing,
+# preserving the caller-pushed ybot.fbx (lives under EDGE/SMPL-to-FBX, which rm -rf would delete).
+if [ ! -f EDGE/EDGE.py ]; then
+  _ebak=$(mktemp -d)
+  [ -f EDGE/SMPL-to-FBX/ybot.fbx ] && cp -f EDGE/SMPL-to-FBX/ybot.fbx "$_ebak/" 2>/dev/null || true
+  rm -rf EDGE && git clone -q https://github.com/Stanford-TML/EDGE.git
+  mkdir -p EDGE/SMPL-to-FBX
+  [ -f "$_ebak/ybot.fbx" ] && mv -f "$_ebak/ybot.fbx" EDGE/SMPL-to-FBX/ybot.fbx 2>/dev/null || true
+  rm -rf "$_ebak"
+fi
 ( cd AgentLODGE && git pull --ff-only -q || true )
 
 # ---- 4. CUDA venv + PyTorch (Blackwell gate) ----------------------------------------------

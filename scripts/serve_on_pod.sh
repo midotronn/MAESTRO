@@ -23,6 +23,10 @@ echo "== MAESTRO pod host =="
   "$PY" -m pip install -q "fastapi>=0.110" "uvicorn[standard]>=0.29" "httpx>=0.27" "python-multipart>=0.0.9" || {
     echo "FATAL: could not install web deps"; exit 1; }
 }
+# the LLM edit agent lazily imports the openai client in agent_edit._llm_plan; without it the agent
+# silently falls back to the offline keyword planner. Checked separately because the guard above
+# short-circuits once fastapi/uvicorn exist (e.g. on a gen-provisioned venv).
+"$PY" -c "import openai" 2>/dev/null || "$PY" -m pip install -q openai || echo "WARN: openai missing (agent will use keyword fallback)"
 
 # 2) passwordless localhost SSH so the editor can render on THIS pod (host=127.0.0.1) with no change
 #    to server/rendering.py (it drives Blender over ssh/scp).
