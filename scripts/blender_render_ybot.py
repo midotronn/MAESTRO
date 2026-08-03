@@ -17,6 +17,7 @@ and optional ``trans`` (L, 3). The dancer is centred on the studio floor each fr
 """
 
 import argparse
+import glob
 import math
 import os
 import sys
@@ -334,6 +335,15 @@ def render_take(args, color):
 
     scene = bpy.context.scene
     frames_dir = args.frames_dir.rstrip("/")
+    os.makedirs(frames_dir, exist_ok=True)
+    # Clear frames from any previous render in this dir. The warm daemon reuses the same
+    # _cmp_*_frames dirs and ffmpeg muxes frame_%05d.png contiguously, so leftover trailing frames
+    # from an earlier, LONGER window would be appended to the end of this clip (a "glitch" tail).
+    for _old in glob.glob(f"{frames_dir}/frame_*.png"):
+        try:
+            os.remove(_old)
+        except OSError:
+            pass
     stride = max(1, args.stride)
     fast = bool(getattr(args, "fast", False))
     # The per-frame bottleneck is the foot-grounding vertex scan (~100 meshes), not the render. In

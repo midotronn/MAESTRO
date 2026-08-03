@@ -49,6 +49,7 @@
           <button id="compareBtn" class="render-btn ghost" title="Render the edited window before vs after, side by side">⇄ Compare</button>
         </div>
         <div id="renderStatus" class="render-status"></div>
+        <div id="renderProgWrap" class="progwrap render-prog" hidden><div id="renderProg" class="progbar"></div></div>
       </div>
 
       <div id="compare" class="compare" hidden>
@@ -57,6 +58,7 @@
           <button id="cmpClose" class="icon-btn" title="Close comparison">✕</button>
         </div>
         <div id="cmpStatus" class="render-status"></div>
+        <div id="cmpProgWrap" class="progwrap cmp-prog" hidden><div id="cmpProg" class="progbar"></div></div>
         <div class="cmp-vids">
           <figure><figcaption>Before</figcaption><video id="cmpBefore" muted playsinline preload="auto" loop></video></figure>
           <figure><figcaption>After</figcaption><video id="cmpAfter" muted playsinline preload="auto" loop></video></figure>

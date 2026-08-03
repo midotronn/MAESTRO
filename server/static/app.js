@@ -37,6 +37,7 @@ async function startRender() {
   $("renderBtn").disabled = true;
   const st = $("renderStatus"); st.style.display = "block"; st.className = "render-status";
   st.textContent = "starting render\u2026";
+  $("renderProgWrap").hidden = false; $("renderProg").style.width = "3%";
   try {
     await api(`/api/session/${ST.sid}/render`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -50,6 +51,7 @@ async function pollRender() {
   catch (e) { setTimeout(pollRender, 3000); return; }
   const st = $("renderStatus");
   st.textContent = (j.status === "rendering" ? "\u{1F3AC} " : "") + (j.message || j.status);
+  $("renderProgWrap").hidden = false; $("renderProg").style.width = (j.progress || 0) + "%";
   if (j.status === "done") {
     const v = $("video");
     v.src = `/api/session/${ST.sid}/media/${j.video}?t=` + Date.now();
@@ -57,6 +59,7 @@ async function pollRender() {
     $("viewerTag").textContent = "edited render";
     st.className = "render-status ok";
     st.textContent = `\u2714 rendered${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
+    $("renderProgWrap").hidden = true;
     $("renderBtn").disabled = false;
     toast("Edited dance rendered");
     setTimeout(() => { st.style.display = "none"; }, 5000);
@@ -64,6 +67,7 @@ async function pollRender() {
   }
   if (j.status === "error") {
     st.className = "render-status bad"; st.textContent = "\u26a0 " + (j.message || "render failed");
+    $("renderProgWrap").hidden = true;
     $("renderBtn").disabled = false;
     toast("Render failed");
     return;
@@ -77,6 +81,7 @@ async function startCompare() {
   panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
   const st = $("cmpStatus"); st.style.display = "block"; st.className = "render-status";
   st.textContent = "starting before/after render\u2026";
+  $("cmpProgWrap").hidden = false; $("cmpProg").style.width = "3%";
   $("compareBtn").disabled = true;
   try {
     await api(`/api/session/${ST.sid}/compare`, {
@@ -94,10 +99,12 @@ async function pollCompare() {
   catch (e) { setTimeout(pollCompare, 3000); return; }
   const st = $("cmpStatus");
   st.textContent = (j.status === "rendering" ? "\u{1F3AC} " : "") + (j.message || j.status);
+  $("cmpProgWrap").hidden = false; $("cmpProg").style.width = (j.progress || 0) + "%";
   if (j.status === "done") {
     setupCompareVideos(j.before_video, j.after_video, j.metrics || {});
     st.className = "render-status ok";
     st.textContent = `\u2714 before/after ready${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
+    $("cmpProgWrap").hidden = true;
     $("compareBtn").disabled = false;
     setTimeout(() => { st.style.display = "none"; }, 5000);
     toast("Before/after ready");
@@ -105,6 +112,7 @@ async function pollCompare() {
   }
   if (j.status === "error") {
     st.className = "render-status bad"; st.textContent = "\u26a0 " + (j.message || "compare failed");
+    $("cmpProgWrap").hidden = true;
     $("compareBtn").disabled = false; toast("Compare failed");
     return;
   }
@@ -442,8 +450,16 @@ function metricRow(k, before, after) {
   const tr = document.createElement("tr");
   const d = Math.round((after - before) * 1000) / 1000;    // match the 3-decimal display exactly
   const better = HIGHER_BETTER[k];
-  let cls = ""; if (better !== null && d !== 0) cls = ((d > 0) === better) ? "up" : "down";
-  const arrow = d === 0 ? "" : (d > 0 ? " \u25b2" : " \u25bc");
+  let cls = "", arrow = "";
+  if (d !== 0) {
+    if (better === null) {
+      arrow = d > 0 ? " \u25b2" : " \u25bc";               // neutral metric (energy): raw direction, no colour
+    } else {
+      const improved = (d > 0) === better;                 // e.g. jerk: lower is better
+      cls = improved ? "up" : "down";
+      arrow = improved ? " \u25b2" : " \u25bc";             // arrow marks better/worse, matching the colour
+    }
+  }
   tr.innerHTML = labelCell(k)
     + `<td class="num">${before.toFixed(3)}</td>`
     + `<td class="num">${after.toFixed(3)}</td>`
