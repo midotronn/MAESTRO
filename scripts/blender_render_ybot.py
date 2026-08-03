@@ -69,7 +69,41 @@ def parse_args():
     p.add_argument("--fk-npz", default="",
                    help="Optional npz with ground-truth FK 'joints' (L,22,3) to fix the "
                         "global orientation via Kabsch; else read 'fk_joints' from --poses")
+    p.add_argument("--fast", action="store_true",
+                   help="Fast preview: ground on the cached foot meshes only + one fewer depsgraph "
+                        "update per frame (used by the warm compare daemon). Visually identical.")
     return p.parse_args(argv)
+
+
+def foot_meshes(arm, meshes, poses, L, n_body, apply_pose):
+    """The subset of robot meshes that reach the floor (the feet/soles), found once over a few
+    sample frames. Per-frame grounding then scans ~8 meshes instead of ~100 with the same result."""
+    sample = list(range(0, L, max(1, L // 6)))[:6] or [0]
+    contrib: set[str] = set()
+    for i in sample:
+        apply_pose(i)
+        bpy.context.view_layer.update()
+        dg = bpy.context.evaluated_depsgraph_get()
+        zmins = []
+        for obj in meshes:
+            ev = obj.evaluated_get(dg)
+            me = ev.data
+            n = len(me.vertices)
+            if n == 0:
+                zmins.append(float("inf"))
+                continue
+            co = np.empty(n * 3, dtype=np.float64)
+            me.vertices.foreach_get("co", co)
+            co = co.reshape(-1, 3)
+            M = np.array(ev.matrix_world)
+            wz = co @ M[:3, :3].T[:, 2] + M[2, 3]
+            zmins.append(float(wz.min()))
+        gmin = min(zmins)
+        for obj, zm in zip(meshes, zmins):
+            if zm <= gmin + 0.06:               # within 6cm of the contact -> a foot-region mesh
+                contrib.add(obj.name)
+    subset = [o for o in meshes if o.name in contrib]
+    return subset or meshes
 
 
 def kabsch_rotation(P, Q):
@@ -197,18 +231,11 @@ def build_scene(args, color):
     print(f"YBOT_SCENE_BUILT {args.build_scene}")
 
 
-def main():
-    args = parse_args()
-    try:
-        color = tuple(float(c) for c in args.color.split(","))[:3]
-    except Exception:
-        color = (0.5, 0.5, 0.52)
-
-    if args.build_scene:
-        build_scene(args, color)
-        return
-    if not args.poses or not args.frames_dir:
-        raise SystemExit("--poses and --frames-dir are required to render")
+def render_take(args, color):
+    """Render poses.npz (``args.poses``) to ``args.frames_dir``. Reuses a preloaded scene (a cached
+    .blend or a warm daemon that already imported the rig + studio) when present; otherwise it does
+    the one-time FBX import + studio setup. Factored out of ``main`` so a persistent daemon can call
+    it per request and skip Blender's ~8s startup + scene load."""
     data = np.load(args.poses)
     poses = data["poses"].astype(np.float32)  # (L, J, 3)
     L = poses.shape[0]
@@ -308,24 +335,51 @@ def main():
     scene = bpy.context.scene
     frames_dir = args.frames_dir.rstrip("/")
     stride = max(1, args.stride)
+    fast = bool(getattr(args, "fast", False))
+    # The per-frame bottleneck is the foot-grounding vertex scan (~100 meshes), not the render. In
+    # fast mode, scan only the cached foot meshes and fold the horizontal centring + vertical
+    # grounding into a single location set (2 depsgraph updates/frame instead of 3). The horizontal
+    # shift does not change z, so the grounded result is identical to the full-scan path.
+    ground_meshes = foot_meshes(arm, robot_meshes, poses, L, n_body, apply_pose) if fast else robot_meshes
     for i in range(0, L, stride):
         pose_frame(i)
         # Centre the dancer horizontally on the pelvis...
         arm.location = (0.0, 0.0, 0.0)
         bpy.context.view_layer.update()
         pelvis = whead("m_avg_Pelvis")
-        arm.location = (-pelvis.x, -pelvis.y, 0.0)
-        bpy.context.view_layer.update()
         # ...then ground the lowest posed *mesh* vertex (foot sole) at z=0 so the robot
         # rests on the floor instead of sinking its feet through it.
         depsgraph = bpy.context.evaluated_depsgraph_get()
-        mz = lowest_mesh_z(depsgraph, robot_meshes)
-        if mz != float("inf"):
-            arm.location = (arm.location.x, arm.location.y, -mz)
+        mz = lowest_mesh_z(depsgraph, ground_meshes)
+        if fast:
+            arm.location = (-pelvis.x, -pelvis.y, 0.0 if mz == float("inf") else -mz)
             bpy.context.view_layer.update()
+        else:
+            arm.location = (-pelvis.x, -pelvis.y, 0.0)
+            bpy.context.view_layer.update()
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+            mz = lowest_mesh_z(depsgraph, robot_meshes)
+            if mz != float("inf"):
+                arm.location = (arm.location.x, arm.location.y, -mz)
+                bpy.context.view_layer.update()
         scene.render.filepath = f"{frames_dir}/frame_{i:05d}.png"
         bpy.ops.render.render(write_still=True)
     print(f"BLENDER_RENDERED {L} frames -> {frames_dir}")
+
+
+def main():
+    args = parse_args()
+    try:
+        color = tuple(float(c) for c in args.color.split(","))[:3]
+    except Exception:
+        color = (0.5, 0.5, 0.52)
+
+    if args.build_scene:
+        build_scene(args, color)
+        return
+    if not args.poses or not args.frames_dir:
+        raise SystemExit("--poses and --frames-dir are required to render")
+    render_take(args, color)
 
 
 if __name__ == "__main__":

@@ -78,6 +78,13 @@ def prewarm_pod() -> None:
             # Warm torch too, for the pod-torch-FK fallback path only.
             _ssh(cfg, f"CUDA_VISIBLE_DEVICES= {al_py} -c 'import torch, numpy, scipy.signal' "
                       f">/dev/null 2>&1; echo warmed", timeout=180)
+            # When the editor runs ON the pod, bring up the warm Blender daemon pool so compare (and
+            # future renders) skip the ~8s Blender startup entirely.
+            try:
+                from server import warm_render
+                warm_render.ensure_pool()
+            except Exception:  # noqa: BLE001 - warm pool is best-effort
+                pass
         except Exception:  # noqa: BLE001 - warming is best-effort
             pass
 
@@ -320,6 +327,75 @@ def _launch_window_render(cfg, sid: str, tag: str, motion: np.ndarray, media_dir
     return base if "LAUNCHED" in (launch.stdout or "") else None
 
 
+def _ffmpeg_frames(frames_dir: str, out_mp4: Path, fps: int = 30) -> bool:
+    """Encode ``frames_dir/frame_%05d.png`` (contiguous from 0) to an mp4 locally on the pod."""
+    import glob
+    import subprocess
+    if not sorted(glob.glob(f"{frames_dir}/frame_*.png")):
+        return False
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(fps),
+             "-i", f"{frames_dir}/frame_%05d.png", "-c:v", "libx264", "-preset", "veryfast",
+             "-pix_fmt", "yuv420p", str(out_mp4)],
+            capture_output=True, timeout=180)
+        return r.returncode == 0 and out_mp4.exists()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
+                  media_dir: Path) -> bool:
+    """Fast compare via the warm Blender pool: server-FK both windows, render before/after in
+    PARALLEL on two persistent daemons (no 8s startup, no ssh/scp), then ffmpeg locally. Returns
+    True on success; False (with no side effects on the job) if the pool can't serve it."""
+    from server import warm_render as wr
+    from server import fk
+    if not wr.available():
+        return False
+    media_dir.mkdir(parents=True, exist_ok=True)
+    frames = int(max(before_motion.shape[0], after_motion.shape[0]))
+    _cset(sid, status="rendering", progress=25, frames=frames,
+          message=f"rendering before & after ({frames} frames each) on the warm GPU\u2026")
+    try:
+        specs = [
+            ("before", str(media_dir / "_cmp_before_poses.npz"), str(media_dir / "_cmp_before_frames"), 0),
+            ("after", str(media_dir / "_cmp_after_poses.npz"), str(media_dir / "_cmp_after_frames"), 1),
+        ]
+        fk.save_poses_npz(before_motion, specs[0][1])
+        fk.save_poses_npz(after_motion, specs[1][1])
+    except Exception as exc:  # noqa: BLE001 - server-FK unavailable -> let the caller fall back
+        logger.warning("warm compare server-FK failed (%s)", exc)
+        return False
+    results: dict[str, bool] = {}
+
+    def _run(tag: str, npz: str, frames_dir: str, didx: int) -> None:
+        results[tag] = wr.warm_render(npz, frames_dir, daemon=didx, samples=8)
+
+    threads = [threading.Thread(target=_run, args=s) for s in specs]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    if not (results.get("before") and results.get("after")):
+        return False
+    _cset(sid, progress=90, message="encoding before & after\u2026")
+    enc: dict[str, bool] = {}
+
+    def _enc(tag: str, frames_dir: str, out: Path) -> None:
+        enc[tag] = _ffmpeg_frames(frames_dir, out)
+
+    ethreads = [
+        threading.Thread(target=_enc, args=("before", specs[0][2], media_dir / "cmp_before.mp4")),
+        threading.Thread(target=_enc, args=("after", specs[1][2], media_dir / "cmp_after.mp4")),
+    ]
+    for t in ethreads:
+        t.start()
+    for t in ethreads:
+        t.join()
+    return bool(enc.get("before") and enc.get("after"))
+
+
 def _compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
                     media_dir: Path) -> None:
     cfg = pod_config()
@@ -330,6 +406,17 @@ def _compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarra
     if before_motion.shape[0] < 2 or after_motion.shape[0] < 2:
         _cset(sid, status="error", progress=0, message="nothing to compare (empty window).")
         return
+    started = _CJOBS.get(sid, {}).get("started", time.time())
+    # Fast path: warm Blender pool (editor co-located on the pod). Falls through to the cold ssh
+    # render below if the pool is unavailable or fails.
+    try:
+        if _compare_warm(sid, before_motion, after_motion, media_dir):
+            _cset(sid, status="done", progress=100, message="ready",
+                  before_video="cmp_before.mp4", after_video="cmp_after.mp4",
+                  elapsed=round(time.time() - started))
+            return
+    except Exception as exc:  # noqa: BLE001 - never let the warm path break compare; fall back
+        logger.warning("warm compare path errored (%s); using cold render", exc)
     try:
         _cset(sid, status="rendering", progress=8, message="checking the GPU pod\u2026")
         reachable = False
