@@ -463,22 +463,25 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         '"smooth it out so it flows" -> [{"metric":"jerk","direction":"down"}]; '
         '"calmer but keep it tight" -> [{"metric":"energy","direction":"down"},{"metric":"bas","direction":"up"}]; '
         '"snappier staccato hits" -> [{"metric":"jerk","direction":"up"}]; '
+        '"tighten it to the beat" -> [{"metric":"bas","direction":"up"}]; '
         '"reverse this"/"mirror it" -> []. '
-        "Pick tools by meaning, not keywords. There are only four levers:\n"
-        "1) CONTENT / INTENSITY -> 'regenerate'. Anything that changes WHAT the body does -- more "
-        "energetic / dynamic / livelier, calmer / mellower, snappier / punchier, or different / new / "
-        "more interesting / varied -- MUST regenerate genuinely NEW choreography from the backbones "
-        "(edge = punchy / energetic, lodge = smooth / calm; auto = agent picks), NOT resize or high-pass "
-        "the existing moves (that looks like a sped-up or jittery copy). Bias energy 0.7-0.9 for "
-        "energetic / snappy, 0.1-0.3 for calmer. You MAY add a beat_align finisher (and a light smooth "
-        "amount ~0.15) after it to lock timing and shed seam jitter.\n"
-        "2) TIMING -> 'beat_align' alone (tighter / on the beat / in time), keeping the same moves.\n"
-        "3) SMOOTHNESS -> 'smooth' alone (smoother / flowing / less jitter).\n"
-        "4) EXACT TRANSFORM -> 'mirror' or 'reverse' (flip / play backward); the plan is JUST that one "
-        "tool and goals MUST be []. \n"
-        "There is NO amplitude-scale or sharpen tool: intensity and snap come from regeneration, not "
-        "signal tricks. A light 'smooth' STEP (amount ~0.1-0.2) at the end of a content edit is a STEP, "
-        "not a goal -- do NOT put jerk in goals for it."
+        "Pick the FEWEST tools that match the user's intent, by meaning not keywords. Most requests "
+        "are ONE lever:\n"
+        "1) TIMING only (tighter / on the beat / in time / lock to the grid) -> 'beat_align' ALONE, "
+        "goal [bas up]. Do NOT regenerate and do NOT add an energy or jerk goal.\n"
+        "2) SMOOTHNESS only (smoother / flowing / less jitter) -> 'smooth' ALONE, goal [jerk down].\n"
+        "3) EXACT TRANSFORM (reverse / mirror / flip) -> that ONE tool, goals MUST be [].\n"
+        "4) CONTENT / INTENSITY (more energetic / dynamic / livelier, calmer / mellower, snappier / "
+        "punchier, or different / new / more interesting / varied) -> 'regenerate' -- ONLY these change "
+        "WHAT the body does, so ONLY these regenerate. It samples genuinely NEW choreography from the "
+        "backbones (edge = punchy / energetic, lodge = smooth / calm; auto = agent picks) instead of "
+        "resizing or high-passing the existing moves (which looks like a sped-up or jittery copy). Bias "
+        "energy 0.7-0.9 for energetic / snappy, 0.1-0.3 for calmer. Append a beat_align finisher ONLY if "
+        "the user ALSO asked for timing. \n"
+        "There is NO amplitude-scale or sharpen tool. A light 'smooth' STEP (amount ~0.1-0.2) at the end "
+        "of a regenerate is a STEP, not a goal -- do NOT put jerk in goals for it. NEVER add a goal the "
+        "user did not explicitly ask for: an extra goal conflicts with the real one and gets the whole "
+        "edit rejected (e.g. adding energy to 'tighten to the beat' makes it do nothing)."
     )
     if goals:                                              # refine: remind of the graded constraints
         gl = ", ".join(f"{lbl} must go {d}" for _m, d, lbl in goals)
@@ -690,12 +693,16 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
             no_reg = not any(c.get("status") == "regressed" for c in checks)
         else:
             ok, checks, verdict, reward, no_reg = True, [], "applied the planned edit", 0.0, True
-        # A generative (regenerate) content edit ships genuinely NEW choreography; accept it when it
-        # REGRESSES no declared goal (best-of-K already keeps the seed that advances the goals most),
-        # so 'more energetic' produces new moves instead of silently leaving the window unchanged when
-        # no single seed strictly beats the original metric.
-        if goals and not ok and no_reg and any(s.tool == "regenerate" for s in plan.steps):
-            ok = True
+        # A generative (regenerate) content edit ships genuinely NEW choreography; accept the best
+        # candidate unless it BADLY regresses a goal (best-of-K already keeps the seed that advances
+        # the goals most). This ships new moves instead of silently keeping the original when no seed
+        # strictly beats the metric on this window -- the alternative (regenerate forever) is worse.
+        if goals and not ok and any(s.tool == "regenerate" for s in plan.steps):
+            big_regress = any(c.get("status") == "regressed"
+                              and abs(c["after"] - c["before"]) > 3.0 * (_tol(c["metric"], c["before"]) or 1e-6)
+                              for c in checks)
+            if not big_regress:
+                ok = True
         # artifact guardrail: never make the window jittery / foot-skating, even off-goal. A
         # violation penalises the reward, keeps the loop refining toward a clean solution, and is
         # dispreferred vs an edit (or the untouched baseline) that stays clean.
