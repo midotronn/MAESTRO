@@ -35,6 +35,10 @@ h1, h2, h3, .title, .subtitle { color: var(--ink) !important; font-family: "Goog
   letter-spacing: -0.02em;
 }
 .sec-sub { text-align: center; color: var(--muted); margin-bottom: 2rem; }
+.sub-h {
+  font-size: 1.15rem; font-weight: 700; text-align: center; color: var(--brand);
+  letter-spacing: -0.01em; margin: 0.6rem 0 1rem;
+}
 .alt-bg { background: var(--bg-soft); }
 
 /* ---------------- hero ---------------- */
