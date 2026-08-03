@@ -146,6 +146,62 @@
     });
   }
 
+  function buildCarousel(host, cards, songs) {
+    const wrap = document.createElement("div");
+    wrap.className = "carousel";
+    const vp = document.createElement("div");
+    vp.className = "car-viewport";
+    const track = document.createElement("div");
+    track.className = "car-track";
+    cards.forEach((c) => {
+      const slide = document.createElement("div");
+      slide.className = "car-slide";
+      slide.appendChild(c);
+      track.appendChild(slide);
+    });
+    vp.appendChild(track);
+    const prev = document.createElement("button");
+    prev.className = "car-nav prev";
+    prev.type = "button";
+    prev.setAttribute("aria-label", "Previous example");
+    prev.innerHTML = "&#8249;";
+    const next = document.createElement("button");
+    next.className = "car-nav next";
+    next.type = "button";
+    next.setAttribute("aria-label", "Next example");
+    next.innerHTML = "&#8250;";
+    wrap.append(prev, vp, next);
+
+    const dotsWrap = document.createElement("div");
+    dotsWrap.className = "car-dots";
+    const dots = cards.map((_, i) => {
+      const d = document.createElement("button");
+      d.className = "car-dot";
+      d.type = "button";
+      d.title = (songs[i] && songs[i].title) || "example " + (i + 1);
+      d.setAttribute("aria-label", d.title);
+      d.addEventListener("click", () => go(i));
+      dotsWrap.appendChild(d);
+      return d;
+    });
+
+    let idx = 0;
+    function go(i) {
+      idx = (i + cards.length) % cards.length;
+      track.style.transform = `translateX(-${idx * 100}%)`;
+      dots.forEach((d, j) => d.classList.toggle("on", j === idx));
+      cards.forEach((c, j) => {                 // pause videos that scrolled out of view
+        const v = c.querySelector("video");
+        if (v && j !== idx) v.pause();
+      });
+    }
+    prev.addEventListener("click", () => go(idx - 1));
+    next.addEventListener("click", () => go(idx + 1));
+    host.appendChild(wrap);
+    host.appendChild(dotsWrap);
+    go(0);
+  }
+
   async function main() {
     await fixEditorLinks();
     const host = document.getElementById("songs");
@@ -154,10 +210,12 @@
     try { songs = await getJSON(DATA + "songs.json"); }
     catch (e) { host.innerHTML = `<p class="loading">Could not load demo data.</p>`; return; }
     host.innerHTML = "";
+    const cards = [];
     for (const s of songs) {
-      try { host.appendChild(await renderSong(s)); }
+      try { cards.push(await renderSong(s)); }
       catch (e) { console.warn("song " + s.id, e); }
     }
+    if (cards.length) buildCarousel(host, cards, songs);
   }
   document.addEventListener("DOMContentLoaded", main);
 })();
