@@ -52,6 +52,12 @@ mkdir -p "$A/server/data"
 for pid in $(ss -ltnp 2>/dev/null | grep ":$PORT " | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u); do
   echo "stopping process on :$PORT (pid $pid)"; kill "$pid" 2>/dev/null || true
 done
+# Warm Blender daemons (server/warm_render.py) are started by the editor's prewarm and persist across
+# restarts as detached processes. Kill any from a previous editor + clear the pool dir so the new
+# editor's prewarm brings the pool back up with the CURRENT blender_daemon.py (a surviving pool would
+# keep running stale code and double-process requests).
+pkill -9 -f "scripts/blender_daemon.py" 2>/dev/null || true
+rm -rf "$WS/blend_daemon" 2>/dev/null || true
 sleep 2
 
 cd "$A" || { echo "FATAL: $A missing"; exit 1; }
@@ -74,6 +80,14 @@ sleep 6
 if ss -ltn | grep -q ":$PORT "; then
   echo "MAESTRO_EDITOR_UP on :$PORT"
   echo "auth: $([ -n "$MAESTRO_AUTH_USER" ] && echo enabled || echo OPEN)"
+  # Warm Blender render pool (fast before/after compare): the editor's prewarm builds the cached
+  # scene + starts the daemons; report whether its prerequisites are present so cold-only renders
+  # are not a surprise.
+  if [ -x "$WS/blender/blender" ] && [ -f "$WS/EDGE/SMPL-to-FBX/ybot.fbx" ]; then
+    echo "warm render: enabled (blender + ybot.fbx present; pool warms on startup)"
+  else
+    echo "warm render: DISABLED (need $WS/blender/blender + $WS/EDGE/SMPL-to-FBX/ybot.fbx) -> compare uses cold render"
+  fi
   tail -n 3 "$LOG" 2>/dev/null || true
 else
   echo "FATAL: editor failed to start; log:"; tail -n 25 "$LOG" 2>/dev/null; exit 1
