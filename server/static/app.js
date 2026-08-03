@@ -7,12 +7,17 @@ const api = async (url, opts) => {
 };
 let ST = { sid: null, fps: 30, dur: 0, nframes: 0, beats: 0, head: null, sel: null };
 
-const METRIC_LABELS = { energy: "energy", bas: "beat align (BAS)", jerk: "smoothness (jerk)", foot: "foot contact" };
-const HIGHER_BETTER = { energy: null, bas: true, jerk: false, foot: true }; // null = neutral
+const METRIC_LABELS = { energy: "energy", bas: "beat align (BAS)", jerk: "smoothness", foot: "foot contact" };
+const HIGHER_BETTER = { energy: null, bas: true, jerk: false, foot: true }; // null = neutral (raw metrics)
+// Display transform: jerk (lower = better) is presented as SMOOTHNESS (higher = better) so the
+// before/after values, the change sign, the arrow and the colour all agree (a smoother edit reads as
+// an increase). 1/(1+jerk) is a bounded 0..1 smoothness score.
+const metricDisp = (k, v) => (k === "jerk" ? 1 / (1 + v) : v);
+const DISP_HIGHER_BETTER = { energy: null, bas: true, jerk: true, foot: true };
 const METRIC_INFO = {
   energy: "How big and lively the movement is. Measured as the average frame-to-frame change in the body pose (root travel + all joint rotations). Higher = more energetic; there is no 'good' value, it just tells you the intensity.",
   bas: "Beat Alignment Score (0-1): how well the dance lands on the music's beats. We find each 'motion beat' (a moment the body decelerates into a pose) and score how close it is to the nearest music beat. Higher = tighter to the beat.",
-  jerk: "Smoothness, shown as jerk = the average 3rd derivative of the pose (how abruptly acceleration changes). Lower = smoother, less jittery motion; higher = sharper, snappier.",
+  jerk: "Smoothness (higher = smoother). Shown as 1/(1+jerk), where jerk is the average 3rd derivative of the pose (how abruptly acceleration changes); less jitter -> higher smoothness.",
   foot: "Foot-plant consistency (0-1): of the frames a foot is marked on the floor, the fraction where the body is NOT sliding. Higher = less foot-skating (feet stay planted).",
 };
 
@@ -347,10 +352,10 @@ function metricDeltaStr(before, after) {
   const parts = [];
   for (const k of keys) {
     if (before[k] === undefined || after[k] === undefined) continue;
-    const d = after[k] - before[k];
-    if (Math.abs(d) < 1e-3) continue;
+    const bv = metricDisp(k, before[k]), av = metricDisp(k, after[k]);
+    if (Math.abs(av - bv) < 1e-3) continue;
     const lbl = { energy: "energy", bas: "beat", jerk: "smooth.", foot: "foot" }[k];
-    parts.push(`${lbl} ${before[k].toFixed(2)}\u2192${after[k].toFixed(2)}`);
+    parts.push(`${lbl} ${bv.toFixed(2)}\u2192${av.toFixed(2)}`);
   }
   return parts.join("  ");
 }
@@ -448,21 +453,22 @@ function metricHeader() {
 }
 function metricRow(k, before, after) {
   const tr = document.createElement("tr");
-  const d = Math.round((after - before) * 1000) / 1000;    // match the 3-decimal display exactly
-  const better = HIGHER_BETTER[k];
+  const bef = metricDisp(k, before), aft = metricDisp(k, after);
+  const d = Math.round((aft - bef) * 1000) / 1000;         // on the DISPLAYED value (smoothness for jerk)
+  const better = DISP_HIGHER_BETTER[k];
   let cls = "", arrow = "";
   if (d !== 0) {
     if (better === null) {
       arrow = d > 0 ? " \u25b2" : " \u25bc";               // neutral metric (energy): raw direction, no colour
     } else {
-      const improved = (d > 0) === better;                 // e.g. jerk: lower is better
+      const improved = (d > 0) === better;                 // higher-is-better after the display transform
       cls = improved ? "up" : "down";
-      arrow = improved ? " \u25b2" : " \u25bc";             // arrow marks better/worse, matching the colour
+      arrow = improved ? " \u25b2" : " \u25bc";             // arrow, sign and colour now all agree
     }
   }
   tr.innerHTML = labelCell(k)
-    + `<td class="num">${before.toFixed(3)}</td>`
-    + `<td class="num">${after.toFixed(3)}</td>`
+    + `<td class="num">${bef.toFixed(3)}</td>`
+    + `<td class="num">${aft.toFixed(3)}</td>`
     + `<td class="num delta ${cls}">${d >= 0 ? "+" : ""}${d.toFixed(3)}${arrow}</td>`;
   return tr;
 }
@@ -479,7 +485,7 @@ function showCurrentMetrics(m) {
   t.appendChild(hr);
   ["energy", "bas", "jerk", "foot"].forEach((k) => { if (m[k] === undefined) return;
     const tr = document.createElement("tr");
-    tr.innerHTML = labelCell(k) + `<td></td><td class="num">${m[k].toFixed(3)}</td><td></td>`;
+    tr.innerHTML = labelCell(k) + `<td></td><td class="num">${metricDisp(k, m[k]).toFixed(3)}</td><td></td>`;
     t.appendChild(tr); });
 }
 
