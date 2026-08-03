@@ -74,7 +74,8 @@ h1, h2, h3, .title, .subtitle { color: var(--ink) !important; font-family: "Goog
 }
 .btn:hover { transform: translateY(-1px); border-color: var(--brand); }
 .btn.primary { background: linear-gradient(120deg, var(--brand), var(--brand-2)); border-color: transparent; color: #fff; }
-.btn .ic { font-size: 1.05em; }
+.btn .ic { display: inline-flex; align-items: center; }
+.btn .ic svg { width: 1.15em; height: 1.15em; display: block; }
 
 /* ---------------- cards / abstract ---------------- */
 .prose { color: var(--ink-soft); font-size: 1.06rem; line-height: 1.75; }
@@ -87,6 +88,7 @@ h1, h2, h3, .title, .subtitle { color: var(--ink) !important; font-family: "Goog
 .figure { text-align: center; }
 .figure img { max-width: 100%; border-radius: 12px; border: 1px solid var(--line); background:#fff; }
 .figure figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 0.6rem; }
+.figure.diagram { width: min(1120px, 95vw); margin-left: 50%; transform: translateX(-50%); }
 
 /* ---------------- method stages ---------------- */
 .stages { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.4rem; }

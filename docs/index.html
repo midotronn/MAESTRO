@@ -26,9 +26,9 @@
       <p class="hero-tag">A training-free, agent-driven system that turns a song into a structured, well-composed dance, then lets you refine any moment of it with plain-English instructions.</p>
       <p class="authors" id="authors"></p>
       <div class="btns">
-        <a class="btn primary" href="/" id="editorBtn"><span class="ic">&#9654;</span> Launch live editor</a>
-        <a class="btn" href="https://github.com/midotronn/MAESTRO" target="_blank" rel="noopener"><span class="ic">&#9733;</span> Code</a>
-        <a class="btn" href="#citation"><span class="ic">&#128196;</span> Paper (soon)</a>
+        <a class="btn primary" href="/" id="editorBtn"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></svg></span> Launch live editor</a>
+        <a class="btn" href="https://github.com/midotronn/MAESTRO" target="_blank" rel="noopener"><span class="ic"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg></span> Code</a>
+        <a class="btn" href="#citation"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg></span> Paper (soon)</a>
       </div>
     </div>
   </header>
@@ -63,7 +63,7 @@
         planner-executor editing agent revises any part of it on request.</p>
 
       <h3 class="sub-h">1. Composition: the storyboard agent</h3>
-      <figure class="figure card-m">
+      <figure class="figure card-m diagram">
         <img src="static/images/framework.svg" alt="MAESTRO composition pipeline" />
         <figcaption>An LLM storyboard agent reads the musical structure and composes a per-section plan,
           which a structure-aware assembler realizes from LODGE, EDGE, and reused motifs.</figcaption>
@@ -90,7 +90,7 @@
       </div>
 
       <h3 class="sub-h" style="margin-top:2.2rem">2. Editing: a planner-executor loop</h3>
-      <figure class="figure card-m">
+      <figure class="figure card-m diagram">
         <img src="static/images/editing_loop.svg" alt="MAESTRO natural-language editing agent" />
         <figcaption>Select a window and describe the change: an LLM planner declares the goals and plans tool
           steps, an executor applies them while rejecting regressions, and a verifier checks every requested
@@ -124,7 +124,7 @@
             <b>before and after</b> side by side.
           </p>
           <div class="btns" style="justify-content:flex-start;margin-top:1rem">
-            <a class="btn primary" href="/"><span class="ic">&#9654;</span> Launch live editor</a>
+            <a class="btn primary" href="/"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></svg></span> Launch live editor</a>
           </div>
         </div>
       </div>
