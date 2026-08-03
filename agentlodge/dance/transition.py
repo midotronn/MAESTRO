@@ -554,11 +554,29 @@ def _kin_lowpass(kin: np.ndarray, win: int) -> np.ndarray:
     return out.astype(np.float32)
 
 
-def temporal_smooth(motion139: np.ndarray, amount: float = 0.5) -> np.ndarray:
-    """Reduce jerk by low-pass filtering the motion over time (``amount`` in [0,1] -> kernel width).
+def _aa_to_quat(aa: np.ndarray) -> np.ndarray:
+    """Axis-angle (..., 3) -> unit quaternion (..., 4) [w, x, y, z]. Numpy only."""
+    ang = np.linalg.norm(aa, axis=-1, keepdims=True)
+    safe = np.where(ang < 1e-8, 1.0, ang)
+    axis = aa / safe
+    return np.concatenate([np.cos(0.5 * ang), axis * np.sin(0.5 * ang)], axis=-1)
 
-    Smooths translation + joint-rotation channels with a centered moving average (rotations are
-    re-orthonormalized), leaving contacts. Deterministic; lowers the jerk metric without regenerating.
+
+def _quat_to_aa(q: np.ndarray) -> np.ndarray:
+    """Unit quaternion (..., 4) [w, x, y, z] -> axis-angle (..., 3). Numpy only."""
+    q = q / np.clip(np.linalg.norm(q, axis=-1, keepdims=True), 1e-12, None)
+    w = np.clip(q[..., 0:1], -1.0, 1.0)
+    s = np.sqrt(np.maximum(1e-12, 1.0 - w * w))
+    return q[..., 1:] / s * (2.0 * np.arccos(w))
+
+
+def temporal_smooth(motion139: np.ndarray, amount: float = 0.5) -> np.ndarray:
+    """Reduce jerk by low-passing the motion over time (``amount`` in [0,1] -> kernel width).
+
+    Translation is low-passed directly (Euclidean). Joint rotations are smoothed GEODESICALLY -- as
+    sign-aligned unit quaternions, moving-averaged then renormalized -- rather than by averaging the
+    raw 6D components, which is not a valid operation on SO(3) and can flip after re-orthonormalizing,
+    injecting the very pops we are trying to remove. Contacts are left untouched.
     """
     m = motion139.astype(np.float32)
     n = m.shape[0]
@@ -567,9 +585,15 @@ def temporal_smooth(motion139: np.ndarray, amount: float = 0.5) -> np.ndarray:
         return m.copy()
     win = int(round(1 + amount * (FPS // 3)))                # up to ~1/3 s window at amount=1
     out = m.copy()
-    out[:, :_CONTACT.start] = _kin_lowpass(m[:, :_CONTACT.start], win)
-    r6 = out[:, _ROT].reshape(n, NUM_JOINTS, 6)
-    out[:, _ROT] = _matrix_to_sixd(_sixd_to_matrix(r6)).reshape(n, NUM_JOINTS * 6)
+    out[:, _TRANS] = _kin_lowpass(m[:, _TRANS], win)
+    r6 = m[:, _ROT].reshape(n, NUM_JOINTS, 6)
+    q = _aa_to_quat(_matrix_to_axis_angle(_sixd_to_matrix(r6))).astype(np.float64)  # (n, 22, 4)
+    d = np.sum(q[1:] * q[:-1], axis=-1)                      # align hemispheres along time
+    q[1:] *= np.cumprod(np.where(d < 0.0, -1.0, 1.0), axis=0)[..., None]
+    qs = _kin_lowpass(q.reshape(n, NUM_JOINTS * 4), win).reshape(n, NUM_JOINTS, 4)
+    qs = qs / np.clip(np.linalg.norm(qs, axis=-1, keepdims=True), 1e-12, None)
+    R = _axis_angle_to_matrix(_quat_to_aa(qs))
+    out[:, _ROT] = _matrix_to_sixd(R).reshape(n, NUM_JOINTS * 6)
     return out
 
 
@@ -644,7 +668,19 @@ def _beat_align_warp_once(m: np.ndarray, mb: np.ndarray, strength: float,
         return m.copy()
 
     out_grid = np.arange(n, dtype=np.float64)
-    in_times = np.interp(out_grid, np.asarray(anchors_out), np.asarray(anchors_in))
+    ao = np.asarray(anchors_out, dtype=np.float64)
+    ai = np.asarray(anchors_in, dtype=np.float64)
+    # Monotone CUBIC (PCHIP) time map instead of piecewise-linear. Piecewise-linear has a
+    # discontinuous slope at every anchor: the playback speed (hence the motion velocity) jumps at
+    # each beat, a visible hitch exactly on the accented frames. PCHIP is C1 and monotonicity-
+    # preserving, so the accents still land on the beats but the reparameterization has continuous
+    # velocity (no hitch). Falls back to linear if scipy is unavailable.
+    try:
+        from scipy.interpolate import PchipInterpolator
+        in_times = PchipInterpolator(ao, ai)(out_grid)
+    except Exception:  # noqa: BLE001 - keep working without scipy
+        in_times = np.interp(out_grid, ao, ai)
+    in_times = np.clip(in_times, 0.0, n - 1)
     return _resample_by_time(m, in_times)
 
 

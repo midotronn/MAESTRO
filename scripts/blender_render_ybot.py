@@ -351,6 +351,11 @@ def render_take(args, color):
     # grounding into a single location set (2 depsgraph updates/frame instead of 3). The horizontal
     # shift does not change z, so the grounded result is identical to the full-scan path.
     ground_meshes = foot_meshes(arm, robot_meshes, poses, L, n_body, apply_pose) if fast else robot_meshes
+    # Rate-limit the floor offset so per-frame foot-height jitter (the lowest vertex hopping between
+    # feet/segments) does not bob the WHOLE body up and down. Real height changes are gradual and
+    # still track; only single-frame pops are clamped. Tunable via YBOT_GROUND_MAX_DZ (metres/frame).
+    ground_max_dz = float(os.environ.get("YBOT_GROUND_MAX_DZ", "0.02"))
+    prev_gz = None
     for i in range(0, L, stride):
         pose_frame(i)
         # Centre the dancer horizontally on the pelvis...
@@ -362,16 +367,21 @@ def render_take(args, color):
         depsgraph = bpy.context.evaluated_depsgraph_get()
         mz = lowest_mesh_z(depsgraph, ground_meshes)
         if fast:
-            arm.location = (-pelvis.x, -pelvis.y, 0.0 if mz == float("inf") else -mz)
+            raw_gz = 0.0 if mz == float("inf") else -mz
+            gz = raw_gz if prev_gz is None else min(prev_gz + ground_max_dz, max(prev_gz - ground_max_dz, raw_gz))
+            prev_gz = gz
+            arm.location = (-pelvis.x, -pelvis.y, gz)
             bpy.context.view_layer.update()
         else:
             arm.location = (-pelvis.x, -pelvis.y, 0.0)
             bpy.context.view_layer.update()
             depsgraph = bpy.context.evaluated_depsgraph_get()
             mz = lowest_mesh_z(depsgraph, robot_meshes)
-            if mz != float("inf"):
-                arm.location = (arm.location.x, arm.location.y, -mz)
-                bpy.context.view_layer.update()
+            raw_gz = 0.0 if mz == float("inf") else -mz
+            gz = raw_gz if prev_gz is None else min(prev_gz + ground_max_dz, max(prev_gz - ground_max_dz, raw_gz))
+            prev_gz = gz
+            arm.location = (arm.location.x, arm.location.y, gz)
+            bpy.context.view_layer.update()
         scene.render.filepath = f"{frames_dir}/frame_{i:05d}.png"
         bpy.ops.render.render(write_still=True)
     print(f"BLENDER_RENDERED {L} frames -> {frames_dir}")

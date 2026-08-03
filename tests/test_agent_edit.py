@@ -23,13 +23,14 @@ def _beats(n: int = 300, step: int = 15) -> np.ndarray:
 
 # --------------------------------------------------------------------------- planning (offline)
 def test_keyword_plan_maps_intents_to_tools():
+    # timing + smoothness + exact transforms are deterministic; intensity + snap regenerate
     assert AE.plan_edit("make this much more on beat", {}, 3, 7).steps[0].tool == "beat_align"
-    assert AE.plan_edit("calm it down a lot", {}, 3, 7).steps[0].tool == "energy"
-    assert AE.plan_edit("make it much more energetic", {}, 3, 7).steps[0].tool == "energy"
     assert AE.plan_edit("smoother and flowing", {}, 3, 7).steps[0].tool == "smooth"
-    assert AE.plan_edit("snappier staccato hits", {}, 3, 7).steps[0].tool == "sharpen"
     assert AE.plan_edit("reverse this part", {}, 3, 7).steps[0].tool == "reverse"
     assert AE.plan_edit("mirror it", {}, 3, 7).steps[0].tool == "mirror"
+    assert AE.plan_edit("calm it down a lot", {}, 3, 7).steps[0].tool == "regenerate"
+    assert AE.plan_edit("make it much more energetic", {}, 3, 7).steps[0].tool == "regenerate"
+    assert AE.plan_edit("snappier staccato hits", {}, 3, 7).steps[0].tool == "regenerate"
 
 
 def test_plan_carries_expected_metric():
@@ -53,9 +54,9 @@ def test_on_beat_edit_logs_and_raises_bas():
 
 def test_calmer_edit_lowers_energy():
     m = _base(300, energy=0.9)
-    r = AE.run_agent_edit(m, 90, 210, "make this a lot calmer", beats=_beats())
+    r = AE.run_agent_edit(m, 90, 210, "make this a lot calmer", MockWindowGenerator(), beats=_beats())
+    assert r.log[0]["tool"] == "regenerate"                       # intensity is generative now
     assert r.metrics_after["energy"] < r.metrics_before["energy"]
-    assert r.log[0]["tool"] == "energy"
 
 
 def test_smoother_edit_lowers_jerk():
@@ -65,24 +66,24 @@ def test_smoother_edit_lowers_jerk():
 
 
 def test_composed_plan_runs_all_steps(monkeypatch):
-    # simulate the LLM composing two tools: calm it down AND tighten to the beat
+    # simulate the LLM composing two deterministic tools: smooth it AND tighten to the beat
     plan = AE.AgentPlan(
-        summary="calm it down and lock it to the beat",
-        steps=[AE.PlanStep("energy", {"direction": "down", "amount": 0.6}, "less intensity"),
+        summary="smooth it and lock it to the beat",
+        steps=[AE.PlanStep("smooth", {"amount": 0.6}, "less jitter"),
                AE.PlanStep("beat_align", {"strength": 1.0}, "tighten timing")],
-        expect_metric="bas", expect_dir="up")
+        expect_metric="bas", expect_dir="up", goals=[("bas", "up", "beat alignment")])
     monkeypatch.setattr(AE, "plan_edit", lambda *a, **k: plan)
     m = _base(300, energy=0.9)
-    r = AE.run_agent_edit(m, 90, 210, "calmer but keep it on beat", beats=_beats())
+    r = AE.run_agent_edit(m, 90, 210, "zhoozh this", beats=_beats())    # no keyword adds goals
     tools = [e["tool"] for e in r.log if e.get("cycle") == 1]     # first attempt runs both, in order
-    assert tools == ["energy", "beat_align"]
-    # step 1 (energy) lowers intensity in its own log entry
+    assert tools == ["smooth", "beat_align"]
+    # step 1 (smooth) lowers jerk in its own log entry
     e1 = r.log[0]
-    assert e1["metrics_after"]["energy"] < e1["metrics_before"]["energy"]
-    # step 2 (beat_align) raises BAS relative to its input (the calmed motion)
+    assert e1["metrics_after"]["jerk"] < e1["metrics_before"]["jerk"]
+    # step 2 (beat_align) raises BAS relative to its input (the smoothed motion)
     e2 = r.log[1]
     assert e2["metrics_after"]["bas"] > e2["metrics_before"]["bas"]
-    assert r.agent_summary == "calm it down and lock it to the beat"
+    assert r.agent_summary == "smooth it and lock it to the beat"
 
 
 def test_regenerate_tool_uses_generator():
@@ -137,27 +138,27 @@ def test_regenerate_without_generator_degrades_gracefully():
 
 # --------------------------------------------------------------------------- refine loop
 def test_refine_escalates_when_first_attempt_misses(monkeypatch):
-    # attempt 1 is a no-op (energy amount 0 -> no change -> verify fails); the refine feedback then
-    # yields a stronger plan that actually lowers energy. Best (2nd) attempt is kept.
+    # attempt 1 is a no-op (smooth amount 0 -> no change -> verify fails); the refine feedback then
+    # yields a stronger plan that actually lowers jerk. Best (2nd) attempt is kept.
     def fake_plan(instruction, metrics, a_sec, b_sec, *, api_key=None, feedback=None, goals=None):
         if feedback is None:
-            return AE.AgentPlan("weak", [AE.PlanStep("energy", {"direction": "down", "amount": 0.0}, "x")],
-                                expect_metric="energy", expect_dir="down")
-        return AE.AgentPlan("stronger", [AE.PlanStep("energy", {"direction": "down", "amount": 0.9}, "harder")],
-                            expect_metric="energy", expect_dir="down")
+            return AE.AgentPlan("weak", [AE.PlanStep("smooth", {"amount": 0.0}, "x")],
+                                expect_metric="jerk", expect_dir="down", goals=[("jerk", "down", "smoothness")])
+        return AE.AgentPlan("stronger", [AE.PlanStep("smooth", {"amount": 0.9}, "harder")],
+                            expect_metric="jerk", expect_dir="down", goals=[("jerk", "down", "smoothness")])
     monkeypatch.setattr(AE, "plan_edit", fake_plan)
     m = _base(300, energy=0.9)
-    r = AE.run_agent_edit(m, 90, 210, "make it much calmer", beats=_beats(), max_refine=2)
+    r = AE.run_agent_edit(m, 90, 210, "make it much smoother", beats=_beats(), max_refine=2)
     assert r.ok                                          # the refined attempt satisfies the goal
-    assert r.metrics_after["energy"] < r.metrics_before["energy"]
+    assert r.metrics_after["jerk"] < r.metrics_before["jerk"]
     cycles = {e["cycle"] for e in r.log}
     assert cycles == {1, 2}                              # it took a refine cycle
     assert "refined 1x" in r.feedback
 
 
 def test_keyword_refine_escalates_amount():
-    p0 = AE.plan_edit("make it calmer", {}, 3, 7)                      # first attempt
-    p1 = AE.plan_edit("make it calmer", {}, 3, 7, feedback={"cycle": 1})  # refine
+    p0 = AE.plan_edit("make it smoother", {}, 3, 7)                      # first attempt
+    p1 = AE.plan_edit("make it smoother", {}, 3, 7, feedback={"cycle": 1})  # refine
     assert p1.steps[0].params["amount"] > p0.steps[0].params["amount"]
 
 
@@ -225,13 +226,14 @@ def test_trace_carries_plan_executor_and_verify():
 
 
 def test_prefer_ranks_all_goals_met_over_higher_reward():
-    # (1) meets-all-goals beats not-ok regardless of reward; (2) no-regression beats a regressing
-    # attempt even with higher reward; (3) ties broken by reward.
-    assert AE._prefer(True, True, 51.6, False, True, 67.6)         # ok beats not-ok
-    assert not AE._prefer(False, True, 67.6, True, True, 51.6)
-    assert AE._prefer(False, True, 5.0, False, False, 99.0)        # no-regression beats big-but-regressing
-    assert not AE._prefer(False, False, 99.0, False, True, 5.0)
-    assert AE._prefer(True, True, 60.0, True, True, 51.6)          # ties on (ok, no_reg) -> higher reward
+    # ranking tiers, most important first: (1) meets all goals, (2) artifact-guard clean (no
+    # jitter/foot-skate), (3) no declared goal regressed, (4) higher reward.
+    assert AE._prefer(True, True, True, 51.6, False, True, True, 67.6)      # ok beats not-ok
+    assert not AE._prefer(False, True, True, 67.6, True, True, True, 51.6)
+    assert AE._prefer(True, True, True, 5.0, True, False, True, 99.0)       # clean beats guard-violating
+    assert AE._prefer(False, True, True, 5.0, False, True, False, 99.0)     # no-regression beats regressing
+    assert not AE._prefer(False, True, False, 99.0, False, True, True, 5.0)
+    assert AE._prefer(True, True, True, 60.0, True, True, True, 51.6)       # ties -> higher reward
 
 
 def test_merge_goals_planner_wins_keyword_fills_gaps():
@@ -278,11 +280,11 @@ def test_smoothness_polish_skipped_when_sharper_requested():
 def test_planner_declared_goals_drive_verification(monkeypatch):
     # goals come from the planning agent's reasoning, NOT a keyword match on the instruction
     plan = AE.AgentPlan("boost intensity",
-                        [AE.PlanStep("energy", {"direction": "up", "amount": 0.7}, "livelier")],
+                        [AE.PlanStep("regenerate", {"backbone": "edge", "energy": 0.9}, "livelier")],
                         expect_metric="energy", expect_dir="up", goals=[("energy", "up", "energy")])
     monkeypatch.setattr(AE, "plan_edit", lambda *a, **k: plan)
     m = _base(300, energy=0.3)
-    r = AE.run_agent_edit(m, 90, 210, "zhoozh this bit up", beats=_beats())   # no keyword would match
+    r = AE.run_agent_edit(m, 90, 210, "zhoozh this bit up", MockWindowGenerator(), beats=_beats())
     assert any(g["metric"] == "energy" and g["dir"] == "up" for g in r.trace["goals"])
     assert r.metrics_after["energy"] > r.metrics_before["energy"]
 

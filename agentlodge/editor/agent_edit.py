@@ -130,14 +130,8 @@ TOOLS: dict[str, ToolSpec] = {
     "beat_align": ToolSpec(_tool_beat_align,
         "time-warp so the motion accents land on the music beats; raises beat alignment (BAS)",
         'params: {"strength": 0..1, "passes": 1..8 (more = tighter)}'),
-    "energy": ToolSpec(_tool_energy,
-        "scale movement size; up = bigger/livelier/more energetic, down = calmer/smaller",
-        'params: {"direction": "up"|"down", "amount": 0..1}'),
     "smooth": ToolSpec(_tool_smooth,
         "low-pass the motion for flowing/graceful movement; lowers jerk",
-        'params: {"amount": 0..1}'),
-    "sharpen": ToolSpec(_tool_sharpen,
-        "accentuate hits for crisp/snappy/staccato/percussive movement; raises jerk",
         'params: {"amount": 0..1}'),
     "mirror": ToolSpec(_tool_mirror, "flip the window left<->right", "params: {}"),
     "reverse": ToolSpec(_tool_reverse, "play the window backward (retrograde)", "params: {}"),
@@ -160,12 +154,8 @@ def _tool_target(tool: str, params: dict | None) -> tuple[str, str] | None:
     params = params or {}
     if tool == "beat_align":
         return ("bas", "up")
-    if tool == "energy":
-        return ("energy", "down" if str(params.get("direction", "up")).lower() == "down" else "up")
     if tool == "smooth":
         return ("jerk", "down")
-    if tool == "sharpen":
-        return ("jerk", "up")
     return None
 
 
@@ -260,14 +250,44 @@ def _reward_goals(goals, before: dict, after: dict) -> float:
     return r
 
 
-def _prefer(ok_a: bool, no_reg_a: bool, reward_a: float,
-            ok_b: bool, no_reg_b: bool, reward_b: float) -> bool:
+def _prefer(ok_a: bool, guard_a: bool, no_reg_a: bool, reward_a: float,
+            ok_b: bool, guard_b: bool, no_reg_b: bool, reward_b: float) -> bool:
     """True if attempt A should replace the current best B. Ranking, most important first:
-    (1) meets EVERY goal, (2) regresses NO declared goal (holding is fine), (3) higher summed reward.
-    So a balanced attempt that satisfies all goals beats a big single-metric gain that regressed
-    another goal, and -- crucially -- an edit that regresses a goal never beats simply keeping the
-    original (which regresses nothing). The user asked for X up; we never ship X down."""
-    return (int(ok_a), int(no_reg_a), reward_a) > (int(ok_b), int(no_reg_b), reward_b)
+    (1) meets EVERY declared goal, (2) introduces NO artifact (jerk/foot guard stays clean),
+    (3) regresses NO declared goal, (4) higher summed reward. So among goal-meeting attempts we
+    prefer the one that does not jitter or foot-skate, and an edit that misses the goals AND jitters
+    never beats simply keeping the original (which regresses nothing)."""
+    return ((int(ok_a), int(guard_a), int(no_reg_a), reward_a)
+            > (int(ok_b), int(guard_b), int(no_reg_b), reward_b))
+
+
+# Implicit quality guards: smoothness (jerk) and foot-contact must never be made WORSE by an edit,
+# even when the user did not mention them -- this is what stops a beat/energy edit from shipping a
+# jittery or foot-skating window. A guard is skipped for a metric the user explicitly asked to move
+# (e.g. "sharper" = jerk up), which is then a goal, not a guard.
+_ARTIFACT_GUARDS: list[tuple[str, str, str]] = [("jerk", "down", "smoothness"), ("foot", "up", "foot contact")]
+
+
+def _active_guards(goals) -> list[tuple[str, str, str]]:
+    requested = {m for m, _d, _l in goals}
+    return [(m, d, l) for (m, d, l) in _ARTIFACT_GUARDS if m not in requested]
+
+
+def _guard_report(before: dict, after: dict, goals) -> tuple[bool, float, list]:
+    """(clean, penalty, checks) for the artifact guards. ``clean`` is False if the edit regressed
+    smoothness or foot-contact; ``penalty`` is the summed regression (in tolerance units) to subtract
+    from the attempt's reward; ``checks`` are UI rows flagged ``guard=True``."""
+    clean, penalty, checks = True, 0.0, []
+    for metric, good_dir, label in _active_guards(goals):
+        b, a = float(before.get(metric, 0.0)), float(after.get(metric, 0.0))
+        status = _classify(metric, b, a, good_dir)
+        if status == "regressed":
+            clean = False
+            penalty += abs(a - b) / (_tol(metric, b) or 1.0)
+        checks.append({"metric": metric, "label": label, "dir": good_dir,
+                       "before": round(b, 4), "after": round(a, 4), "status": status,
+                       "met": status != "regressed", "guard": True})
+    return clean, penalty, checks
 
 
 def _merge_goals(primary: list, secondary: list) -> list:
@@ -337,22 +357,24 @@ class AgentPlan:
 # objective (keyword parser) -> a single-tool plan, used as the offline fallback.
 _OBJ_PLAN = {
     "more_on_beat": ("beat_align", {"strength": 1.0}, "bas", "up", "tighten timing onto the beats"),
-    "calmer":       ("energy", {"direction": "down"}, "energy", "down", "reduce intensity"),
-    "more_energetic": ("energy", {"direction": "up"}, "energy", "up", "boost intensity"),
+    "calmer":       ("regenerate", {"backbone": "lodge", "energy": 0.2}, "energy", "down", "regenerate a calmer version"),
+    "more_energetic": ("regenerate", {"backbone": "edge", "energy": 0.85}, "energy", "up", "regenerate a more energetic version"),
     "smoother":     ("smooth", {}, "jerk", "down", "smooth out the motion"),
-    "sharper":      ("sharpen", {}, "jerk", "up", "make the hits crisper"),
+    "sharper":      ("regenerate", {"backbone": "edge", "energy": 0.7}, "jerk", "up", "regenerate snappier moves"),
     "reverse":      ("reverse", {}, None, None, "play it backward"),
     "mirror":       ("mirror", {}, None, None, "flip left-right"),
-    "exaggerate":   ("energy", {"direction": "up", "amount": 0.9}, "energy", "up", "make it bigger"),
+    "exaggerate":   ("regenerate", {"backbone": "edge", "energy": 0.9}, "energy", "up", "regenerate a bigger version"),
 }
 
 # (metric, direction) -> the tool that moves it, for composing a plan from the requested metrics.
+# Intensity/snap are generative (regenerate); only timing (beat_align) and smoothness (smooth) are
+# deterministic, constraint-preserving tweaks.
 _METRIC_TOOL = {
     ("bas", "up"): ("beat_align", {"strength": 1.0}),
-    ("energy", "up"): ("energy", {"direction": "up", "amount": 0.6}),
-    ("energy", "down"): ("energy", {"direction": "down", "amount": 0.6}),
+    ("energy", "up"): ("regenerate", {"backbone": "edge", "energy": 0.85}),
+    ("energy", "down"): ("regenerate", {"backbone": "lodge", "energy": 0.2}),
     ("jerk", "down"): ("smooth", {"amount": 0.6}),
-    ("jerk", "up"): ("sharpen", {"amount": 0.6}),
+    ("jerk", "up"): ("regenerate", {"backbone": "edge", "energy": 0.7}),
 }
 
 
@@ -442,34 +464,29 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         '"calmer but keep it tight" -> [{"metric":"energy","direction":"down"},{"metric":"bas","direction":"up"}]; '
         '"snappier staccato hits" -> [{"metric":"jerk","direction":"up"}]; '
         '"reverse this"/"mirror it" -> []. '
-        "Pick tools by meaning, not keywords; you may combine (e.g. energy down + beat_align). "
-        "Choose 'regenerate' for CREATIVE requests -- more energetic / more dynamic / livelier / "
-        "exciting / hyped, more interesting / varied, or explicitly different / new / fresh moves: it "
-        "samples genuinely NEW choreography from the dance backbones instead of just resizing the "
-        "existing moves, so 'make it more energetic' becomes new choreography rather than the same dance "
-        "scaled up (which looks like a sped-up copy). Bias it: for energetic / snappy use backbone "
-        '"edge" with energy ~0.8; for smooth / graceful use "lodge"; else "auto". After regenerate, add '
-        "the finishers that LOCK the goal on the NEW motion: for an energy-up request add an "
-        "energy(up, amount ~0.6) step (the fresh seed alone may not beat the original's energy, and a "
-        "regenerate that fails to improve the goal is discarded, leaving the window unchanged) then "
-        "beat_align; a light smooth ~0.15 is optional. Use the FAST "
-        "deterministic tools ONLY for REDUCTIVE / precise tweaks that must keep the SAME choreography -- "
-        "calmer / mellower (energy down), smoother (jerk down), snappier / staccato (jerk up), or tighter "
-        "timing (beat_align). For a pure transform (reverse/mirror/flip) the plan is JUST that one tool "
-        "and goals MUST be []. "
-        "beat_align LOWERS energy and amplitude scaling can drift the beat, so when both energy-up and "
-        "beat are goals, scale energy generously (amount >=0.7) so it stays up AFTER beat_align. "
-        "Unless the user asked for sharper, you MAY end the plan with a light 'smooth' STEP (amount "
-        "~0.1-0.2) as a finishing touch to shed jitter -- but that is a STEP, not a goal; do NOT put "
-        "jerk in goals for it. If the user asked for sharper, do NOT smooth."
+        "Pick tools by meaning, not keywords. There are only four levers:\n"
+        "1) CONTENT / INTENSITY -> 'regenerate'. Anything that changes WHAT the body does -- more "
+        "energetic / dynamic / livelier, calmer / mellower, snappier / punchier, or different / new / "
+        "more interesting / varied -- MUST regenerate genuinely NEW choreography from the backbones "
+        "(edge = punchy / energetic, lodge = smooth / calm; auto = agent picks), NOT resize or high-pass "
+        "the existing moves (that looks like a sped-up or jittery copy). Bias energy 0.7-0.9 for "
+        "energetic / snappy, 0.1-0.3 for calmer. You MAY add a beat_align finisher (and a light smooth "
+        "amount ~0.15) after it to lock timing and shed seam jitter.\n"
+        "2) TIMING -> 'beat_align' alone (tighter / on the beat / in time), keeping the same moves.\n"
+        "3) SMOOTHNESS -> 'smooth' alone (smoother / flowing / less jitter).\n"
+        "4) EXACT TRANSFORM -> 'mirror' or 'reverse' (flip / play backward); the plan is JUST that one "
+        "tool and goals MUST be []. \n"
+        "There is NO amplitude-scale or sharpen tool: intensity and snap come from regeneration, not "
+        "signal tricks. A light 'smooth' STEP (amount ~0.1-0.2) at the end of a content edit is a STEP, "
+        "not a goal -- do NOT put jerk in goals for it."
     )
     if goals:                                              # refine: remind of the graded constraints
         gl = ", ".join(f"{lbl} must go {d}" for _m, d, lbl in goals)
         prompt += ("\n\nThe user's request REQUIRES: " + gl + ". Every one of these will be checked; "
                    "a plan that lets any of them get WORSE is rejected. If a metric is already high "
-                   "(e.g. beat alignment > 0.9) at minimum do not reduce it. When you include a tool "
-                   "whose side effect could hurt one of these (e.g. scaling energy can drift timing), "
-                   "add the corrective tool too (e.g. beat_align LAST).")
+                   "(e.g. beat alignment > 0.9) at minimum do not reduce it. When a tool's side effect "
+                   "could hurt one of these (e.g. regenerating can shift timing), add the corrective "
+                   "tool too (e.g. beat_align LAST).")
     if feedback:                                            # Self-Refine: revise from what went wrong
         misses = feedback.get("misses") or []
         miss_txt = "; ".join(
@@ -654,7 +671,7 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     # alignment is already tight and any change (plus the edge-blend) would only lower it.
     if goals:
         ok0, checks0, _ = _verify_goals(goals, before, before)
-        best = (0.0, motion, before, ok0, True, checks0, 0, base_clip)   # (reward, spliced, after, ok, no_reg, checks, cycle, win_cur)
+        best = (0.0, motion, before, ok0, True, True, checks0, 0, base_clip)   # (reward, spliced, after, ok, guard_ok, no_reg, checks, cycle, win_cur)
     else:
         best = None                                     # a goalless op (reverse/mirror) always applies
 
@@ -673,19 +690,32 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
             no_reg = not any(c.get("status") == "regressed" for c in checks)
         else:
             ok, checks, verdict, reward, no_reg = True, [], "applied the planned edit", 0.0, True
+        # A generative (regenerate) content edit ships genuinely NEW choreography; accept it when it
+        # REGRESSES no declared goal (best-of-K already keeps the seed that advances the goals most),
+        # so 'more energetic' produces new moves instead of silently leaving the window unchanged when
+        # no single seed strictly beats the original metric.
+        if goals and not ok and no_reg and any(s.tool == "regenerate" for s in plan.steps):
+            ok = True
+        # artifact guardrail: never make the window jittery / foot-skating, even off-goal. A
+        # violation penalises the reward, keeps the loop refining toward a clean solution, and is
+        # dispreferred vs an edit (or the untouched baseline) that stays clean.
+        guard_ok, guard_pen, guard_checks = _guard_report(before, after, goals)
+        reward -= guard_pen
+        ok_full = ok and guard_ok
+        all_checks = checks + guard_checks
         _emit({"phase": "verify", "cycle": cycle + 1, "ok": ok, "feedback": verdict,
-               "checks": checks, "metrics_after": after})
+               "checks": all_checks, "metrics_after": after})
         trace["attempts"].append({
             "n": cycle + 1,
             "plan": {"summary": plan.summary, "planner": plan.planner,
                      "planner_note": plan.planner_note,
                      "steps": [{"tool": s.tool, "params": s.params, "why": s.why} for s in plan.steps]},
             "steps": step_log,
-            "verify": {"ok": ok, "checks": checks, "verdict": verdict},
+            "verify": {"ok": ok, "checks": all_checks, "verdict": verdict},
         })
-        if best is None or _prefer(ok, no_reg, reward, best[3], best[4], best[0]):
-            best = (reward, spliced_try, after, ok, no_reg, checks, cycle + 1, cur)
-        if ok or cycle + 1 >= total_attempts:
+        if best is None or _prefer(ok, guard_ok, no_reg, reward, best[3], best[4], best[5], best[0]):
+            best = (reward, spliced_try, after, ok, guard_ok, no_reg, all_checks, cycle + 1, cur)
+        if ok_full or cycle + 1 >= total_attempts:
             break
         # ---- refine: feed EVERY unmet metric back to the planner ----
         misses = [c for c in checks if not c["met"]]
@@ -697,7 +727,7 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
                "planner": plan.planner, "planner_note": plan.planner_note,
                "steps": [{"tool": s.tool, "why": s.why} for s in plan.steps]})
 
-    reward, spliced, after, ok, no_reg, checks, win_cycle, win_cur = best
+    reward, spliced, after, ok, guard_ok, no_reg, checks, win_cycle, win_cur = best
     n_attempts = len(trace["attempts"])
     kept_original = win_cycle == 0
 
@@ -727,7 +757,8 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
         detail = ", ".join(f"{lbl} {before.get(m, 0.0):.3f}" for m, _d, lbl in goals)
         feedback = f"left unchanged: no edit beat the current {detail} without hurting it" + refined
     else:
-        parts = "  ".join(f"{c['label']} {c['before']:.3f}\u2192{c['after']:.3f}" for c in checks) or "applied"
+        parts = "  ".join(f"{c['label']} {c['before']:.3f}\u2192{c['after']:.3f}"
+                          for c in checks if not c.get("guard")) or "applied"
         feedback = (parts if ok else f"couldn't fully satisfy: {parts}") + refined
     trace["final"] = {"ok": ok, "verdict": feedback, "attempts": n_attempts, "checks": checks,
                       "kept_original": kept_original, "metrics_before": before, "metrics_after": after}
