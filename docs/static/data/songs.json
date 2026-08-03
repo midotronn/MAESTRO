@@ -1,5 +1,13 @@
 [
   {
+    "id": "trs",
+    "title": "Bruno Mars, Treasure",
+    "tagline": "The song loaded in the live editor; the outro recalls the intro, mirrored and in retrograde.",
+    "video": "story_trs_3way.mp4",
+    "metrics": null,
+    "story": "story_trs.json"
+  },
+  {
     "id": "002",
     "title": "FineDance 002",
     "tagline": "Retrograde recap: the opening motif returns to close the piece.",
@@ -38,13 +46,5 @@
     "video": "story_208_3way.mp4",
     "metrics": "metrics_208.json",
     "story": null
-  },
-  {
-    "id": "trs",
-    "title": "Bruno Mars, Treasure",
-    "tagline": "The song loaded in the live editor; the outro recalls the intro, mirrored and in retrograde.",
-    "video": "story_trs_3way.mp4",
-    "metrics": null,
-    "story": "story_trs.json"
   }
 ]
