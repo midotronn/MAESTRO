@@ -142,8 +142,9 @@ TOOLS: dict[str, ToolSpec] = {
     "mirror": ToolSpec(_tool_mirror, "flip the window left<->right", "params: {}"),
     "reverse": ToolSpec(_tool_reverse, "play the window backward (retrograde)", "params: {}"),
     "regenerate": ToolSpec(_tool_regenerate,
-        "resample a fresh dance for THIS window from a diffusion backbone (lodge=smooth, "
-        "edge=sharp); use when the user wants different choreography, not just a tweak",
+        "sample genuinely NEW choreography for THIS window from a dance backbone (edge=sharp/punchy, "
+        "lodge=smooth/flowing); the CREATIVE tool -- use for 'more energetic', 'more dynamic', "
+        "'livelier', 'different/new moves', 'mix it up', not just a metric tweak of the same dance",
         'params: {"backbone": "lodge"|"edge"|"auto", "energy": 0..1}'),
 }
 
@@ -442,10 +443,20 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         '"snappier staccato hits" -> [{"metric":"jerk","direction":"up"}]; '
         '"reverse this"/"mirror it" -> []. '
         "Pick tools by meaning, not keywords; you may combine (e.g. energy down + beat_align). "
-        "Use 'regenerate' ONLY when the user wants genuinely DIFFERENT choreography/moves (it samples a "
-        "slow diffusion backbone); for beat/energy/smoothness/sharpness use the FAST deterministic tools "
-        "(beat_align/energy/smooth/sharpen). For a pure transform (reverse/mirror/flip) the plan is JUST "
-        "that one tool and goals MUST be []. "
+        "Choose 'regenerate' for CREATIVE requests -- more energetic / more dynamic / livelier / "
+        "exciting / hyped, more interesting / varied, or explicitly different / new / fresh moves: it "
+        "samples genuinely NEW choreography from the dance backbones instead of just resizing the "
+        "existing moves, so 'make it more energetic' becomes new choreography rather than the same dance "
+        "scaled up (which looks like a sped-up copy). Bias it: for energetic / snappy use backbone "
+        '"edge" with energy ~0.8; for smooth / graceful use "lodge"; else "auto". After regenerate, add '
+        "the finishers that LOCK the goal on the NEW motion: for an energy-up request add an "
+        "energy(up, amount ~0.6) step (the fresh seed alone may not beat the original's energy, and a "
+        "regenerate that fails to improve the goal is discarded, leaving the window unchanged) then "
+        "beat_align; a light smooth ~0.15 is optional. Use the FAST "
+        "deterministic tools ONLY for REDUCTIVE / precise tweaks that must keep the SAME choreography -- "
+        "calmer / mellower (energy down), smoother (jerk down), snappier / staccato (jerk up), or tighter "
+        "timing (beat_align). For a pure transform (reverse/mirror/flip) the plan is JUST that one tool "
+        "and goals MUST be []. "
         "beat_align LOWERS energy and amplitude scaling can drift the beat, so when both energy-up and "
         "beat are goals, scale energy generously (amount >=0.7) so it stays up AFTER beat_align. "
         "Unless the user asked for sharper, you MAY end the plan with a light 'smooth' STEP (amount "

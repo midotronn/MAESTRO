@@ -225,7 +225,17 @@ class RenderBody(BaseModel):
 # --------------------------------------------------------------------------- routes
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
-    return HTMLResponse((STATIC / "index.html").read_text(encoding="utf-8"))
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    # Cache-bust app.js / style.css by file mtime so a redeploy is picked up on a normal refresh
+    # (the assets are served without Cache-Control, so browsers were pinning the old versions).
+    def _v(name: str) -> str:
+        try:
+            return str(int((STATIC / name).stat().st_mtime))
+        except OSError:
+            return "1"
+    html = html.replace("/static/app.js", f"/static/app.js?v={_v('app.js')}")
+    html = html.replace("/static/style.css", f"/static/style.css?v={_v('style.css')}")
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
 def _display_name(d: Path) -> str:
