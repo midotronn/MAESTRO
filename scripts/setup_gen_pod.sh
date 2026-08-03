@@ -120,7 +120,7 @@ step "python deps"
   torchmetrics accelerate wandb fire
 # pytorch3d (transforms only -> CPU build is fine; no nvcc). Build isolation OFF so it sees torch.
 "$PIP" show pytorch3d >/dev/null 2>&1 || \
-  CUDA_VISIBLE_DEVICES="" FORCE_CUDA=0 "$PIP" install -q --no-build-isolation \
+  CUDA_VISIBLE_DEVICES="" FORCE_CUDA=0 MAX_JOBS="$(nproc)" "$PIP" install -q --no-build-isolation \
     "git+https://github.com/facebookresearch/pytorch3d.git@stable" || \
   echo "  (pytorch3d build skipped/failed -- LODGE/EDGE rotation ops may need it)"
 

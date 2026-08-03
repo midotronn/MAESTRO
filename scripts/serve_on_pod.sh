@@ -76,7 +76,9 @@ export AGENTLODGE_LIVE_CYCLES="${AGENTLODGE_LIVE_CYCLES:-1}"
 
 rm -f "$LOG"
 setsid "$PY" -m uvicorn server.app:app --host 0.0.0.0 --port "$PORT" >"$LOG" 2>&1 &
-sleep 6
+# A cold first start imports torch + the server modules, which can take well over 6s; poll the port
+# for up to 45s instead of a single short sleep (else a slow-but-healthy start looks like a failure).
+for _i in $(seq 1 45); do ss -ltn | grep -q ":$PORT " && break; sleep 1; done
 if ss -ltn | grep -q ":$PORT "; then
   echo "MAESTRO_EDITOR_UP on :$PORT"
   echo "auth: $([ -n "$MAESTRO_AUTH_USER" ] && echo enabled || echo OPEN)"
