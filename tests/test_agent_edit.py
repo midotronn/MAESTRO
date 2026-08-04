@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agentlodge.editor import agent_edit as AE
-from agentlodge.editor.window_edit import MockWindowGenerator
+from agentlodge.editor.window_edit import MockWindowGenerator, window_metrics
 
 
 def _base(n: int = 300, energy: float = 0.6, seed: int = 1) -> np.ndarray:
@@ -162,6 +162,96 @@ def test_compound_new_and_energetic_regenerates_then_raises_energy(monkeypatch):
     # the window actually changed (fresh choreography spliced in), outside is untouched
     assert not np.array_equal(r.motion[90:210], m[90:210])
     assert np.array_equal(r.motion[:90], m[:90]) and np.array_equal(r.motion[210:], m[210:])
+
+
+# ------------------------------------ agent policy: regenerate that dials ANY metric to the original
+@pytest.mark.parametrize("metric, direction, tool", [
+    ("energy", "up", "energy"),
+    ("energy", "down", "energy"),
+    ("bas", "up", "beat_align"),
+    ("jerk", "down", "smooth"),
+    ("jerk", "up", "sharpen"),
+])
+def test_normalize_plan_appends_matching_lever_for_every_metric(metric, direction, tool):
+    # the policy is NOT energy-only: a regenerate carrying ANY metric goal gets that metric's lever
+    # appended in match mode (dial to the original), driven by the _METRIC_TOOL registry.
+    g = [(metric, direction, "lbl")]
+    p = AE.AgentPlan("regen", steps=[AE.PlanStep("regenerate", {}, "new")], goals=list(g))
+    out = AE._normalize_plan(p, g)
+    assert [s.tool for s in out.steps] == ["regenerate", tool]
+    assert out.steps[1].params.get("match") is True          # dial-to-target, not a fixed amount
+
+
+def test_every_metric_tool_has_a_working_match_lever():
+    # completeness: every (metric, direction) the agent can insert via _METRIC_TOOL MUST be handled by
+    # the match lever -- otherwise _normalize_plan would insert a step that can't dial. Catches drift
+    # between the registry and the lever dispatch.
+    m = _smooth(120, seed=4)
+    wb = _beats(120)
+    ctx = {"wbeats": wb, "base_metrics": window_metrics(m, wb)}
+    for (metric, direction), (tool, _params) in AE._METRIC_TOOL.items():
+        _out, note = AE._match_lever(m, ctx, metric, direction)
+        assert "no lever" not in note, f"{metric},{direction} ({tool}) has no match lever: {note}"
+        tool_fn = AE.TOOLS[tool].fn                           # and the tool itself accepts match mode
+        params = {"match": True, **({"direction": direction} if tool == "energy" else {})}
+        out, _n = tool_fn(m, ctx, **params)
+        assert isinstance(out, np.ndarray) and out.shape == m.shape
+
+
+@pytest.mark.parametrize("metric, direction, push", [
+    ("energy", "up", lambda T, m: T.accentuate(m, 0.55)),     # calmer take -> match must raise energy
+    ("energy", "down", lambda T, m: T.accentuate(m, 1.6)),    # louder take -> match must lower energy
+    ("jerk", "down", lambda T, m: T.accentuate(m, 1.8)),      # jerkier take -> match must smooth it
+    ("jerk", "up", lambda T, m: T.temporal_smooth(m, 0.5)),   # over-smoothed take -> match must sharpen
+])
+def test_match_lever_dials_each_metric_toward_the_original(metric, direction, push):
+    from agentlodge.dance import transition as T
+    m = _smooth(150, seed=6)
+    base = window_metrics(m)
+    off = push(T, m)                                          # a fresh take that is off-target on `metric`
+    out, _note = AE._match_lever(off, {"wbeats": None, "base_metrics": base}, metric, direction)
+    v0, v1, tgt = window_metrics(off)[metric], window_metrics(out)[metric], base[metric]
+    # the universal invariant of a monotone match lever: it moves the metric the RIGHT way and gets
+    # strictly closer to the original (reaching it when the lever's range allows).
+    assert (v1 > v0) if direction == "up" else (v1 < v0)      # moved in the goal direction (no no-op / wrong way)
+    assert abs(v1 - tgt) < abs(v0 - tgt)                      # strictly closer to the original value
+
+
+def test_normalize_plan_respects_existing_levers_and_no_op_cases():
+    g = [("energy", "up", "energy")]
+    # planner already added the lever -> respected, not doubled
+    p2 = AE.AgentPlan("x", steps=[AE.PlanStep("regenerate", {}, ""), AE.PlanStep("energy", {"direction": "up"}, "")], goals=list(g))
+    assert [s.tool for s in AE._normalize_plan(p2, g).steps] == ["regenerate", "energy"]
+    # no metric goal, or no regenerate -> unchanged
+    assert [s.tool for s in AE._normalize_plan(AE.AgentPlan("x", steps=[AE.PlanStep("regenerate", {}, "")], goals=[]), []).steps] == ["regenerate"]
+    p4 = AE.AgentPlan("x", steps=[AE.PlanStep("energy", {"direction": "up"}, "")], goals=list(g))
+    assert [s.tool for s in AE._normalize_plan(p4, g).steps] == ["energy"]
+
+
+def test_new_motion_maintaining_energy_regenerates_and_matches_not_kept_original(monkeypatch):
+    # THE reported bug: "new motion that maintains the current energy" regenerated takes that only
+    # HELD energy, so the loop kept the original. Now the agent composes regenerate -> match-energy and
+    # ships a genuinely new motion dialed up to at least the original level.
+    from agentlodge.dance import transition as T
+    m = _smooth(300, seed=1)
+    base_win = m[90:210].copy()
+
+    class HeldEnergyGen:                                      # fresh takes hold energy but differ (mirror)
+        def generate(self, bb, a, b, s, energy=0.5, beats=None, context=None):
+            return T.mirror(base_win)
+
+    plan = AE.AgentPlan("regenerate to match/exceed current energy",
+                        steps=[AE.PlanStep("regenerate", {"backbone": "edge"}, "new motion")],
+                        goals=[("energy", "up", "energy")])
+    monkeypatch.setattr(AE, "plan_edit", lambda *a, **k: AE.AgentPlan(
+        plan.summary, [AE.PlanStep(s.tool, dict(s.params), s.why) for s in plan.steps], goals=list(plan.goals)))
+    r = AE.run_agent_edit(m, 90, 210, "give me a new motion that maintains the current energy level",
+                          generator=HeldEnergyGen(), beats=_beats(), max_refine=1)
+    assert not r.trace["final"]["kept_original"]              # shipped a new motion, did NOT keep original
+    assert r.metrics_after["energy"] >= r.metrics_before["energy"]         # matched or exceeded
+    applied = [s["tool"] for s in r.log if s.get("status") == "applied"]
+    assert "regenerate" in applied and "energy" in applied   # agent composed BOTH steps
+    assert not np.array_equal(r.motion[90:210], base_win)    # it is genuinely new motion
 
 
 @pytest.mark.parametrize("instruction", ["make it more energetic", "smooth it out", "tighten to the beat"])
