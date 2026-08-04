@@ -328,10 +328,14 @@ def _guard_report(before: dict, after: dict, goals) -> tuple[bool, float, list]:
         b, a = float(before.get(metric, 0.0)), float(after.get(metric, 0.0))
         if metric == "jerk":
             over = a > jceil + _tol("jerk", b)                 # only jerk beyond the budget is an artifact
-            status = "regressed" if over else _classify(metric, b, min(a, jceil), good_dir)
             if over:
                 clean = False
                 penalty += (a - jceil) / (_tol(metric, b) or 1.0)
+                status = "regressed"
+            elif a <= b:
+                status = _classify(metric, b, a, good_dir)     # genuinely smoother (or unchanged)
+            else:
+                status = "held"                                # rose but within the energy-proportional budget
         else:
             status = _classify(metric, b, a, good_dir)
             if status == "regressed":
