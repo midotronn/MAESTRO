@@ -31,23 +31,19 @@ function escapeHtml(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-// -------------------------------------------------------------- render the edited dance (Blender/pod)
-async function startRender(scope = "window") {
-  const body = { scope };
-  ST.lastRenderScope = scope;
-  // window render targets the LAST EDIT by default; a valid drag selection overrides it
-  if (scope === "window" && ST.sel && ST.sel[1] > ST.sel[0] + 0.1) {
-    body.a_sec = ST.sel[0]; body.b_sec = ST.sel[1];
-  }
-  $("renderBtn").disabled = true;
+// -------------------------------------------------------------- render the complete edited dance (Blender/pod)
+async function startFullRender() {
+  ST.lastRenderScope = "full";
+  $("fullRenderBtn").disabled = true;
   const st = $("renderStatus"); st.style.display = "block"; st.className = "render-status";
-  st.textContent = scope === "full" ? "starting full render (with music)\u2026" : "starting render\u2026";
+  st.textContent = "starting the full-dance render with music\u2026";
   $("renderProgWrap").hidden = false; $("renderProg").style.width = "3%";
   try {
     await api(`/api/session/${ST.sid}/render`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "full" }) });
     pollRender();
-  } catch (e) { st.textContent = "\u26a0 " + e.message; $("renderBtn").disabled = false; }
+  } catch (e) { st.textContent = "\u26a0 " + e.message; $("fullRenderBtn").disabled = false; }
 }
 
 async function pollRender() {
@@ -63,17 +59,17 @@ async function pollRender() {
     v.load(); v.play().catch(() => {});
     $("viewerTag").textContent = ST.lastRenderScope === "full" ? "full dance + music" : "edited render";
     st.className = "render-status ok";
-    st.textContent = `\u2714 rendered${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
+    st.textContent = `\u2714 full dance ready${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
     $("renderProgWrap").hidden = true;
-    $("renderBtn").disabled = false;
-    toast("Edited dance rendered");
+    $("fullRenderBtn").disabled = false;
+    toast("Full dance ready");
     setTimeout(() => { st.style.display = "none"; }, 5000);
     return;
   }
   if (j.status === "error") {
     st.className = "render-status bad"; st.textContent = "\u26a0 " + (j.message || "render failed");
     $("renderProgWrap").hidden = true;
-    $("renderBtn").disabled = false;
+    $("fullRenderBtn").disabled = false;
     toast("Render failed");
     return;
   }
@@ -208,8 +204,7 @@ function wireControls() {
   wireTimeline();
   wireUpload();
   $("apply").onclick = runEdit;
-  $("renderBtn").onclick = () => startRender("window");
-  $("fullRenderBtn").onclick = () => startRender("full");
+  $("fullRenderBtn").onclick = startFullRender;
   $("compareBtn").onclick = startCompare;
   $("cmpClose").onclick = () => {
     $("compare").hidden = true;
@@ -242,8 +237,8 @@ const TOUR_STEPS = [
     text: "Describe the change in plain English \u2014 e.g. \u201cmake it more energetic\u201d, \u201ctighten to the beat\u201d, or \u201cgive me new moves\u201d. An AI agent turns it into an edit." },
   { el: "apply", title: "3 · Apply the edit",
     text: "The agent plans the right tools, applies them, and verifies the result actually hit your goal \u2014 refining if it didn\u2019t." },
-  { el: "renderBtn", title: "4 · See the result",
-    text: "Render the edited window on the GPU. Use Compare to watch it against an earlier version side by side, with the music." },
+  { el: "compareBtn", title: "4 · Review the result",
+    text: "Review the edited window beside an earlier version, synchronized to the music. Use Render full dance only when you want a slower final review of the complete performance." },
   { el: "history", title: "5 · Iterate freely",
     text: "Every edit is a checkpoint \u2014 undo, redo, compare versions, or reset to start over. Edit, listen, refine." },
   { el: "song", title: "That\u2019s it \u2014 have fun!",

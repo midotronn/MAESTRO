@@ -91,6 +91,22 @@ def test_unknown_song_404(client):
     assert client.post("/api/session/nope").status_code == 404
 
 
+def test_editor_review_actions_explain_the_user_flow():
+    """The UI should expose review tasks, not ambiguous renderer implementation details."""
+    from server.app import STATIC
+
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+
+    assert "Review edit" in html
+    assert "Before and after with music" in html
+    assert "Render full dance" in html
+    assert "Slower, for the final review" in html
+    assert 'id="renderBtn"' not in html
+    assert "startFullRender" in js
+    assert 'startRender("window")' not in js
+
+
 def test_basic_auth_middleware_guards_when_env_set():
     """With MAESTRO_AUTH_* set, requests without/with-wrong credentials get 401; correct creds pass."""
     import importlib

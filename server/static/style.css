@@ -118,18 +118,35 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
   background: rgba(255,255,255,.85); border: 1px solid var(--line); padding: 3px 9px; border-radius: 999px;
   backdrop-filter: blur(4px);
 }
-.render-ctl { position: absolute; top: 10px; right: 12px; display: flex; gap: 6px; align-items: center; z-index: 6; }
-.render-scope {
-  font-size: 11px; color: var(--text); background: rgba(255,255,255,.9); border: 1px solid var(--line);
-  border-radius: 8px; padding: 4px 6px; backdrop-filter: blur(4px); cursor: pointer;
+.review-bar {
+  flex: none; min-height: 64px; display: flex; align-items: center; gap: 16px;
+  padding: 9px 11px 9px 14px; border: 1px solid var(--line); border-radius: 12px;
+  background: rgba(255,255,255,.88); box-shadow: 0 1px 2px rgba(20,30,60,.04);
+  position: relative;
 }
-.render-btn {
-  font-size: 12px; font-weight: 650; color: #fff; cursor: pointer; padding: 5px 11px;
-  border: none; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent-2));
+.review-copy { min-width: 175px; display: flex; flex-direction: column; gap: 2px; }
+.review-copy strong { font: 700 12.5px/1.2 var(--head-font); color: var(--text); }
+.review-copy span { color: var(--faint); font-size: 10.5px; line-height: 1.3; }
+.review-actions { margin-left: auto; display: flex; align-items: stretch; gap: 7px; }
+.review-btn {
+  min-width: 178px; display: flex; align-items: center; gap: 9px; text-align: left;
+  padding: 7px 11px; border: 1px solid var(--line2); border-radius: 10px;
+  background: var(--card); color: var(--text); cursor: pointer; transition: .14s;
 }
-.render-btn:disabled { opacity: .55; cursor: default; }
+.review-btn:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
+.review-btn.primary {
+  color: #fff; border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 5px 14px rgba(108,76,224,.18);
+}
+.review-btn:disabled { opacity: .55; cursor: default; transform: none; }
+.review-btn > span:last-child { display: flex; flex-direction: column; gap: 1px; }
+.review-btn strong { font-size: 12px; line-height: 1.25; }
+.review-btn small { color: var(--faint); font-size: 9.5px; line-height: 1.25; white-space: nowrap; }
+.review-btn.primary small { color: rgba(255,255,255,.78); }
+.review-icon { width: 19px; text-align: center; font-size: 17px; flex: none; }
 .render-status {
-  position: absolute; top: 46px; right: 12px; display: none; max-width: 60%; z-index: 6;
+  position: absolute; right: 12px; bottom: -29px; display: none; max-width: 60%; z-index: 6;
   font-size: 11px; color: var(--muted); background: rgba(255,255,255,.9); border: 1px solid var(--line);
   padding: 4px 10px; border-radius: 999px; backdrop-filter: blur(4px);
 }
@@ -137,7 +154,6 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
 .render-status.bad { color: var(--warn); border-color: rgba(240,180,106,.4); }
 
 /* before/after comparison panel */
-.render-btn.ghost { background: rgba(255,255,255,.9); color: var(--text); border: 1px solid var(--line); font-weight: 600; }
 .compare {
   margin-top: 10px; background: var(--card); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow);

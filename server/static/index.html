@@ -30,7 +30,7 @@
         <button id="redo" class="icon-btn" title="Redo" disabled>↷</button>
         <button id="reset" class="icon-btn" title="Clear the edit history and start over from the original dance">↺</button>
       </div>
-      <button id="helpBtn" class="icon-btn" title="How to use the editor — quick walkthrough">?</button>
+      <button id="helpBtn" class="icon-btn" title="How to use the editor, quick walkthrough">?</button>
       <a href="/project/" class="ghost-btn proj-link" title="MAESTRO project page">Project ↗</a>
     </div>
   </header>
@@ -42,10 +42,21 @@
       <div class="viewer">
         <video id="video" controls playsinline preload="auto"></video>
         <span class="viewer-tag" id="viewerTag">preview · base take</span>
-        <div class="render-ctl">
-          <button id="renderBtn" class="render-btn" title="Render the edited window on the GPU (fast) — this is the usual preview">🎬 Render</button>
-          <button id="compareBtn" class="render-btn ghost" title="Compare the current window against an earlier version, side by side (with music)">⇄ Compare</button>
-          <button id="fullRenderBtn" class="render-btn ghost" title="Render the whole dance with the music — slower, for a final look">♪ Full song</button>
+      </div>
+      <div class="review-bar">
+        <div class="review-copy">
+          <strong>Review your edit</strong>
+          <span>Render only when you want a polished character preview.</span>
+        </div>
+        <div class="review-actions">
+          <button id="compareBtn" class="review-btn primary" title="Render this edited window beside an earlier version, synchronized to the music">
+            <span class="review-icon">⇄</span>
+            <span><strong>Review edit</strong><small>Before and after with music</small></span>
+          </button>
+          <button id="fullRenderBtn" class="review-btn" title="Render the complete edited dance with its music for a final review">
+            <span class="review-icon">♪</span>
+            <span><strong>Render full dance</strong><small>Slower, for the final review</small></span>
+          </button>
         </div>
         <div id="renderStatus" class="render-status"></div>
         <div id="renderProgWrap" class="progwrap render-prog" hidden><div id="renderProg" class="progbar"></div></div>
@@ -53,7 +64,7 @@
 
       <div id="compare" class="compare" hidden>
         <div class="cmp-head">
-          <span class="cmp-title">Compare — window <em id="cmpWin"></em></span>
+          <span class="cmp-title">Compare window <em id="cmpWin"></em></span>
           <label class="cmp-ver">before:
             <select id="cmpVersion" title="Which earlier version of this window to compare the current one against"></select>
           </label>

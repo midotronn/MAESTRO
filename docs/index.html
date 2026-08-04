@@ -4,11 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MAESTRO: Agentic Music-to-Dance with Structure-Aware Choreography</title>
-  <meta name="description" content="MAESTRO is a training-free, agent-driven system that turns a song into a structured dance and lets you refine it with natural language. Music-to-motion Agent for Expressive, Structured, Text-guided Reasoning and Orchestration." />
+  <meta name="description" content="MAESTRO composes structure-aware dance from LODGE, EDGE, and recurring motifs, then provides a goal-verified natural-language editor with deterministic motion levers and window regeneration." />
   <meta name="keywords" content="dance generation, music to motion, LLM agent, choreography, LODGE, EDGE, structure, motif, beat alignment" />
   <meta property="og:title" content="MAESTRO: Agentic Music-to-Dance with Structure-Aware Choreography" />
-  <meta property="og:description" content="Structure-aware, training-free choreography plus a natural-language dance editor." />
-  <meta property="og:image" content="static/images/pipeline_diagram.png" />
+  <meta property="og:description" content="Structure-aware choreography plus a goal-verified natural-language dance editor." />
+  <meta property="og:image" content="static/images/framework.svg" />
   <meta property="og:type" content="website" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@500;700;800&family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
@@ -39,17 +39,17 @@
       <h2 class="sec-title">Abstract</h2>
       <div class="card-m">
         <p class="prose">
-          MAESTRO generates dance from music without any task-specific training. It runs two complementary
-          motion generators, <b>LODGE</b> and <b>EDGE</b>, then uses LLM agents to <b>compose</b> a single coherent
-          performance rather than emit freestyle motion. A structure agent reads the song's musical form
-          (intro, verse, chorus, drop, outro) and energy arc; a <b>storyboard</b> agent authors a per-section plan
-          (role, intensity, movement vocabulary, preferred generator, and recurring motifs); and a
-          structure-aware assembler realizes that plan by arranging LODGE and EDGE material, reusing and
-          transforming motifs (mirror / retrograde) for recapitulation, and joining every switch with an
-          inertialized blend. Finally, an <b>interactive editor</b> lets a user select any time window and refine it
-          with natural language, with an agent that plans, verifies against the requested goals, and keeps the
-          motion smooth. The result reads as a deliberately composed piece and, on beat alignment, matches or
-          beats the stronger single generator.
+          MAESTRO is a training-free system for composing and editing music-driven dance. It first analyzes
+          musical structure from chroma, MFCC, energy, and downbeats, then an LLM <b>storyboard agent</b> assigns
+          each section a choreographic role, intensity, movement vocabulary, generator preference, and optional
+          recurring motif. A structure-aware selector realizes that plan from complementary <b>LODGE</b> and
+          <b>EDGE</b> motions plus mirrored, retimed, or retrograded motifs, and joins source changes with
+          inertialized transitions. MAESTRO also provides a windowed <b>natural-language editor</b>. Its planner
+          declares measurable goals and routes metric requests to deterministic monotone levers, while requests
+          for genuinely new choreography invoke window regeneration. The executor rejects regressions, adapts
+          regenerated motion to the requested targets on the final crossfaded window, and verifies every goal
+          before saving an undoable checkpoint. This combines whole-song compositional structure with localized,
+          transparent, goal-directed revision.
         </p>
       </div>
     </div>
@@ -59,42 +59,43 @@
   <section class="section alt-bg">
     <div class="container is-max-desktop">
       <h2 class="sec-title">How it works</h2>
-      <p class="sec-sub">Two LLM agents drive MAESTRO: a storyboard agent composes the dance, and a
-        planner-executor editing agent revises any part of it on request.</p>
+      <p class="sec-sub">Deterministic music analysis exposes the song's form. An LLM storyboard agent
+        composes across that form, and a planner-executor agent revises any selected window with verified tools.</p>
 
       <h3 class="sub-h">1. Composition: the storyboard agent</h3>
       <figure class="figure card-m diagram">
         <img src="static/images/framework.svg" alt="MAESTRO composition pipeline" />
-        <figcaption>An LLM storyboard agent reads the musical structure and composes a per-section plan,
-          which a structure-aware assembler realizes from LODGE, EDGE, and reused motifs.</figcaption>
+        <figcaption>Music analysis finds sections, repeats, downbeats, and the energy arc. The storyboard
+          agent turns them into a section plan, then a plan-aware selector and inertialized assembler realize
+          the dance from LODGE, EDGE, and transformed motifs.</figcaption>
       </figure>
       <div class="stages">
         <div class="stage">
           <div class="n">STAGE 1</div>
           <h4>Structure analysis</h4>
-          <p>The song is segmented into sections over chroma and MFCC, musically repeated sections are
-          labeled, and an energy arc is built. Boundaries snap to downbeats.</p>
+          <p>Chroma, MFCC, energy, and downbeats produce sections, repetition labels, roles, and an energy
+          arc. This stage is deterministic and has a robust musical fallback.</p>
         </div>
         <div class="stage">
           <div class="n">STAGE 2</div>
           <h4>Storyboard agent</h4>
-          <p>An LLM authors a plan per section: its role in the arc, target intensity, movement vocabulary,
-          preferred generator, and any motif to recall (optionally mirrored or reversed).</p>
+          <p>An LLM, with a deterministic fallback, authors each section's role, target intensity, movement
+          vocabulary, generator preference, and any motif recurrence or transformation.</p>
         </div>
         <div class="stage">
           <div class="n">STAGE 3</div>
           <h4>Structure-aware assembly</h4>
-          <p>Per section, the assembler picks LODGE, EDGE, or a transformed motif that best matches the plan
-          while staying smooth, joining every source change with an inertialized transition.</p>
+          <p>Each section scores LODGE, EDGE, and eligible motifs for plan alignment and local coherence.
+          Source changes are joined with training-free inertialized transitions.</p>
         </div>
       </div>
 
       <h3 class="sub-h" style="margin-top:2.2rem">2. Editing: a planner-executor loop</h3>
       <figure class="figure card-m diagram">
         <img src="static/images/editing_loop.svg" alt="MAESTRO natural-language editing agent" />
-        <figcaption>Select a window and describe the change: an LLM planner declares the goals and plans tool
-          steps, an executor applies them while rejecting regressions, and a verifier checks every requested
-          goal, refining the plan with feedback until the goals are met.</figcaption>
+        <figcaption>Select a window and describe the change. The planner declares goals, deterministic levers
+          handle measurable edits, and LODGE or EDGE regeneration supplies genuinely new motion. The result is
+          crossfaded, adaptively dialed to its targets, and verified on the final window before checkpointing.</figcaption>
       </figure>
     </div>
   </section>
@@ -120,7 +121,7 @@
             Select a time window on the beat-aligned timeline and describe the change in your own words:
             <i>&ldquo;calmer but keep it tight to the beat&rdquo;</i>, <i>&ldquo;explosive hits on the drop&rdquo;</i>,
             <i>&ldquo;flip and reverse this&rdquo;</i>. A planner and executor agent apply the edit, verify it against every
-            requested goal, keep the motion smooth, and show their reasoning. Then compare the window
+            requested goal on the final spliced motion, protect artifact guardrails, and show their reasoning. Then compare the window
             <b>before and after</b> side by side.
           </p>
           <div class="btns" style="justify-content:flex-start;margin-top:1rem">
