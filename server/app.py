@@ -433,6 +433,17 @@ def redo(sid: str) -> dict:
     return _session_state(sid, sess)
 
 
+@app.post("/api/session/{sid}/reset")
+def reset_session(sid: str) -> dict:
+    """Clear the edit history: drop every checkpoint and start over from the original dance."""
+    _sessions.pop(sid, None)                              # evict the cached session
+    sess_dir = SESSIONS / sid
+    if sess_dir.exists():
+        shutil.rmtree(sess_dir, ignore_errors=True)      # remove the persisted checkpoint tree
+    sess = _load_session(sid)                            # rebuild a fresh session (root only)
+    return _session_state(sid, sess)
+
+
 @app.post("/api/session/{sid}/restore")
 def restore(sid: str, body: RestoreBody) -> dict:
     sess = _load_session(sid)

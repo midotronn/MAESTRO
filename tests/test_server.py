@@ -156,6 +156,20 @@ def test_compare_after_edit_renders_before_and_after(client, monkeypatch):
     assert client.get("/api/session/sng/compare").json()["status"] in ("queued", "rendering", "idle")
 
 
+def test_reset_clears_edit_history(client):
+    client.post("/api/session/sng")
+    client.post("/api/session/sng/edit", json={"a_sec": 3, "b_sec": 6, "instruction": "more energetic"})
+    st = client.post("/api/session/sng/edit",
+                     json={"a_sec": 3, "b_sec": 6, "instruction": "calmer"}).json()["state"]
+    assert len(st["timeline"]) >= 3 and st["can_undo"]
+    r = client.post("/api/session/sng/reset").json()
+    assert len(r["timeline"]) == 1                       # only the original root remains
+    assert r["timeline"][0]["label"] == "original"
+    assert not r["can_undo"] and not r["can_redo"]
+    # a follow-up compare now fails (no edit to compare) -> the history really is empty
+    assert client.post("/api/session/sng/compare").status_code == 400
+
+
 def test_compare_from_id_selects_chosen_prior_version(client, monkeypatch):
     import server.rendering as R
     captured: dict = {}

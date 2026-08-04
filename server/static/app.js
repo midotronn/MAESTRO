@@ -224,6 +224,16 @@ async function init() {
   if (cmpVer) cmpVer.onchange = () => { if (!$("compare").hidden) startCompare(); };
   $("undo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/undo`, { method: "POST" }));
   $("redo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/redo`, { method: "POST" }));
+  $("reset").onclick = async () => {
+    if (!confirm("Clear the edit history and start over from the original dance? This cannot be undone.")) return;
+    const st = await api(`/api/session/${ST.sid}/reset`, { method: "POST" });
+    $("compare").hidden = true;
+    try { $("cmpAfter").pause(); $("cmpBefore").pause(); $("cmpAudio").pause(); } catch (e) {}
+    $("video").src = st.preview_url + "?t=" + Date.now();     // back to the original dance
+    applyState(st);
+    showCurrentMetrics(st.metrics || {});
+    toast("Edit history cleared \u2014 back to the original");
+  };
   $("instruction").addEventListener("keydown", (e) => { if (e.key === "Enter") runEdit(); });
 }
 
