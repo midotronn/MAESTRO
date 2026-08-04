@@ -27,3 +27,13 @@ def test_method_diagrams_cover_current_pipeline_contracts():
     for label in ("Planner", "Routed executor", "Final-window adaptation", "Verify",
                   "Checkpointed result", "monotone levers", "new motion: LODGE / EDGE"):
         assert label in editing
+
+
+def test_project_page_has_maestro_favicon():
+    html = (ROOT / "docs" / "index.html").read_text(encoding="utf-8")
+    icon = ROOT / "docs" / "static" / "images" / "favicon.svg"
+
+    assert 'rel="icon"' in html
+    assert "favicon.svg" in html
+    assert icon.is_file()
+    assert 'aria-label="MAESTRO"' in icon.read_text(encoding="utf-8")

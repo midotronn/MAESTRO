@@ -102,6 +102,8 @@ def test_editor_review_actions_explain_the_user_flow():
     assert "Before and after with music" in html
     assert "Render full dance" in html
     assert "Slower, for the final review" in html
+    assert 'rel="icon"' in html
+    assert (STATIC / "favicon.svg").is_file()
     assert 'id="renderBtn"' not in html
     assert "startFullRender" in js
     assert 'startRender("window")' not in js
