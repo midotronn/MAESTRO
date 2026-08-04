@@ -58,6 +58,10 @@ done
 # keep running stale code and double-process requests).
 pkill -9 -f "scripts/blender_daemon.py" 2>/dev/null || true
 rm -rf "$WS/blend_daemon" 2>/dev/null || true
+# Same for the warm LODGE generation daemon (server/warm_gen.py) so a redeploy restarts it with the
+# current gen_daemon.py + lodge.py (a surviving daemon would keep serving stale code).
+pkill -9 -f "scripts/gen_daemon.py" 2>/dev/null || true
+rm -rf "$WS/gen_daemon" 2>/dev/null || true
 sleep 2
 
 cd "$A" || { echo "FATAL: $A missing"; exit 1; }

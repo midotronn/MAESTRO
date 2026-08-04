@@ -144,6 +144,25 @@ class PodTakeProvider:
             except Exception:                                # noqa: BLE001 - corrupt cache: regenerate
                 local.unlink(missing_ok=True)
 
+        # Warm LODGE daemon fast path: when the editor is co-located on the pod and the song is
+        # preprocessed for generation, a persistent daemon (models preloaded) serves the window in
+        # seconds instead of reloading the checkpoints per seed. EDGE / any failure returns None here
+        # and falls through to the per-call gen_take path below.
+        if window is not None:
+            try:
+                from server import warm_gen
+                wp = warm_gen.warm_generate(self.sid, backbone, int(seed), window[0], window[1],
+                                            timeout=self.gen_timeout)
+                if wp is not None:
+                    arr = np.load(wp).astype(np.float32)
+                    try:
+                        np.save(local, arr)                  # cache into the song bank too
+                    except Exception:                        # noqa: BLE001
+                        pass
+                    return arr
+            except Exception:                                # noqa: BLE001 - never break the edit
+                pass
+
         if not self.cfg.host:
             return None
         try:

@@ -64,6 +64,29 @@ def _load_modata(keymopath: str, device):
     return modata
 
 
+_LODGE_MODELS = None  # (key, model_coarse, model_fine) cached per process so a warm daemon loads once
+
+
+def _lodge_models(cfg, cfg_coarse, dataset, device, get_module, torch):
+    """Return the (coarse, fine) LODGE diffusion models, loading + moving them to ``device`` only the
+    FIRST time in this process. torch.load of the ~1.7GB checkpoints dominates a cold run, so caching
+    them is what lets a persistent warm generation daemon answer subsequent seeds in seconds."""
+    global _LODGE_MODELS
+    key = (str(cfg.checkpoint1), str(cfg.checkpoint2))
+    if _LODGE_MODELS is not None and _LODGE_MODELS[0] == key:
+        return _LODGE_MODELS[1], _LODGE_MODELS[2]
+    model_coarse = get_module(cfg_coarse, dataset)
+    sd = torch.load(cfg.checkpoint1, map_location="cpu", weights_only=False)["state_dict"]
+    model_coarse.load_state_dict(sd, strict=True)
+    model_coarse.to(device).eval()
+    model_fine = get_module(cfg, dataset)
+    sd = torch.load(cfg.checkpoint2, map_location="cpu", weights_only=False)["state_dict"]
+    model_fine.load_state_dict(sd, strict=True)
+    model_fine.to(device).eval()
+    _LODGE_MODELS = (key, model_coarse, model_fine)
+    return model_coarse, model_fine
+
+
 def generate_lodge_dance(
     lodge_features: np.ndarray,
     settings: Settings,
@@ -146,19 +169,8 @@ def generate_lodge_dance(
 
         dataset = get_datasets(cfg, logger=logger, phase="test")[0]
 
-        model_coarse = get_module(cfg_coarse, dataset)
-        state_dict = torch.load(
-            cfg.checkpoint1, map_location="cpu", weights_only=False
-        )["state_dict"]
-        model_coarse.load_state_dict(state_dict, strict=True)
-        model_coarse.to(device).eval()
-
-        model_fine = get_module(cfg, dataset)
-        state_dict = torch.load(
-            cfg.checkpoint2, map_location="cpu", weights_only=False
-        )["state_dict"]
-        model_fine.load_state_dict(state_dict, strict=True)
-        model_fine.to(device).eval()
+        model_coarse, model_fine = _lodge_models(
+            cfg, cfg_coarse, dataset, device, get_module, torch)
 
         music_fea_full = lodge_features.astype(np.float32)
         local_num = music_fea_full.shape[0] // cfg.length2
