@@ -6,6 +6,7 @@ import os
 import sys
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -19,6 +20,155 @@ def _base(n: int = 300, energy: float = 0.6, seed: int = 1) -> np.ndarray:
 
 def _beats(n: int = 300, step: int = 15) -> np.ndarray:
     return np.arange(0, n, step).astype(float)
+
+
+def _smooth(n: int = 300, seed: int = 0, n_joints: int = 22) -> np.ndarray:
+    """A smooth, dance-tempo valid 139-dim motion (so the energy lever behaves like it does on real
+    dances, unlike the random-walk mock whose energy/jerk are entangled)."""
+    from agentlodge.dance import transition as T
+    rng = np.random.default_rng(seed)
+    t = np.linspace(0.0, 6.0 * np.pi, n)
+    axes = rng.standard_normal((n_joints, 3)); axes /= np.linalg.norm(axes, axis=-1, keepdims=True) + 1e-9
+    ang = (0.15 + 0.25 * rng.random((n_joints, 1))) * np.sin(
+        (1.2 + 1.6 * rng.random((n_joints, 1))) * t[None, :] + 2 * np.pi * rng.random((n_joints, 1)))
+    aa = np.transpose(axes[:, None, :] * ang[:, :, None], (1, 0, 2))
+    r6 = T._matrix_to_sixd(T._axis_angle_to_matrix(aa)).reshape(n, n_joints * 6)
+    trans = 0.02 * np.cumsum(np.sin(t)[:, None] * np.ones((1, 3)), axis=0)
+    contact = (rng.random((n, 4)) > 0.5).astype(np.float32)
+    return np.concatenate([trans, r6, contact], axis=1).astype(np.float32)
+
+
+# --------------------------------------------------------------- LLM planner path (mocked, no API)
+def _fake_openai(monkeypatch, response_json: str, captured: dict):
+    """Patch openai.OpenAI so _llm_plan runs offline; capture the model + prompt it would send."""
+    openai = pytest.importorskip("openai")
+
+    class _Msg:
+        def __init__(self, c): self.content = c
+
+    class _Choice:
+        def __init__(self, c): self.message = _Msg(c)
+
+    class _Resp:
+        def __init__(self, c): self.choices = [_Choice(c)]
+
+    class _Completions:
+        def create(self, *, model, messages, **kw):
+            captured["model"] = model
+            captured["prompt"] = messages[0]["content"]
+            return _Resp(response_json)
+
+    class _Client:
+        def __init__(self, api_key=None): self.chat = type("C", (), {"completions": _Completions()})()
+
+    monkeypatch.setattr(openai, "OpenAI", _Client)
+
+
+def test_llm_plan_parses_compound_response_and_uses_configurable_model(monkeypatch):
+    captured: dict = {}
+    _fake_openai(monkeypatch,
+                 '{"summary":"new + energetic","steps":['
+                 '{"tool":"regenerate","params":{},"why":"new motion"},'
+                 '{"tool":"energy","params":{"direction":"up"},"why":"hit the target"}],'
+                 '"goals":[{"metric":"energy","direction":"up"}]}', captured)
+    monkeypatch.setenv("AGENTLODGE_PLANNER_MODEL", "gpt-unit-test")
+    p = AE.plan_edit("create a new motion that matches or exceeds the energy",
+                     {"energy": 0.3, "bas": 0.5, "jerk": 0.1, "foot": 1.0}, 46.0, 52.0, api_key="sk-x")
+    assert p.planner == "llm"
+    assert captured["model"] == "gpt-unit-test"              # model is configurable via env
+    assert [s.tool for s in p.steps] == ["regenerate", "energy"]
+    assert ("energy", "up", "energy") in p.goals and len(p.goals) == 1   # no hallucinated extra goal
+
+
+def test_llm_prompt_carries_the_critical_routing_rules(monkeypatch):
+    # guard the prompt content: a future edit must not silently drop the rules that fix the reported
+    # bugs (create-new -> regenerate; do not invent goals).
+    captured: dict = {}
+    _fake_openai(monkeypatch, '{"summary":"x","steps":[{"tool":"smooth","params":{}}],'
+                              '"goals":[{"metric":"jerk","direction":"down"}]}', captured)
+    AE.plan_edit("smooth it", {"energy": 0.3, "bas": 0.5, "jerk": 0.1, "foot": 1.0},
+                 46.0, 52.0, api_key="sk-x")
+    prompt = captured["prompt"].lower()
+    assert "regenerate" in prompt
+    assert "new motion" in prompt and "choreograph" in prompt          # create-new routing present
+    assert "only" in prompt and "goal" in prompt                       # goal-discipline present
+    assert "reshape" in prompt or "resize" in prompt                   # lever-vs-regenerate distinction
+
+
+def test_llm_plan_falls_back_to_keyword_when_the_api_errors(monkeypatch):
+    openai = pytest.importorskip("openai")
+
+    class _Boom:
+        def __init__(self, api_key=None): raise RuntimeError("no network")
+
+    monkeypatch.setattr(openai, "OpenAI", _Boom)
+    p = AE.plan_edit("make it more energetic", {}, 46.0, 52.0, api_key="sk-x")
+    assert p.planner == "keyword_fallback" and p.steps[0].tool == "energy"
+
+
+# --------------------------------------------------------------------------- behavioural guarantees
+def test_more_energetic_delivers_a_substantial_gain_not_a_token_one():
+    # regression guard for the polish clawing a requested energy increase back to ~tolerance. Compare
+    # the loop's delivered gain against the BARE lever's gain (same gain the 'much' planner uses): the
+    # quality polish must keep most of it, not smooth it away to a token amount (the +0.007 bug).
+    from agentlodge.dance.transition import accentuate
+    from agentlodge.editor.window_edit import window_metrics
+    m = _smooth(300, seed=5)
+    a, b = 60, 240
+    before = window_metrics(m[a:b])["energy"]
+    raw = window_metrics(accentuate(m[a:b], 1.68))["energy"]  # bare lever at the 'much' gain, no polish
+    r = AE.run_agent_edit(m, a, b, "make this much more energetic", generator=None, beats=_beats())
+    assert r.ok and not r.trace["final"]["kept_original"]
+    after = r.metrics_after["energy"]
+    assert raw > before * 1.05                                # the bare lever really does move it
+    assert after >= before + 0.5 * (raw - before), (before, raw, after)   # polish kept >=50% of it
+
+
+@pytest.mark.parametrize("instruction, metric, direction", [
+    ("make this much more energetic", "energy", "up"),
+    ("make it a lot calmer", "energy", "down"),
+    ("smooth it out so it flows", "jerk", "down"),
+    ("snappier punchier staccato hits", "jerk", "up"),
+    ("tighten it to the beat", "bas", "up"),
+])
+def test_metric_battery_every_query_is_satisfied(instruction, metric, direction):
+    # each metric-directed request must be MET (ok) by a real change (not kept-original), moving its
+    # metric the right way -- the "100% satisfied by the loop" guarantee, deterministic + no backbone.
+    m = _smooth(300, seed=2)
+    r = AE.run_agent_edit(m, 60, 240, instruction, generator=None, beats=_beats(), max_refine=2)
+    assert r.ok and not r.trace["final"]["kept_original"], f"{instruction!r} not satisfied"
+    b, a = r.metrics_before[metric], r.metrics_after[metric]
+    assert (a > b) if direction == "up" else (a < b), f"{instruction!r}: {metric} {b}->{a}"
+
+
+def test_create_new_motion_actually_regenerates_not_just_amplifies(monkeypatch):
+    # THE reported bug: "create a new motion ..." must run a REGENERATE step (new choreography), not
+    # merely reshape the current window with the energy lever. Drive the offline planner so the test
+    # is deterministic (no API), then assert a regenerate step actually executed.
+    m = _base(300, energy=0.4)
+    r = AE.run_agent_edit(m, 90, 210,
+                          "create a new motion for this window that matches or exceeds the energy",
+                          generator=MockWindowGenerator(), beats=_beats())
+    assert any(s["tool"] == "regenerate" and s.get("status") == "applied" for s in r.log), \
+        f"expected a regenerate step, got {[s['tool'] for s in r.log]}"
+
+
+def test_compound_new_and_energetic_regenerates_then_raises_energy(monkeypatch):
+    m = _base(300, energy=0.3)
+    r = AE.run_agent_edit(m, 90, 210, "give me different, more energetic moves",
+                          generator=MockWindowGenerator(), beats=_beats())
+    tools = [s["tool"] for s in r.log if s.get("status") == "applied"]
+    assert "regenerate" in tools                              # new motion was created
+    # the window actually changed (fresh choreography spliced in), outside is untouched
+    assert not np.array_equal(r.motion[90:210], m[90:210])
+    assert np.array_equal(r.motion[:90], m[:90]) and np.array_equal(r.motion[210:], m[210:])
+
+
+@pytest.mark.parametrize("instruction", ["make it more energetic", "smooth it out", "tighten to the beat"])
+def test_edits_never_touch_frames_outside_the_window(instruction):
+    m = _smooth(300, seed=7)
+    r = AE.run_agent_edit(m, 96, 204, instruction, generator=None, beats=_beats())
+    assert np.array_equal(r.motion[:96], m[:96]) and np.array_equal(r.motion[204:], m[204:])
 
 
 # --------------------------------------------------------------------------- planning (offline)

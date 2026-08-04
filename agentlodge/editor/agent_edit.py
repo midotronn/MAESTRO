@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -465,23 +466,32 @@ def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
     """
     reqs = _requested_metrics(instruction)
     cycle = int(feedback.get("cycle", 1)) if feedback else 0
-    mag = 0.8 if any(w in (" " + instruction.lower() + " ")
-                     for w in (" much ", " way ", " a lot ", " very ", " really ", " super ")) else 0.5
-    # Pure VARIETY (no metric target): the user wants genuinely different movement -> regenerate with
-    # an empty goal list (any fresh sample succeeds). Only fires when no metric keyword is present, so
-    # "more energetic" (a metric) still routes to the deterministic energy lever, not here.
-    if not reqs:
-        s = " " + instruction.lower().strip() + " "
-        variety = ("different", "freestyle", "fresh", "new moves", "new choreo", "mix it up",
-                   "mix things up", "switch it up", "surprise me", "something else", "vary it",
-                   "more interesting", "change it up", "remix", "reinvent")
-        if any(w in s for w in variety):
-            p = {"backbone": "auto", "energy": 0.5}
-            if feedback:
-                p = _escalate_params("regenerate", p, cycle)
-            return AgentPlan(summary=("push harder: " if feedback else "") + "regenerate new choreography",
-                             steps=[PlanStep("regenerate", p, "sample genuinely different moves")],
-                             expect_metric=None, expect_dir=None, goals=[])
+    s = " " + instruction.lower().strip() + " "
+    mag = 0.8 if any(w in s for w in (" much ", " way ", " a lot ", " very ", " really ", " super ")) else 0.5
+    # Does the user want genuinely NEW motion (not just a reshape of the current moves)?
+    wants_new = any(w in s for w in (
+        "different", "freestyle", "fresh", "new move", "new choreo", "new motion", "mix it up",
+        "mix things up", "switch it up", "surprise me", "something else", "vary it", "more interesting",
+        "change it up", "remix", "reinvent", "create a new", "generate", "choreograph", "come up with",
+        "make a new", "make new", "brand new"))
+    if wants_new:
+        # regenerate FIRST (the only tool that creates new motion), then dial any requested metric
+        # onto the fresh clip. Pure variety (no metric) -> empty goals; compound -> the metric goals.
+        rp = {"backbone": "auto", "energy": 0.7 if any(m == "energy" and d == "up" for m, d, _l in reqs) else 0.5}
+        if feedback:
+            rp = _escalate_params("regenerate", rp, cycle)
+        steps = [PlanStep("regenerate", rp, "sample genuinely new choreography for this window")]
+        for metric, direction, label in reqs:
+            tool, params = _METRIC_TOOL[(metric, direction)]
+            p = dict(params)
+            if "amount" in p:
+                p["amount"] = mag
+            steps.append(PlanStep(tool, p, f"dial the fresh motion's {label} {direction}"))
+        summary = "regenerate new choreography" + (
+            " and " + ", ".join(dict.fromkeys(f"{d} {lbl}" for _m, d, lbl in reqs)) if reqs else "")
+        return AgentPlan(summary=("push harder: " if feedback else "") + summary, steps=steps,
+                         expect_metric=(reqs[0][0] if reqs else None),
+                         expect_dir=(reqs[0][1] if reqs else None), goals=list(reqs))
     if reqs:
         steps = []
         for metric, direction, label in reqs:
@@ -543,6 +553,8 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         '"calmer but keep it tight" -> [{"metric":"energy","direction":"down"},{"metric":"bas","direction":"up"}]; '
         '"snappier staccato hits" -> [{"metric":"jerk","direction":"up"}]; '
         '"tighten it to the beat" -> [{"metric":"bas","direction":"up"}]; '
+        '"create a new motion that matches or exceeds the energy" -> [{"metric":"energy","direction":"up"}] '
+        "(regenerate for the NEW motion, energy-up to hit the target; NOTE energy ONLY, NOT beat); "
         '"different / fresh / freestyle / surprise me / mix it up" -> []; '
         '"reverse this"/"mirror it" -> []. '
         "Pick the FEWEST tools that match the user's intent, by meaning not keywords. Every metric has "
@@ -558,18 +570,25 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         "request. goal [energy up] or [energy down]. Amount 0.6-0.9 for 'much/way', ~0.5 otherwise.\n"
         "4) SNAP (snappier / punchier / staccato / crisper / sharper) -> 'sharpen' ALONE, goal [jerk up].\n"
         "5) EXACT TRANSFORM (reverse / mirror / flip) -> that ONE tool, goals MUST be [].\n"
-        "6) VARIETY / NEW MOVES (different / new / fresh / freestyle / mix it up / surprise me / more "
-        "interesting) -> 'regenerate' -- this is the ONLY tool that changes WHAT the body does; it "
-        "samples genuinely NEW choreography from the backbones (edge = punchy, lodge = smooth; auto = "
-        "agent picks). For PURE VARIETY the goal list is EMPTY [] (any fresh sample is a success). Use "
-        "regenerate ONLY when the user wants DIFFERENT movement, not merely a bigger/smaller/tighter "
-        "version of the current dance.\n"
-        "COMBINING: if the user wants new moves AND a metric (e.g. 'give me different, more energetic "
-        "moves') put 'regenerate' FIRST then the metric lever ('energy' up) so the fresh clip is then "
-        "dialed to hit the target; goal = the metric only. A light 'smooth' STEP (amount ~0.1-0.2) after "
-        "a regenerate is a STEP, not a goal -- do NOT put jerk in goals for it. NEVER add a goal the "
-        "user did not explicitly ask for: an extra goal conflicts with the real one and gets the whole "
-        "edit rejected (e.g. adding energy to 'tighten to the beat' makes it do nothing)."
+        "6) VARIETY / NEW MOTION -- any request to have DIFFERENT movement or to CREATE / GENERATE / "
+        "CHOREOGRAPH / COME UP WITH / MAKE a NEW motion / new choreography / new moves (also: different, "
+        "fresh, freestyle, mix it up, surprise me, more interesting, replace/redo the moves) -> "
+        "'regenerate' is REQUIRED. It is the ONLY tool that changes WHAT the body does: it samples "
+        "genuinely NEW choreography from the backbones (edge = punchy, lodge = smooth; auto = agent "
+        "picks). The energy/smooth/sharpen levers only RESHAPE the existing moves -- they never create "
+        "new motion, so a 'create a new motion' request is WRONG without regenerate. For PURE VARIETY "
+        "(no metric mentioned) the goal list is EMPTY [] (any fresh sample is a success).\n"
+        "COMBINING (very important): when the user wants a NEW motion AND a metric target (e.g. 'create "
+        "a new motion that matches or exceeds the energy', 'give me different, more energetic moves', "
+        "'fresh choreography but calmer', 'new moves, snappier') you MUST use TWO steps: 'regenerate' "
+        "FIRST (to create the new motion) THEN the metric lever ('energy' up/down, or 'sharpen') to dial "
+        "the fresh clip onto the target. goal = the metric ONLY (e.g. [energy up]) and NOTHING the user "
+        "did not mention (do NOT add beat/bas unless they said beat/timing/sync). NEVER satisfy a "
+        "'create / generate a new motion' request with the energy lever alone -- that only resizes the "
+        "OLD moves and creates nothing new. A light 'smooth' STEP (amount ~0.1-0.2) after a regenerate "
+        "is a STEP, not a goal -- do NOT put jerk in goals for it. NEVER add a goal the user did not "
+        "explicitly ask for: an extra goal conflicts with the real one and gets the whole edit rejected "
+        "(e.g. adding beat to 'more energetic' makes it do nothing)."
     )
     if goals:                                              # refine: remind of the graded constraints
         gl = ", ".join(f"{lbl} must go {d}" for _m, d, lbl in goals)
@@ -593,8 +612,9 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
             "each unmet metric is present. Do not repeat the same weak plan."
         )
     client = OpenAI(api_key=api_key)
+    model = os.environ.get("AGENTLODGE_PLANNER_MODEL", "gpt-4o")   # stronger reasoning by default
     resp = client.chat.completions.create(
-        model="gpt-4o-mini", max_tokens=400, temperature=(0.5 if feedback else 0.2),
+        model=model, max_tokens=400, temperature=(0.5 if feedback else 0.2),
         messages=[{"role": "user", "content": prompt}])
     text = resp.choices[0].message.content or ""
     m = re.search(r"\{.*\}", text, re.DOTALL)
