@@ -204,13 +204,7 @@ function setupCompareVideos(beforeName, afterName, metrics, audioName) {
 }
 
 // -------------------------------------------------------------- load songs + session
-async function init() {
-  const { songs } = await api("/api/songs");
-  const sel = $("song");
-  sel.innerHTML = "";
-  songs.forEach((s) => { const o = document.createElement("option"); o.value = s.sid; o.textContent = s.name || s.sid; sel.appendChild(o); });
-  sel.onchange = () => openSession(sel.value);
-  if (songs.length) await openSession(songs[0].sid);
+function wireControls() {
   wireTimeline();
   wireUpload();
   $("apply").onclick = runEdit;
@@ -237,8 +231,45 @@ async function init() {
   $("instruction").addEventListener("keydown", (e) => { if (e.key === "Enter") runEdit(); });
 }
 
+async function loadSongs(maxAttempts = 20) {
+  // Retry: the page can load while the pod editor is still starting, in which case the very first
+  // /api/songs may fail or return empty. Poll until it answers so the page self-heals instead of
+  // getting stuck on a dead, songless screen.
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const { songs } = await api("/api/songs");
+      if (songs && songs.length) return songs;
+    } catch (e) { /* editor still coming up -- keep polling */ }
+    if (i === 0) toast("Loading songs\u2026 the editor may still be starting");
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  return [];
+}
+
+async function init() {
+  const sel = $("song");
+  sel.innerHTML = "<option>Loading\u2026</option>"; sel.disabled = true;
+  wireControls();                                            // wire up-front so controls work at once
+  const songs = await loadSongs();
+  sel.innerHTML = "";
+  if (!songs.length) {
+    sel.innerHTML = "<option>no songs \u2014 refresh</option>";
+    toast("Couldn't load songs \u2014 the editor may still be starting. Please refresh in a moment.");
+    return;
+  }
+  sel.disabled = false;
+  songs.forEach((s) => { const o = document.createElement("option"); o.value = s.sid; o.textContent = s.name || s.sid; sel.appendChild(o); });
+  sel.onchange = () => openSession(sel.value);
+  await openSession(songs[0].sid);
+}
+
 async function openSession(sid) {
-  const st = await api(`/api/session/${sid}`, { method: "POST" });
+  let st = null;
+  for (let i = 0; i < 4 && !st; i++) {
+    try { st = await api(`/api/session/${sid}`, { method: "POST" }); }
+    catch (e) { await new Promise((r) => setTimeout(r, 1200)); }   // pod may still be warming
+  }
+  if (!st) { toast(`Couldn't open ${sid} \u2014 please refresh in a moment.`); return; }
   ST.sid = sid;
   const v = $("video");
   v.src = st.preview_url + "?t=" + Date.now();
