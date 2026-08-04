@@ -23,14 +23,15 @@ def _beats(n: int = 300, step: int = 15) -> np.ndarray:
 
 # --------------------------------------------------------------------------- planning (offline)
 def test_keyword_plan_maps_intents_to_tools():
-    # timing + smoothness + exact transforms are deterministic; intensity + snap regenerate
+    # every metric now maps to its dedicated deterministic lever; only variety regenerates
     assert AE.plan_edit("make this much more on beat", {}, 3, 7).steps[0].tool == "beat_align"
     assert AE.plan_edit("smoother and flowing", {}, 3, 7).steps[0].tool == "smooth"
     assert AE.plan_edit("reverse this part", {}, 3, 7).steps[0].tool == "reverse"
     assert AE.plan_edit("mirror it", {}, 3, 7).steps[0].tool == "mirror"
-    assert AE.plan_edit("calm it down a lot", {}, 3, 7).steps[0].tool == "regenerate"
-    assert AE.plan_edit("make it much more energetic", {}, 3, 7).steps[0].tool == "regenerate"
-    assert AE.plan_edit("snappier staccato hits", {}, 3, 7).steps[0].tool == "regenerate"
+    assert AE.plan_edit("calm it down a lot", {}, 3, 7).steps[0].tool == "energy"
+    assert AE.plan_edit("make it much more energetic", {}, 3, 7).steps[0].tool == "energy"
+    assert AE.plan_edit("snappier staccato hits", {}, 3, 7).steps[0].tool == "sharpen"
+    assert AE.plan_edit("give me different freestyle moves", {}, 3, 7).steps[0].tool == "regenerate"
 
 
 def test_plan_carries_expected_metric():
@@ -55,8 +56,25 @@ def test_on_beat_edit_logs_and_raises_bas():
 def test_calmer_edit_lowers_energy():
     m = _base(300, energy=0.9)
     r = AE.run_agent_edit(m, 90, 210, "make this a lot calmer", MockWindowGenerator(), beats=_beats())
-    assert r.log[0]["tool"] == "regenerate"                       # intensity is generative now
+    assert r.log[0]["tool"] == "energy"                           # deterministic monotone lever
     assert r.metrics_after["energy"] < r.metrics_before["energy"]
+
+
+def test_more_energetic_edit_raises_energy_without_generator():
+    # the guarantee: 'more energetic' is satisfied by the deterministic lever even with NO backbone
+    m = _base(300, energy=0.4)
+    r = AE.run_agent_edit(m, 90, 210, "make this much more energetic", generator=None, beats=_beats())
+    assert r.ok and r.log[0]["tool"] == "energy"
+    assert r.metrics_after["energy"] > r.metrics_before["energy"]
+    # frames outside the window are byte-identical (tapered seams)
+    assert np.array_equal(r.motion[:90], m[:90]) and np.array_equal(r.motion[210:], m[210:])
+
+
+def test_sharper_edit_raises_jerk_without_generator():
+    m = _base(300, energy=0.5)
+    r = AE.run_agent_edit(m, 90, 210, "snappier punchier staccato hits", generator=None, beats=_beats())
+    assert r.ok and r.log[0]["tool"] == "sharpen"
+    assert r.metrics_after["jerk"] > r.metrics_before["jerk"]
 
 
 def test_smoother_edit_lowers_jerk():

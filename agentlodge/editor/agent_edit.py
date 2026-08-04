@@ -23,12 +23,11 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from agentlodge.dance.transition import (
-    amplitude_scale,
+    accentuate,
     beat_align_warp,
     crossfade_edit,
     mirror,
     retrograde,
-    temporal_sharpen,
     temporal_smooth,
 )
 from agentlodge.editor.window_edit import (
@@ -51,15 +50,20 @@ def _tool_beat_align(clip, ctx, *, strength: float = 1.0, passes: int = 3):
 
 
 def _tool_energy(clip, ctx, *, direction: str = "up", amount: float = 0.5):
+    """Deterministic, GUARANTEED energy lever: scale the motion's dynamics about its own smooth
+    baseline (see transition.accentuate). Monotone in the energy metric, so 'more/less energetic' is
+    always satisfiable without regenerating -- and it keeps the SAME choreography and tempo (no
+    sped-up-copy look), just bigger or smaller."""
     amount = float(np.clip(amount, 0.0, 1.0))
     if str(direction).lower() == "down":
-        factor = 1.0 - 0.5 * amount
-        verb = "reduced"
+        gain = 1.0 - 0.45 * amount
+        verb = "calmed"
     else:
-        factor = 1.0 + 0.6 * amount
-        verb = "raised"
-    out = amplitude_scale(clip, factor)
-    return out, f"{verb} movement amplitude x{factor:.2f}"
+        gain = 1.0 + 0.85 * amount
+        verb = "energized"
+    taper = int(min(6, max(1, clip.shape[0] // 6)))
+    out = accentuate(clip, gain, baseline_win=13, taper_frames=taper, trans_gain=0.6)
+    return out, f"{verb} the motion x{gain:.2f} (accentuated the dance dynamics about its smooth baseline)"
 
 
 def _tool_smooth(clip, ctx, *, amount: float = 0.6):
@@ -68,8 +72,13 @@ def _tool_smooth(clip, ctx, *, amount: float = 0.6):
 
 
 def _tool_sharpen(clip, ctx, *, amount: float = 0.6):
-    out = temporal_sharpen(clip, float(np.clip(amount, 0.0, 1.2)))
-    return out, f"accentuated hits (unsharp, amount {float(amount):.1f}) for snappier motion"
+    """Amplify the FAST movement band (narrow baseline) for snappier, more staccato attack -- raises
+    jerk by construction, so 'sharper/punchier' is always satisfiable without regenerating."""
+    amount = float(np.clip(amount, 0.0, 1.2))
+    gain = 1.0 + 0.7 * amount
+    taper = int(min(6, max(1, clip.shape[0] // 6)))
+    out = accentuate(clip, gain, baseline_win=5, taper_frames=taper, trans_gain=0.6)
+    return out, f"sharpened the attack x{gain:.2f} (amplified the fast band for snappier hits)"
 
 
 def _tool_mirror(clip, ctx):
@@ -130,15 +139,26 @@ TOOLS: dict[str, ToolSpec] = {
     "beat_align": ToolSpec(_tool_beat_align,
         "time-warp so the motion accents land on the music beats; raises beat alignment (BAS)",
         'params: {"strength": 0..1, "passes": 1..8 (more = tighter)}'),
+    "energy": ToolSpec(_tool_energy,
+        "scale the motion's DYNAMICS up ('more energetic/bigger/stronger/intense') or down "
+        "('calmer/softer/smaller') about its OWN smooth baseline -- same choreography and tempo, just "
+        "bigger or smaller. Moves the energy metric MONOTONICALLY, so it ALWAYS satisfies a more/less "
+        "energetic request without regenerating (fast, deterministic)",
+        'params: {"direction": "up"|"down", "amount": 0..1}'),
     "smooth": ToolSpec(_tool_smooth,
         "low-pass the motion for flowing/graceful movement; lowers jerk",
+        'params: {"amount": 0..1}'),
+    "sharpen": ToolSpec(_tool_sharpen,
+        "amplify the fast movement band for snappier/punchier/staccato attack; raises jerk "
+        "(guaranteed), no regeneration",
         'params: {"amount": 0..1}'),
     "mirror": ToolSpec(_tool_mirror, "flip the window left<->right", "params: {}"),
     "reverse": ToolSpec(_tool_reverse, "play the window backward (retrograde)", "params: {}"),
     "regenerate": ToolSpec(_tool_regenerate,
         "sample genuinely NEW choreography for THIS window from a dance backbone (edge=sharp/punchy, "
-        "lodge=smooth/flowing); the CREATIVE tool -- use for 'more energetic', 'more dynamic', "
-        "'livelier', 'different/new moves', 'mix it up', not just a metric tweak of the same dance",
+        "lodge=smooth/flowing); the VARIETY tool -- use for 'different/new moves', 'freestyle', 'mix "
+        "it up', 'surprise me', i.e. when the user wants DIFFERENT movement, not a metric tweak of the "
+        "current dance",
         'params: {"backbone": "lodge"|"edge"|"auto", "energy": 0..1}'),
 }
 
@@ -156,6 +176,10 @@ def _tool_target(tool: str, params: dict | None) -> tuple[str, str] | None:
         return ("bas", "up")
     if tool == "smooth":
         return ("jerk", "down")
+    if tool == "energy":
+        return ("energy", "down" if str(params.get("direction", "up")).lower() == "down" else "up")
+    if tool == "sharpen":
+        return ("jerk", "up")
     return None
 
 
@@ -354,27 +378,30 @@ class AgentPlan:
     planner_note: str = ""                 # human-readable source / why-fallback (for the UI)
 
 
-# objective (keyword parser) -> a single-tool plan, used as the offline fallback.
+# objective (keyword parser) -> a single-tool plan, used as the offline fallback. Metric intents map
+# to the DETERMINISTIC, monotone levers (energy/sharpen/beat_align/smooth) which are guaranteed and
+# instant; only pure variety ("different / freestyle") uses the generative regenerate tool.
 _OBJ_PLAN = {
     "more_on_beat": ("beat_align", {"strength": 1.0}, "bas", "up", "tighten timing onto the beats"),
-    "calmer":       ("regenerate", {"backbone": "lodge", "energy": 0.2}, "energy", "down", "regenerate a calmer version"),
-    "more_energetic": ("regenerate", {"backbone": "edge", "energy": 0.85}, "energy", "up", "regenerate a more energetic version"),
+    "calmer":       ("energy", {"direction": "down", "amount": 0.6}, "energy", "down", "calm the motion down"),
+    "more_energetic": ("energy", {"direction": "up", "amount": 0.7}, "energy", "up", "energize the motion"),
     "smoother":     ("smooth", {}, "jerk", "down", "smooth out the motion"),
-    "sharper":      ("regenerate", {"backbone": "edge", "energy": 0.7}, "jerk", "up", "regenerate snappier moves"),
+    "sharper":      ("sharpen", {"amount": 0.7}, "jerk", "up", "sharpen the attack"),
     "reverse":      ("reverse", {}, None, None, "play it backward"),
     "mirror":       ("mirror", {}, None, None, "flip left-right"),
-    "exaggerate":   ("regenerate", {"backbone": "edge", "energy": 0.9}, "energy", "up", "regenerate a bigger version"),
+    "exaggerate":   ("energy", {"direction": "up", "amount": 0.9}, "energy", "up", "make the moves bigger"),
 }
 
 # (metric, direction) -> the tool that moves it, for composing a plan from the requested metrics.
-# Intensity/snap are generative (regenerate); only timing (beat_align) and smoothness (smooth) are
-# deterministic, constraint-preserving tweaks.
+# Every metric now has a DETERMINISTIC, monotone lever, so a metric-directed request never depends on
+# what the diffusion backbone happens to sample (the old regenerate route was music-bound and could
+# silently "hold"). Variety requests carry no metric goal and use regenerate separately.
 _METRIC_TOOL = {
     ("bas", "up"): ("beat_align", {"strength": 1.0}),
-    ("energy", "up"): ("regenerate", {"backbone": "edge", "energy": 0.85}),
-    ("energy", "down"): ("regenerate", {"backbone": "lodge", "energy": 0.2}),
+    ("energy", "up"): ("energy", {"direction": "up", "amount": 0.7}),
+    ("energy", "down"): ("energy", {"direction": "down", "amount": 0.6}),
     ("jerk", "down"): ("smooth", {"amount": 0.6}),
-    ("jerk", "up"): ("regenerate", {"backbone": "edge", "energy": 0.7}),
+    ("jerk", "up"): ("sharpen", {"amount": 0.7}),
 }
 
 
@@ -403,6 +430,21 @@ def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
     cycle = int(feedback.get("cycle", 1)) if feedback else 0
     mag = 0.8 if any(w in (" " + instruction.lower() + " ")
                      for w in (" much ", " way ", " a lot ", " very ", " really ", " super ")) else 0.5
+    # Pure VARIETY (no metric target): the user wants genuinely different movement -> regenerate with
+    # an empty goal list (any fresh sample succeeds). Only fires when no metric keyword is present, so
+    # "more energetic" (a metric) still routes to the deterministic energy lever, not here.
+    if not reqs:
+        s = " " + instruction.lower().strip() + " "
+        variety = ("different", "freestyle", "fresh", "new moves", "new choreo", "mix it up",
+                   "mix things up", "switch it up", "surprise me", "something else", "vary it",
+                   "more interesting", "change it up", "remix", "reinvent")
+        if any(w in s for w in variety):
+            p = {"backbone": "auto", "energy": 0.5}
+            if feedback:
+                p = _escalate_params("regenerate", p, cycle)
+            return AgentPlan(summary=("push harder: " if feedback else "") + "regenerate new choreography",
+                             steps=[PlanStep("regenerate", p, "sample genuinely different moves")],
+                             expect_metric=None, expect_dir=None, goals=[])
     if reqs:
         steps = []
         for metric, direction, label in reqs:
@@ -464,22 +506,31 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         '"calmer but keep it tight" -> [{"metric":"energy","direction":"down"},{"metric":"bas","direction":"up"}]; '
         '"snappier staccato hits" -> [{"metric":"jerk","direction":"up"}]; '
         '"tighten it to the beat" -> [{"metric":"bas","direction":"up"}]; '
+        '"different / fresh / freestyle / surprise me / mix it up" -> []; '
         '"reverse this"/"mirror it" -> []. '
-        "Pick the FEWEST tools that match the user's intent, by meaning not keywords. Most requests "
-        "are ONE lever:\n"
-        "1) TIMING only (tighter / on the beat / in time / lock to the grid) -> 'beat_align' ALONE, "
-        "goal [bas up]. Do NOT regenerate and do NOT add an energy or jerk goal.\n"
-        "2) SMOOTHNESS only (smoother / flowing / less jitter) -> 'smooth' ALONE, goal [jerk down].\n"
-        "3) EXACT TRANSFORM (reverse / mirror / flip) -> that ONE tool, goals MUST be [].\n"
-        "4) CONTENT / INTENSITY (more energetic / dynamic / livelier, calmer / mellower, snappier / "
-        "punchier, or different / new / more interesting / varied) -> 'regenerate' -- ONLY these change "
-        "WHAT the body does, so ONLY these regenerate. It samples genuinely NEW choreography from the "
-        "backbones (edge = punchy / energetic, lodge = smooth / calm; auto = agent picks) instead of "
-        "resizing or high-passing the existing moves (which looks like a sped-up or jittery copy). Bias "
-        "energy 0.7-0.9 for energetic / snappy, 0.1-0.3 for calmer. Append a beat_align finisher ONLY if "
-        "the user ALSO asked for timing. \n"
-        "There is NO amplitude-scale or sharpen tool. A light 'smooth' STEP (amount ~0.1-0.2) at the end "
-        "of a regenerate is a STEP, not a goal -- do NOT put jerk in goals for it. NEVER add a goal the "
+        "Pick the FEWEST tools that match the user's intent, by meaning not keywords. Every metric has "
+        "a DEDICATED, deterministic lever that is guaranteed to move it the right way -- prefer these "
+        "over regenerate for any metric-directed request:\n"
+        "1) TIMING (tighter / on the beat / in time / lock to the grid) -> 'beat_align' ALONE, "
+        "goal [bas up]. Do NOT add an energy or jerk goal.\n"
+        "2) SMOOTHNESS (smoother / flowing / less jitter) -> 'smooth' ALONE, goal [jerk down].\n"
+        "3) ENERGY / INTENSITY (more energetic / bigger / stronger / intense -> 'energy' direction=up; "
+        "calmer / softer / smaller / mellower -> 'energy' direction=down). The 'energy' lever scales the "
+        "SAME choreography's dynamics up or down about its own smooth baseline (no tempo change, no "
+        "sped-up-copy look) and moves the energy metric monotonically, so it ALWAYS satisfies the "
+        "request. goal [energy up] or [energy down]. Amount 0.6-0.9 for 'much/way', ~0.5 otherwise.\n"
+        "4) SNAP (snappier / punchier / staccato / crisper / sharper) -> 'sharpen' ALONE, goal [jerk up].\n"
+        "5) EXACT TRANSFORM (reverse / mirror / flip) -> that ONE tool, goals MUST be [].\n"
+        "6) VARIETY / NEW MOVES (different / new / fresh / freestyle / mix it up / surprise me / more "
+        "interesting) -> 'regenerate' -- this is the ONLY tool that changes WHAT the body does; it "
+        "samples genuinely NEW choreography from the backbones (edge = punchy, lodge = smooth; auto = "
+        "agent picks). For PURE VARIETY the goal list is EMPTY [] (any fresh sample is a success). Use "
+        "regenerate ONLY when the user wants DIFFERENT movement, not merely a bigger/smaller/tighter "
+        "version of the current dance.\n"
+        "COMBINING: if the user wants new moves AND a metric (e.g. 'give me different, more energetic "
+        "moves') put 'regenerate' FIRST then the metric lever ('energy' up) so the fresh clip is then "
+        "dialed to hit the target; goal = the metric only. A light 'smooth' STEP (amount ~0.1-0.2) after "
+        "a regenerate is a STEP, not a goal -- do NOT put jerk in goals for it. NEVER add a goal the "
         "user did not explicitly ask for: an extra goal conflicts with the real one and gets the whole "
         "edit rejected (e.g. adding energy to 'tighten to the beat' makes it do nothing)."
     )

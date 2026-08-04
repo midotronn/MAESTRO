@@ -570,6 +570,92 @@ def _quat_to_aa(q: np.ndarray) -> np.ndarray:
     return q[..., 1:] / s * (2.0 * np.arccos(w))
 
 
+def _quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Hamilton product of quaternions [w, x, y, z] (..., 4). Numpy only."""
+    aw, ax, ay, az = a[..., 0], a[..., 1], a[..., 2], a[..., 3]
+    bw, bx, by, bz = b[..., 0], b[..., 1], b[..., 2], b[..., 3]
+    return np.stack([
+        aw * bw - ax * bx - ay * by - az * bz,
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+    ], axis=-1)
+
+
+def _quat_conj(q: np.ndarray) -> np.ndarray:
+    """Conjugate (inverse for a unit quaternion) of [w, x, y, z] (..., 4)."""
+    out = np.array(q, dtype=q.dtype, copy=True)
+    out[..., 1:] *= -1.0
+    return out
+
+
+def _taper_gain(n: int, gain: float, taper: int) -> np.ndarray:
+    """Per-frame gain that eases from 1.0 at BOTH ends to ``gain`` in the interior (smoothstep).
+
+    Keeping the ends at 1.0 leaves the window's first/last poses (and their velocities) unchanged so
+    the spliced seams stay continuous -- the accentuation only bites in the window interior.
+    """
+    g = np.full(int(n), float(gain), dtype=np.float64)
+    taper = int(max(0, min(taper, n // 2)))
+    if taper > 0:
+        t = (np.arange(taper) + 1.0) / (taper + 1.0)
+        ramp = t * t * (3.0 - 2.0 * t)                       # smoothstep 0 -> 1
+        g[:taper] = 1.0 + (gain - 1.0) * ramp
+        g[n - taper:] = 1.0 + (gain - 1.0) * ramp[::-1]
+    return g
+
+
+def accentuate(motion139: np.ndarray, gain: float, *, baseline_win: int = 13,
+               taper_frames: int = 6, trans_gain: float | None = None) -> np.ndarray:
+    """Amplify (``gain`` > 1) or attenuate (``gain`` < 1) the motion's DYNAMICS about a smooth
+    per-frame baseline -- the manifold-correct 'energy' lever.
+
+    ``amplitude_scale`` scales every pose about ONE global mean pose, which distorts posture, drags
+    the whole body toward an average, and injects jerk (this is why "make it energetic" used to look
+    like a jittery/sped-up copy). ``accentuate`` instead decomposes the motion into a geodesic
+    low-pass BASELINE (the slow postural trajectory) plus a residual (the actual dance dynamics) and
+    scales ONLY the residual, per frame, so posture is preserved and the amplified rotations stay on
+    SO(3). Because the energy metric is the mean per-frame speed and the residual carries that speed,
+    energy moves MONOTONICALLY with ``gain`` -- the property the edit loop uses to *guarantee* that
+    "more/less energetic" is always satisfiable without regeneration. The gain eases to 1.0 over
+    ``taper_frames`` at both ends so the spliced seams are unchanged. Rotations use the geodesic
+    residual ``q_base^{-1} q``; translation uses the Euclidean residual; contacts are untouched.
+
+    ``baseline_win`` selects the amplified band: ~0.4 s (default 13 frames @ 30fps) scales the whole
+    dance dynamic (bigger/smaller feel); a few frames scales only the fast band (snappier attack).
+    ``trans_gain`` optionally damps root-translation scaling (0..1 of the rotation gain) to limit foot
+    sliding; ``None`` scales translation with the same gain.
+    """
+    m = motion139.astype(np.float32)
+    n = int(m.shape[0])
+    gain = float(gain)
+    if n < 3 or abs(gain - 1.0) < 1e-6:
+        return m.copy()
+    win = int(max(3, baseline_win))
+    g = _taper_gain(n, gain, taper_frames)                   # (n,) rotation gain
+    if trans_gain is None:
+        tg = g
+    else:
+        f = float(np.clip(trans_gain, 0.0, 1.0))
+        tg = _taper_gain(n, 1.0 + f * (gain - 1.0), taper_frames)
+    out = m.copy()
+    # translation: scale the residual about the low-pass baseline (Euclidean)
+    tb = _kin_lowpass(m[:, _TRANS], win)
+    out[:, _TRANS] = tb + tg[:, None] * (m[:, _TRANS] - tb)
+    # rotation: scale the GEODESIC residual about the low-pass quaternion baseline
+    r6 = m[:, _ROT].reshape(n, NUM_JOINTS, 6)
+    q = _aa_to_quat(_matrix_to_axis_angle(_sixd_to_matrix(r6))).astype(np.float64)   # (n, 22, 4)
+    d = np.sum(q[1:] * q[:-1], axis=-1)                      # align hemispheres along time
+    q[1:] *= np.cumprod(np.where(d < 0.0, -1.0, 1.0), axis=0)[..., None]
+    qb = _kin_lowpass(q.reshape(n, NUM_JOINTS * 4), win).reshape(n, NUM_JOINTS, 4)
+    qb = qb / np.clip(np.linalg.norm(qb, axis=-1, keepdims=True), 1e-12, None)
+    aa_res = _quat_to_aa(_quat_mul(_quat_conj(qb), q))       # residual rotation vector (n, 22, 3)
+    q_out = _quat_mul(qb, _aa_to_quat(g[:, None, None] * aa_res))
+    R = _axis_angle_to_matrix(_quat_to_aa(q_out))
+    out[:, _ROT] = _matrix_to_sixd(R).reshape(n, NUM_JOINTS * 6).astype(np.float32)
+    return out
+
+
 def temporal_smooth(motion139: np.ndarray, amount: float = 0.5) -> np.ndarray:
     """Reduce jerk by low-passing the motion over time (``amount`` in [0,1] -> kernel width).
 
