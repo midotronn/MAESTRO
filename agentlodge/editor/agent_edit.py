@@ -43,66 +43,41 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================ toolbox
-def _match_lever(clip, ctx, metric: str, direction: str):
-    """Dial the deterministic monotone lever for (metric, direction) until the clip reaches the
-    ORIGINAL window's value for that metric (``ctx['base_metrics']``) -- "match or exceed".
-
-    This is the GENERAL version of the energy floor: after a regenerate, ANY declared metric goal is
-    met by dialing its own lever up to at least the original level, so a fresh (diffusion) take is
-    never worse on that metric than the dance it replaced. Energy uses ``accentuate``, smoothness the
-    low-pass / fast-band, beat alignment the time-warp -- each monotone, so the search always converges
-    (within the lever's range). Returns (clip, note)."""
-    wbeats = ctx.get("wbeats")
-    target = float((ctx.get("base_metrics") or {}).get(metric, 0.0))
+# One dispatch maps each metric with a monotone lever to its (apply, strengths). Both the planner
+# (_METRIC_TOOL) and the post-regenerate guarantee (_reach_goals_after_regen) use it, so there is no
+# per-metric special-casing beyond this single table.
+def _lever_for(metric: str, direction: str, ctx: dict):
+    """(apply(clip, strength) -> clip, ascending strengths) for the deterministic monotone lever that
+    moves (metric, direction), or (None, ()) when the metric has no lever (e.g. foot contact)."""
     up = str(direction).lower() != "down"
-    label = METRIC_LABEL.get(metric, metric)
-    taper = int(min(6, max(1, clip.shape[0] // 6)))
-    tgt = target * (1.05 if up else 0.95)                    # small margin so it clears the verify tolerance
-    hit = (lambda v: v >= tgt) if up else (lambda v: v <= tgt)
+
+    def _taper(clip):
+        return int(min(6, max(1, clip.shape[0] // 6)))
+
     if metric == "energy":
-        strengths = (1.15, 1.3, 1.5, 1.7, 1.9, 2.1) if up else (0.9, 0.8, 0.7, 0.6, 0.5)
-        apply = lambda s: accentuate(clip, s, baseline_win=13, taper_frames=taper, trans_gain=0.6)
-    elif metric == "jerk" and up:                            # sharper: amplify the fast band
-        strengths = (1.2, 1.4, 1.6, 1.8, 2.0)
-        apply = lambda s: accentuate(clip, s, baseline_win=5, taper_frames=taper, trans_gain=0.6)
-    elif metric == "jerk":                                   # smoother: low-pass
-        strengths = (0.2, 0.35, 0.5, 0.7, 0.9)
-        apply = lambda s: temporal_smooth(clip, s)
-    elif metric == "bas":                                    # tighter to the beat
-        strengths = (3, 4, 5, 6, 8)
-        apply = lambda s: beat_align_warp(clip, ctx["wbeats"], strength=1.0, passes=int(s))
-    else:
-        return clip.copy(), f"no lever to match {label}"
-    if target <= 0.0 or hit(window_metrics(clip, wbeats)[metric]):
-        return clip.copy(), f"the new motion already matches the original {label} ({target:.3f})"
-    cand = clip
-    for s in strengths:
-        cand = apply(s)
-        if hit(window_metrics(cand, wbeats)[metric]):
-            break
-    return cand, f"dialed the new motion's {label} to match/exceed the original ({target:.3f})"
+        strengths = (1.15, 1.3, 1.5, 1.7, 1.9, 2.1, 2.4, 2.7) if up else (0.9, 0.8, 0.7, 0.6, 0.5, 0.4)
+        return (lambda clip, s: accentuate(clip, s, baseline_win=13, taper_frames=_taper(clip), trans_gain=0.6)), strengths
+    if metric == "jerk" and up:                              # sharper: amplify the fast band
+        return (lambda clip, s: accentuate(clip, s, baseline_win=5, taper_frames=_taper(clip), trans_gain=0.6)), (1.2, 1.4, 1.6, 1.8, 2.0, 2.4)
+    if metric == "jerk":                                     # smoother: low-pass
+        return (lambda clip, s: temporal_smooth(clip, s)), (0.2, 0.35, 0.5, 0.7, 0.9)
+    if metric == "bas":                                      # tighter to the beat
+        return (lambda clip, s: beat_align_warp(clip, ctx["wbeats"], strength=1.0, passes=int(s))), (3, 4, 5, 6, 8)
+    return None, ()
 
 
-def _tool_beat_align(clip, ctx, *, strength: float = 1.0, passes: int = 3, match: bool = False):
-    if match:                                                # dial BAS up to the original (post-regenerate)
-        return _match_lever(clip, ctx, "bas", "up")
+def _tool_beat_align(clip, ctx, *, strength: float = 1.0, passes: int = 3):
     strength = float(np.clip(strength, 0.0, 1.0))
     passes = int(np.clip(passes, 1, 8))
     out = beat_align_warp(clip, ctx["wbeats"], strength=strength, passes=passes)
     return out, f"snapped the window's accents onto the music beats (strength {strength:.1f})"
 
 
-def _tool_energy(clip, ctx, *, direction: str = "up", amount: float = 0.5, match: bool = False):
+def _tool_energy(clip, ctx, *, direction: str = "up", amount: float = 0.5):
     """Deterministic, GUARANTEED energy lever: scale the motion's dynamics about its own smooth
     baseline (see transition.accentuate). Monotone in the energy metric, so 'more/less energetic' is
     always satisfiable without regenerating -- and it keeps the SAME choreography and tempo (no
-    sped-up-copy look), just bigger or smaller.
-
-    ``match=True`` (used after a regenerate) DIALS the gain until the clip's energy at least matches the
-    ORIGINAL window's energy (``ctx['base_metrics']``) instead of applying a fixed amount -- i.e.
-    "amplify the new motion until the energy is matched or exceeded"."""
-    if match:
-        return _match_lever(clip, ctx, "energy", "down" if str(direction).lower() == "down" else "up")
+    sped-up-copy look), just bigger or smaller."""
     amount = float(np.clip(amount, 0.0, 1.0))
     if str(direction).lower() == "down":
         gain = 1.0 - 0.45 * amount
@@ -115,18 +90,14 @@ def _tool_energy(clip, ctx, *, direction: str = "up", amount: float = 0.5, match
     return out, f"{verb} the motion x{gain:.2f} (accentuated the dance dynamics about its smooth baseline)"
 
 
-def _tool_smooth(clip, ctx, *, amount: float = 0.6, match: bool = False):
-    if match:                                                # dial jerk DOWN to the original (post-regenerate)
-        return _match_lever(clip, ctx, "jerk", "down")
+def _tool_smooth(clip, ctx, *, amount: float = 0.6):
     out = temporal_smooth(clip, float(np.clip(amount, 0.0, 1.0)))
     return out, f"low-pass smoothed the motion (amount {float(amount):.1f}) to reduce jerk"
 
 
-def _tool_sharpen(clip, ctx, *, amount: float = 0.6, match: bool = False):
+def _tool_sharpen(clip, ctx, *, amount: float = 0.6):
     """Amplify the FAST movement band (narrow baseline) for snappier, more staccato attack -- raises
     jerk by construction, so 'sharper/punchier' is always satisfiable without regenerating."""
-    if match:                                                # dial jerk UP to the original (post-regenerate)
-        return _match_lever(clip, ctx, "jerk", "up")
     amount = float(np.clip(amount, 0.0, 1.2))
     gain = 1.0 + 0.7 * amount
     taper = int(min(6, max(1, clip.shape[0] // 6)))
@@ -728,42 +699,63 @@ def plan_edit(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
     return p
 
 
-def _normalize_plan(plan: AgentPlan, goals: list) -> AgentPlan:
-    """Agent policy applied to whatever the planner produced: a ``regenerate`` that carries a metric
-    goal MUST be followed by that metric's deterministic lever, so the fresh take is dialed until the
-    metric matches/exceeds the original.
+_LEVER_TOOLS = {"energy", "beat_align", "smooth", "sharpen"}
 
-    Diffusion output is not directly controllable on ANY of the graded metrics, so a bare
-    ``regenerate`` typically HOLDS them and then gets rejected ("none of the regenerated takes improved
-    <metric> -> kept the original"). The fix is agentic, not a hidden tool side effect: the agent
-    composes ``[regenerate, <lever>(match)]`` as explicit, separately-logged steps, one per declared
-    metric goal (energy, beat alignment, smoothness, ...). If the planner already added a lever for a
-    metric we respect it (it chose the amount); otherwise we append a target-matching lever step right
-    after the last regenerate."""
-    if not goals:
+
+def _plan_for_regen(plan: AgentPlan) -> AgentPlan:
+    """When the plan REGENERATES, drop the metric-lever steps (energy/beat_align/smooth/sharpen): the
+    post-regenerate guarantee (:func:`_reach_goals_after_regen`) dials every declared metric onto the
+    target from the FRESH clip, so an LLM-added lever step would only double-amplify. Non-lever steps
+    (mirror/reverse) are kept. Plans without a regenerate are returned unchanged."""
+    if not any(s.tool == "regenerate" for s in plan.steps):
         return plan
-    steps = list(plan.steps)
-    regen_ix = [i for i, s in enumerate(steps) if s.tool == "regenerate"]
-    if not regen_ix:
-        return plan
-    present = {s.tool for s in steps}
-    insert_at = regen_ix[-1] + 1
-    added = False
-    for metric, direction, label in goals:
-        tp = _METRIC_TOOL.get((metric, direction))           # the lever that moves this metric
-        if not tp or tp[0] in present:
-            continue
-        tool, base_params = tp
-        params = {k: v for k, v in base_params.items() if k == "direction"}   # energy is the only bidirectional lever
-        params["match"] = True
-        steps.insert(insert_at, PlanStep(tool, params,
-                     f"dial the new motion's {label} to match or exceed the original"))
-        insert_at += 1
-        present.add(tool)
-        added = True
-    if added:
-        plan.steps = steps
+    kept = [s for s in plan.steps if s.tool not in _LEVER_TOOLS]
+    if kept != plan.steps:
+        plan.steps = kept
     return plan
+
+
+def _reach_goals_after_regen(cur, motion, a, b, goals, before, wbeats, blend_frames, ctx):
+    """After a ``regenerate``, DIAL each declared metric's lever on the fresh clip until the SPLICED
+    window MEETS the goal versus the original (matches/exceeds for up, matches/undercuts for down),
+    escalating the lever's strength until it is met or the lever's range is exhausted.
+
+    This is the agent-level guarantee that a fresh (diffusion) take is put ON the user's target instead
+    of being rejected for merely holding the metric ("none of the regenerated takes improved <metric>
+    -> kept the original"). It is measured on the SPLICED window -- what the user actually gets -- so
+    the crossfade's edge dilution is accounted for (a raw-clip match is not enough). Generalized over
+    every metric via :func:`_lever_for`. Returns (cur, log_steps)."""
+    steps = []
+
+    def _spliced(clip):
+        return window_metrics(crossfade_edit(motion, a, b, clip, blend_frames=blend_frames)[a:b], wbeats)
+
+    for metric, direction, label in goals:
+        apply, strengths = _lever_for(metric, direction, ctx)
+        if apply is None:
+            continue
+        m_before = _spliced(cur)
+        if _classify(metric, before.get(metric, 0.0), m_before[metric], direction) == "improved":
+            continue                                         # this metric already meets the goal
+        best_clip, best_val = cur, m_before[metric]
+        for s in strengths:
+            cand = apply(cur, s)                             # dial from the fresh clip (not compounding)
+            v = _spliced(cand)[metric]
+            improved_toward = (v > best_val) if direction == "up" else (v < best_val)
+            if improved_toward:
+                best_clip, best_val = cand, v
+            if _classify(metric, before.get(metric, 0.0), v, direction) == "improved":
+                best_clip, best_val = cand, v                # reached the goal on the spliced window
+                break
+        m_after = _spliced(best_clip)
+        tool = (_METRIC_TOOL.get((metric, direction)) or (metric,))[0]
+        steps.append({"cycle": ctx.get("_cycle", 1), "tool": tool, "params": {"match": True},
+                      "why": f"dial {label} onto the target after regenerating",
+                      "note": f"dialed the new motion's {label} to {best_val:.3f} (target {before.get(metric, 0.0):.3f})",
+                      "status": "applied", "target": [metric, direction],
+                      "metrics_before": m_before, "metrics_after": m_after})
+        cur = best_clip
+    return cur, steps
 
 
 # ============================================================================ execute
@@ -858,7 +850,7 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     # agent dropped, and is the sole source offline (no api key). Neither has to be exhaustive alone.
     plan = plan_edit(instruction, before, a_sec, b_sec, api_key=api_key)
     goals = _merge_goals(list(plan.goals), _requested_metrics(instruction))
-    plan = _normalize_plan(plan, goals)                # agent policy: regenerate + match-energy, etc.
+    plan = _plan_for_regen(plan)                       # regenerate -> the guarantee dials the metrics
     ctx["goals"] = goals                               # let regenerate rank seeds by the declared goals
     goals_json = [{"metric": m, "dir": d, "label": lbl} for m, d, lbl in goals]
 
@@ -873,17 +865,31 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     plan_summary0 = plan.summary                       # what the agent proposed (kept for the UI header)
     total_attempts = (max(0, int(max_refine)) + 1) if goals else 1
 
-    # Baseline = keep the window untouched. An attempt is adopted only if it BEATS this on the goal
-    # metrics, so the agent can never ship an edit that is worse than the original -- e.g. when beat
-    # alignment is already tight and any change (plus the edge-blend) would only lower it.
-    if goals:
+    # A request that REGENERATES wants a genuinely new motion; the untouched original is NOT an
+    # acceptable output for it, so it does not seed the baseline (best=None -> the new motion is always
+    # adopted, and the post-regen guarantee dials it onto the target). A pure metric tweak (no
+    # regenerate) DOES seed the untouched baseline, so the agent can honestly keep the original when no
+    # deterministic edit can beat it. Goalless ops (reverse/mirror) always apply.
+    wants_new = any(s.tool == "regenerate" for s in plan.steps)
+    if goals and not wants_new:
         ok0, checks0, _ = _verify_goals(goals, before, before)
         best = (0.0, motion, before, ok0, True, True, checks0, 0, base_clip)   # (reward, spliced, after, ok, guard_ok, no_reg, checks, cycle, win_cur)
     else:
-        best = None                                     # a goalless op (reverse/mirror) always applies
+        best = None
 
     for cycle in range(total_attempts):
+        ctx["_cycle"] = cycle + 1
         cur, step_log = _execute_plan(base_clip, plan, ctx, wbeats, cycle=cycle + 1, emit=_emit)
+        # Post-regenerate guarantee: dial each goal metric onto the target on the SPLICED window so a
+        # fresh take that merely held the metric is put on the user's target instead of being rejected.
+        if goals and any(s.get("tool") == "regenerate" and s.get("status") == "applied" for s in step_log):
+            cur, reach_steps = _reach_goals_after_regen(cur, motion, a, b, goals, before, wbeats,
+                                                        blend_frames, ctx)
+            for rs in reach_steps:
+                _emit({"phase": "step", "cycle": cycle + 1, "step": len(step_log) + 1,
+                       "n_steps": len(step_log) + 1, "tool": rs["tool"], "why": rs["why"],
+                       "note": rs["note"], "status": "applied", "metrics": rs["metrics_after"]})
+                step_log.append(rs)
         full_log.extend(step_log)
         # Verify on the SPLICED window -- exactly what the user ends up with (edge cross-fade included),
         # not the raw edited clip. crossfade_edit blends the window's edges back toward its OWN original
@@ -924,7 +930,7 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
               "prev_steps": [{"tool": s.tool, "params": s.params} for s in plan.steps],
               "misses": misses, "cycle": cycle + 1}
         plan = plan_edit(instruction, after, a_sec, b_sec, api_key=api_key, feedback=fb, goals=goals)
-        plan = _normalize_plan(plan, goals)                # same agent policy on the refined plan
+        plan = _plan_for_regen(plan)
         _emit({"phase": "refine", "cycle": cycle + 2, "summary": plan.summary,
                "planner": plan.planner, "planner_note": plan.planner_note,
                "steps": [{"tool": s.tool, "why": s.why} for s in plan.steps]})
