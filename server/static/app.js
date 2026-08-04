@@ -81,16 +81,43 @@ async function pollRender() {
 }
 
 // -------------------------------------------------------------- before/after window comparison
+function populateCmpVersions() {
+  const sel = $("cmpVersion");
+  if (!sel) return;
+  const tl = ST.timeline || [];
+  const head = tl.find((c) => c.is_head) || tl[tl.length - 1];
+  if (!head) { sel.innerHTML = ""; return; }
+  // candidate "before" versions = every checkpoint except the current one, newest first; default is
+  // the state right before the last edit (the head's parent).
+  const opts = tl.filter((c) => c.id !== head.id).slice().reverse();
+  const prev = sel.value;
+  sel.innerHTML = "";
+  opts.forEach((c) => {
+    const o = document.createElement("option");
+    o.value = c.id;
+    const isParent = c.id === head.parent_id;
+    o.textContent = (c.label || "original") + (isParent ? " (pre-edit)" : "");
+    sel.appendChild(o);
+  });
+  // keep the previous choice if still valid, else default to the head's parent
+  if (prev && opts.some((c) => c.id === prev)) sel.value = prev;
+  else if (head.parent_id) sel.value = head.parent_id;
+  sel.disabled = opts.length <= 1;
+}
+
 async function startCompare() {
   const panel = $("compare"); panel.hidden = false;
+  populateCmpVersions();
   panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
   const st = $("cmpStatus"); st.style.display = "block"; st.className = "render-status";
-  st.textContent = "starting before/after render\u2026";
+  st.textContent = "starting comparison render\u2026";
   $("cmpProgWrap").hidden = false; $("cmpProg").style.width = "3%";
   $("compareBtn").disabled = true;
   try {
+    const fromId = ($("cmpVersion") && $("cmpVersion").value) || null;
     await api(`/api/session/${ST.sid}/compare`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from_id: fromId }) });
     pollCompare();
   } catch (e) {
     st.className = "render-status bad"; st.textContent = "\u26a0 " + e.message;
@@ -106,13 +133,13 @@ async function pollCompare() {
   st.textContent = (j.status === "rendering" ? "\u{1F3AC} " : "") + (j.message || j.status);
   $("cmpProgWrap").hidden = false; $("cmpProg").style.width = (j.progress || 0) + "%";
   if (j.status === "done") {
-    setupCompareVideos(j.before_video, j.after_video, j.metrics || {});
+    setupCompareVideos(j.before_video, j.after_video, j.metrics || {}, j.audio);
     st.className = "render-status ok";
-    st.textContent = `\u2714 before/after ready${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
+    st.textContent = `\u2714 comparison ready${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
     $("cmpProgWrap").hidden = true;
     $("compareBtn").disabled = false;
     setTimeout(() => { st.style.display = "none"; }, 5000);
-    toast("Before/after ready");
+    toast("Comparison ready");
     return;
   }
   if (j.status === "error") {
@@ -128,6 +155,7 @@ function showCompareMetrics(m) {
   const t = $("cmpMetrics"); t.innerHTML = "";
   const b = m.before || {}, a = m.after || {};
   if (m.window_sec) $("cmpWin").textContent = `(${m.window_sec[0]}\u2013${m.window_sec[1]}s)`;
+  if (m.before_label && $("cmpCapBefore")) $("cmpCapBefore").textContent = "Before \u2014 " + m.before_label;
   if (b.bas === undefined) return;
   t.appendChild(metricHeader());
   ["energy", "bas", "jerk", "foot"].forEach((k) => {
@@ -136,29 +164,41 @@ function showCompareMetrics(m) {
   });
 }
 
-function setupCompareVideos(beforeName, afterName, metrics) {
-  const A = $("cmpAfter"), B = $("cmpBefore");
+function setupCompareVideos(beforeName, afterName, metrics, audioName) {
+  const A = $("cmpAfter"), B = $("cmpBefore"), AU = $("cmpAudio");
   const bust = "?t=" + Date.now();
   A.src = `/api/session/${ST.sid}/media/${afterName}${bust}`;
   B.src = `/api/session/${ST.sid}/media/${beforeName}${bust}`;
   A.load(); B.load();
+  // window music: a small clip the same length as the window, looped in sync with the (looping)
+  // videos. The clips and the audio are all 0-based over the window, so audio.currentTime == A.time.
+  const haveAudio = !!(audioName && AU);
+  if (AU) {
+    AU.src = haveAudio ? `/api/session/${ST.sid}/media/${audioName}${bust}` : "";
+    AU.muted = !haveAudio;
+    if (haveAudio) AU.load();
+  }
   showCompareMetrics(metrics);
   const setPlayLabel = () => { $("cmpPlay").textContent = A.paused ? "\u25b6 Play both" : "\u23f8 Pause"; };
-  const playBoth = () => { A.play().catch(() => {}); B.play().catch(() => {}); setPlayLabel(); };
-  const pauseBoth = () => { A.pause(); B.pause(); setPlayLabel(); };
+  const playAudio = () => { if (haveAudio) { try { AU.currentTime = A.currentTime || 0; } catch (e) {} AU.play().catch(() => {}); } };
+  const playBoth = () => { A.play().catch(() => {}); B.play().catch(() => {}); playAudio(); setPlayLabel(); };
+  const pauseBoth = () => { A.pause(); B.pause(); if (haveAudio) AU.pause(); setPlayLabel(); };
   $("cmpPlay").onclick = () => { A.paused ? playBoth() : pauseBoth(); };
-  A.onplay = () => { if (B.paused) B.play().catch(() => {}); setPlayLabel(); };
-  A.onpause = () => { if (!B.paused) B.pause(); setPlayLabel(); };
-  A.ontimeupdate = () => {                                  // keep "before" locked to "after"
+  A.onplay = () => { if (B.paused) B.play().catch(() => {}); playAudio(); setPlayLabel(); };
+  A.onpause = () => { if (!B.paused) B.pause(); if (haveAudio) AU.pause(); setPlayLabel(); };
+  A.ontimeupdate = () => {                                  // keep "before" + music locked to "after"
     const d = A.duration || 1;
     $("cmpScrub").value = Math.round((A.currentTime / d) * 1000);
     if (isFinite(A.currentTime) && Math.abs((B.currentTime || 0) - A.currentTime) > 0.08) {
       try { B.currentTime = A.currentTime; } catch (e) {}
     }
+    if (haveAudio && isFinite(A.currentTime) && Math.abs((AU.currentTime || 0) - A.currentTime) > 0.18) {
+      try { AU.currentTime = A.currentTime; } catch (e) {}
+    }
   };
   $("cmpScrub").oninput = () => {
     const d = A.duration || 1, t = ($("cmpScrub").value / 1000) * d;
-    try { A.currentTime = t; B.currentTime = t; } catch (e) {}
+    try { A.currentTime = t; B.currentTime = t; if (haveAudio) AU.currentTime = t; } catch (e) {}
   };
   A.onloadeddata = () => { playBoth(); };
 }
@@ -178,8 +218,10 @@ async function init() {
   $("compareBtn").onclick = startCompare;
   $("cmpClose").onclick = () => {
     $("compare").hidden = true;
-    try { $("cmpAfter").pause(); $("cmpBefore").pause(); } catch (e) {}
+    try { $("cmpAfter").pause(); $("cmpBefore").pause(); $("cmpAudio").pause(); } catch (e) {}
   };
+  const cmpVer = $("cmpVersion");
+  if (cmpVer) cmpVer.onchange = () => { if (!$("compare").hidden) startCompare(); };
   $("undo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/undo`, { method: "POST" }));
   $("redo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/redo`, { method: "POST" }));
   $("instruction").addEventListener("keydown", (e) => { if (e.key === "Enter") runEdit(); });
@@ -198,10 +240,12 @@ function applyState(st, opts) {
   opts = opts || {};
   ST.fps = st.fps; ST.dur = st.duration; ST.nframes = st.n_frames; ST.beats = st.n_beats; ST.head = st.head;
   ST.generator = st.generator;
+  ST.timeline = st.timeline || [];
   setGenBadge(st.generator);
   $("undo").disabled = !st.can_undo; $("redo").disabled = !st.can_redo;
   drawBeatsTicks();
   renderHistory(st.timeline);
+  if (!$("compare").hidden) populateCmpVersions();          // keep the version picker current
   if (!opts.keepMetrics && st.metrics && st.metrics.energy !== undefined) showCurrentMetrics(st.metrics);
 }
 

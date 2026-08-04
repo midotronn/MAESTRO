@@ -127,11 +127,13 @@ def test_compare_after_edit_renders_before_and_after(client, monkeypatch):
     import server.rendering as R
     captured: dict = {}
 
-    def fake_start(sid, before, after, media_dir, *, metrics=None):
+    def fake_start(sid, before, after, media_dir, *, metrics=None,
+                   audio_wav=None, audio_start=0.0, audio_dur=0.0):
         captured["sid"] = sid
         captured["before"] = np.asarray(before)
         captured["after"] = np.asarray(after)
         captured["metrics"] = metrics
+        captured["audio"] = (audio_wav, audio_start, audio_dur)
         R._cset(sid, status="rendering", progress=10)
 
     monkeypatch.setattr(R, "start_compare_render", fake_start)
@@ -145,8 +147,34 @@ def test_compare_after_edit_renders_before_and_after(client, monkeypatch):
     # the before/after clips differ (the edit changed the window)
     assert not np.allclose(captured["before"], captured["after"])
     m = captured["metrics"]
-    assert set(("before", "after", "window", "window_sec")) <= set(m)
+    assert set(("before", "after", "window", "window_sec", "before_id", "before_label")) <= set(m)
     assert "bas" in m["before"] and "bas" in m["after"]
     assert m["window_sec"] == [3.0, 6.0]
+    # audio is requested for the window (start = a_sec, dur = window length)
+    assert captured["audio"][1] == 3.0 and abs(captured["audio"][2] - 3.0) < 1e-6
     assert j["status"] in ("queued", "rendering", "idle")
     assert client.get("/api/session/sng/compare").json()["status"] in ("queued", "rendering", "idle")
+
+
+def test_compare_from_id_selects_chosen_prior_version(client, monkeypatch):
+    import server.rendering as R
+    captured: dict = {}
+
+    def fake_start(sid, before, after, media_dir, *, metrics=None,
+                   audio_wav=None, audio_start=0.0, audio_dur=0.0):
+        captured["before"] = np.asarray(before)
+        captured["metrics"] = metrics
+        R._cset(sid, status="rendering", progress=10)
+
+    monkeypatch.setattr(R, "start_compare_render", fake_start)
+    client.post("/api/session/sng")
+    client.post("/api/session/sng/edit", json={"a_sec": 3, "b_sec": 6, "instruction": "more energetic"})
+    st = client.post("/api/session/sng/edit",
+                     json={"a_sec": 3, "b_sec": 6, "instruction": "calmer"}).json()["state"]
+    tl = st["timeline"]
+    root = next(c for c in tl if c.get("parent_id") is None)   # the pre-any-edit base state
+    client.post("/api/session/sng/compare", json={"from_id": root["id"]})
+    # comparing against the ROOT -> "before" is the untouched base window (chosen version honoured)
+    assert captured["metrics"]["before_id"] == root["id"]
+    assert captured["metrics"].get("before_label") is not None
+    assert captured["before"].shape[0] == 90

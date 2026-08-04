@@ -116,9 +116,11 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
   max-height: 62vh; overflow-y: auto;
 }
 .compare[hidden] { display: none; }
-.cmp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.cmp-title { font-size: 13px; font-weight: 650; color: var(--text); }
+.cmp-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.cmp-title { font-size: 13px; font-weight: 650; color: var(--text); margin-right: auto; }
 .cmp-title em { color: var(--muted); font-style: normal; font-size: 11px; margin-left: 4px; }
+.cmp-ver { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.cmp-ver select { padding: 4px 8px; border-radius: 7px; font-size: 12px; max-width: 210px; text-transform: none; letter-spacing: 0; }
 .compare .render-status { position: static; display: none; max-width: none; margin: 0 0 8px; }
 .render-prog { position: absolute; top: 74px; right: 12px; width: 170px; max-width: 60%; z-index: 6; }
 .render-prog[hidden], .cmp-prog[hidden] { display: none; }

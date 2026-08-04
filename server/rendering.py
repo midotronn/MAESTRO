@@ -276,13 +276,34 @@ def _cset(sid: str, **kw) -> None:
 
 
 def start_compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
-                         media_dir: Path, *, metrics: dict | None = None) -> None:
+                         media_dir: Path, *, metrics: dict | None = None,
+                         audio_wav: str | None = None, audio_start: float = 0.0,
+                         audio_dur: float = 0.0) -> None:
     _cset(sid, status="queued", message="queued", progress=3, started=time.time(),
-          metrics=metrics or {}, before_video=None, after_video=None)
+          metrics=metrics or {}, before_video=None, after_video=None, audio=None)
     threading.Thread(
         target=_compare_render,
         args=(sid, np.asarray(before_motion), np.asarray(after_motion), media_dir),
+        kwargs={"audio_wav": audio_wav, "audio_start": audio_start, "audio_dur": audio_dur},
         daemon=True).start()
+
+
+def _extract_window_audio(wav: str | None, start: float, dur: float, out_mp4: Path) -> str | None:
+    """Slice ``[start, start+dur]`` of ``wav`` into a small AAC clip next to the compare videos so the
+    comparison plays the window's music. Returns the file name (served from the media dir) or None if
+    there is no wav or ffmpeg fails. Best-effort: a missing clip just means a silent comparison."""
+    if not wav or dur <= 0 or not Path(wav).exists():
+        return None
+    import subprocess
+    try:
+        out_mp4.parent.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{max(0.0, start):.3f}",
+             "-t", f"{dur:.3f}", "-i", str(wav), "-vn", "-c:a", "aac", "-b:a", "160k", str(out_mp4)],
+            capture_output=True, timeout=60)
+        return out_mp4.name if (r.returncode == 0 and out_mp4.exists()) else None
+    except Exception:  # noqa: BLE001 - audio is a nicety; never let it break the compare
+        return None
 
 
 def _launch_window_render(cfg, sid: str, tag: str, motion: np.ndarray, media_dir: Path,
@@ -397,7 +418,8 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
 
 
 def _compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
-                    media_dir: Path) -> None:
+                    media_dir: Path, *, audio_wav: str | None = None,
+                    audio_start: float = 0.0, audio_dur: float = 0.0) -> None:
     cfg = pod_config()
     if not cfg.host:
         _cset(sid, status="error", progress=0,
@@ -407,13 +429,15 @@ def _compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarra
         _cset(sid, status="error", progress=0, message="nothing to compare (empty window).")
         return
     started = _CJOBS.get(sid, {}).get("started", time.time())
+    # Slice the window's music so the comparison plays with sound (best-effort; silent if unavailable).
+    audio_name = _extract_window_audio(audio_wav, audio_start, audio_dur, media_dir / "cmp_audio.m4a")
     # Fast path: warm Blender pool (editor co-located on the pod). Falls through to the cold ssh
     # render below if the pool is unavailable or fails.
     try:
         if _compare_warm(sid, before_motion, after_motion, media_dir):
             _cset(sid, status="done", progress=100, message="ready",
                   before_video="cmp_before.mp4", after_video="cmp_after.mp4",
-                  elapsed=round(time.time() - started))
+                  audio=audio_name, elapsed=round(time.time() - started))
             return
     except Exception as exc:  # noqa: BLE001 - never let the warm path break compare; fall back
         logger.warning("warm compare path errored (%s); using cold render", exc)
@@ -504,7 +528,7 @@ def _compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarra
                       message=f"could not fetch the {_tag} video.")
                 return
         _cset(sid, status="done", progress=100, message="ready",
-              before_video="cmp_before.mp4", after_video="cmp_after.mp4",
+              before_video="cmp_before.mp4", after_video="cmp_after.mp4", audio=audio_name,
               elapsed=round(time.time() - _CJOBS[sid].get("started", time.time())))
     except Exception as exc:  # noqa: BLE001
         _cset(sid, status="error", progress=0, message=f"compare error: {exc}")

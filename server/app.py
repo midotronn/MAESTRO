@@ -43,7 +43,7 @@ from agentlodge.editor.remote_generator import (
     ResilientWindowGenerator,
 )
 from agentlodge.editor.session import EditSession, SongAssets
-from agentlodge.editor.window_edit import MockWindowGenerator
+from agentlodge.editor.window_edit import MockWindowGenerator, _window_beats, window_metrics
 from server import processing
 from server import rendering
 
@@ -222,6 +222,10 @@ class RenderBody(BaseModel):
     b_sec: float | None = None
 
 
+class CompareBody(BaseModel):
+    from_id: str | None = None   # which prior checkpoint to use as "before" (default: head's parent)
+
+
 # --------------------------------------------------------------------------- routes
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
@@ -362,12 +366,22 @@ def render_status(sid: str) -> dict:
     return rendering.get_render_job(sid)
 
 
-@app.post("/api/session/{sid}/compare")
-def compare(sid: str) -> dict:
-    """Render the edited window BEFORE (pre-edit/parent state) and AFTER (current) as two synced clips.
+def _song_wav(sid: str) -> str | None:
+    """Best-effort path to the song's wav for muxing window audio (editor is co-located on the pod)."""
+    ws = os.environ.get("WORKSPACE", "/workspace")
+    for p in (Path(ws) / "LODGE" / "data" / "finedance" / "music_wav" / f"{sid}.wav",
+              _song_dir(sid) / f"{sid}.wav"):
+        if p.exists():
+            return str(p)
+    return None
 
-    The head checkpoint already carries the window and the before/after window metrics; the pre-edit
-    motion is the parent checkpoint's snapshot. Renders both windows in parallel on the pod.
+
+@app.post("/api/session/{sid}/compare")
+def compare(sid: str, body: CompareBody | None = None) -> dict:
+    """Render the edited window as two synced clips: the CURRENT state (after) vs a chosen PRIOR
+    version (before). ``from_id`` selects which prior checkpoint to compare against (default: the
+    head's parent, i.e. the state right before the last edit). The window is the head's edit window,
+    and the window's music is muxed in so the comparison plays with sound.
     """
     sess = _load_session(sid)
     head = sess.current()
@@ -376,18 +390,27 @@ def compare(sid: str) -> dict:
     win = (head.edit or {}).get("window")
     if not win or len(win) != 2:
         raise HTTPException(400, "the last edit has no window to compare.")
+    from_id = body.from_id if body else None
+    before_id = from_id if (from_id and from_id in sess.store and from_id != head.id) \
+        else head.parent_id
     after = sess.current_motion()
-    before = sess.store.motion(head.parent_id)
+    before = sess.store.motion(before_id)
     n = min(int(before.shape[0]), int(after.shape[0]))
     a = int(max(0, min(int(win[0]), n - 2)))
     b = int(max(a + 1, min(int(win[1]), n)))
+    wb = _window_beats(sess.assets.beats, a, b) if sess.assets.beats is not None else None
+    before_ck = sess.store.get(before_id)
     metrics = {
-        "before": head.edit.get("metrics_before") or {},
-        "after": head.edit.get("metrics_after") or {},
+        "before": window_metrics(before[a:b], wb),
+        "after": window_metrics(after[a:b], wb),
         "window": [a, b],
         "window_sec": [round(a / FPS, 2), round(b / FPS, 2)],
+        "before_id": before_id,
+        "before_label": (before_ck.label or "original") if before_ck else "original",
     }
-    rendering.start_compare_render(sid, before[a:b], after[a:b], _song_dir(sid), metrics=metrics)
+    rendering.start_compare_render(
+        sid, before[a:b], after[a:b], _song_dir(sid), metrics=metrics,
+        audio_wav=_song_wav(sid), audio_start=a / FPS, audio_dur=(b - a) / FPS)
     return rendering.get_compare_job(sid)
 
 

@@ -54,15 +54,19 @@
 
       <div id="compare" class="compare" hidden>
         <div class="cmp-head">
-          <span class="cmp-title">Before / after — edited window <em id="cmpWin"></em></span>
+          <span class="cmp-title">Compare — window <em id="cmpWin"></em></span>
+          <label class="cmp-ver">before:
+            <select id="cmpVersion" title="Which earlier version of this window to compare the current one against"></select>
+          </label>
           <button id="cmpClose" class="icon-btn" title="Close comparison">✕</button>
         </div>
         <div id="cmpStatus" class="render-status"></div>
         <div id="cmpProgWrap" class="progwrap cmp-prog" hidden><div id="cmpProg" class="progbar"></div></div>
         <div class="cmp-vids">
-          <figure><figcaption>Before</figcaption><video id="cmpBefore" muted playsinline preload="auto" loop></video></figure>
-          <figure><figcaption>After</figcaption><video id="cmpAfter" muted playsinline preload="auto" loop></video></figure>
+          <figure><figcaption id="cmpCapBefore">Before</figcaption><video id="cmpBefore" muted playsinline preload="auto" loop></video></figure>
+          <figure><figcaption>After (current)</figcaption><video id="cmpAfter" muted playsinline preload="auto" loop></video></figure>
         </div>
+        <audio id="cmpAudio" preload="auto" loop></audio>
         <div class="cmp-ctl">
           <button id="cmpPlay" class="ghost-btn">▶ Play both</button>
           <input id="cmpScrub" type="range" min="0" max="1000" value="0" title="Scrub both clips" />
