@@ -62,15 +62,93 @@ def _gen_lodge_window(sid: str, settings, seed: int, a: int, b: int) -> np.ndarr
     return np.ascontiguousarray(_trim_zup(zup, in_start, in_end - in_start, a, b), dtype=np.float32)
 
 
+_EDGE_MODEL = None  # cached EDGE model per process (keyed implicitly by the daemon's single checkpoint)
+
+
+def _edge_model(edge_root: Path, checkpoint):
+    """Load EDGE('jukebox', checkpoint) once and cache it (the ~1.2GB checkpoint load is the cold cost)."""
+    global _EDGE_MODEL
+    if _EDGE_MODEL is None:
+        os.chdir(edge_root)
+        if str(edge_root) not in sys.path:
+            sys.path.insert(0, str(edge_root))
+        from EDGE import EDGE  # noqa: N811 - EDGE repo module
+        m = EDGE("jukebox", str(checkpoint))
+        m.eval()
+        _EDGE_MODEL = m
+    return _EDGE_MODEL
+
+
+def _pkl_to_edge151(pkl_path: Path) -> np.ndarray:
+    import pickle
+
+    import torch
+    from dataset.quaternion import ax_to_6v  # EDGE repo
+
+    data = pickle.load(open(pkl_path, "rb"))
+    trans = data["smpl_trans"].astype(np.float32)
+    poses_aa = data["smpl_poses"].reshape(-1, 24, 3)
+    rot_6d = ax_to_6v(torch.from_numpy(poses_aa)).numpy().reshape(len(trans), 144)
+    contact = np.zeros((len(trans), 4), dtype=np.float32)
+    return np.concatenate([trans, rot_6d, contact], axis=1)
+
+
+def _gen_edge_window(sid: str, settings, seed: int, a: int, b: int) -> np.ndarray:
+    """Generate JUST the [a, b) window from EDGE (150-frame Jukebox slices) with the WARM model."""
+    import glob as _glob
+    import shutil
+
+    import torch
+
+    from gen_take import _to_edge_zup
+
+    edge_root = Path(f"{WORKSPACE}/EDGE")
+    slices = np.load(WS / f"edge{sid}_slices.npy", allow_pickle=True)
+    i0 = max(0, a // 150)                                    # EDGE slices are 150-frame (5s) chunks
+    i1 = max(min(len(slices), (b + 149) // 150), i0 + 1)
+    sub = [np.asarray(s, dtype=np.float32) for s in slices[i0:i1]]
+    in_start = i0 * 150
+
+    if seed is not None:
+        torch.manual_seed(int(seed))
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(int(seed))
+        np.random.seed(int(seed) % (2 ** 32 - 1))
+
+    model = _edge_model(edge_root, settings.edge_weights_path)
+    work = WS / "gen_daemon_edge_work"
+    if work.exists():
+        shutil.rmtree(work, ignore_errors=True)
+    render_dir, motion_dir = work / "edge_renders", work / "edge_motions"
+    render_dir.mkdir(parents=True, exist_ok=True)
+    motion_dir.mkdir(parents=True, exist_ok=True)
+    cond = torch.from_numpy(np.array(sub))
+    model.render_sample((None, cond, []), "test", str(render_dir), render_count=-1,
+                        fk_out=str(motion_dir), render=False)
+    pkls = sorted(_glob.glob(str(motion_dir / "test_*.pkl")))
+    if not pkls:
+        raise RuntimeError("no EDGE motion output")
+    motion = _pkl_to_edge151(Path(pkls[0]))
+    expected = int(5.0 * 30 + (len(sub) - 1) * 2.5 * 30)
+    if motion.shape[0] > expected:
+        motion = motion[:expected]
+    zup = _to_edge_zup(motion)
+    return np.ascontiguousarray(_trim_zup(zup, in_start, len(sub) * 150, a, b), dtype=np.float32)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--requests-dir", required=True)
+    p.add_argument("--backbone", default="lodge", choices=["lodge", "edge"],
+                   help="One backbone per daemon process (so LODGE and EDGE code paths never mix).")
     p.add_argument("--idle-exit", type=int, default=0, help="Exit after N idle seconds (0 = never).")
     args = p.parse_args()
 
     rdir = args.requests_dir
+    daemon_bb = args.backbone
     os.makedirs(rdir, exist_ok=True)
     settings = _settings()
+    _gen = _gen_lodge_window if daemon_bb == "lodge" else _gen_edge_window
 
     _stop = threading.Event()
 
@@ -100,18 +178,18 @@ def main() -> None:
             except Exception:  # noqa: BLE001 - half-written file: retry next poll
                 continue
             sid = str(req.get("sid", ""))
-            bb = str(req.get("backbone", "lodge"))
+            bb = str(req.get("backbone", daemon_bb))
             seed = int(req.get("seed", 0))
             a, b = int(req["a"]), int(req["b"])
             out = WS / f"bank_{sid}_{bb}_seed{seed}_w{a}_{b}.npy"
             t0 = time.time()
             try:
-                if bb != "lodge":
-                    raise RuntimeError("warm daemon serves lodge only")
+                if bb != daemon_bb:
+                    raise RuntimeError(f"this daemon serves {daemon_bb}, not {bb}")
                 if out.exists():
                     motion = np.load(out).astype(np.float32)
                 else:
-                    motion = _gen_lodge_window(sid, settings, seed, a, b)
+                    motion = _gen(sid, settings, seed, a, b)
                     tmp = out.with_suffix(".tmp.npy")
                     np.save(tmp, motion)
                     os.replace(tmp, out)                    # atomic publish

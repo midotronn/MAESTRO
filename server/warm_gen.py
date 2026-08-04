@@ -1,10 +1,11 @@
-"""Warm LODGE generation pool for the editor when it runs ON the GPU pod.
+"""Warm LODGE/EDGE generation pool for the editor when it runs ON the GPU pod.
 
-A cold live regeneration reloads the LODGE checkpoints every seed (~150s). This module keeps a single
-persistent ``scripts/gen_daemon.py`` alive with the models preloaded, so a fresh seed is submitted as
-a request file and read back once the daemon writes the ``.npy`` -- all local file I/O (the editor is
-co-located with the pod), no ssh. If the daemon is unavailable, callers fall back to the existing
-per-call ``gen_take.py`` path in :class:`server.processing.PodTakeProvider`.
+A cold live regeneration reloads the diffusion checkpoints every seed (LODGE ~150s, EDGE ~72s). This
+module keeps ONE persistent ``scripts/gen_daemon.py`` per backbone alive with its model preloaded, so
+a fresh seed is submitted as a request file and read back once the daemon writes the ``.npy`` -- all
+local file I/O (the editor is co-located with the pod), no ssh. Each backbone runs in its own process
+(``gen_daemon/<backbone>``) so LODGE and EDGE code paths never mix. If a daemon is unavailable,
+callers fall back to the per-call ``gen_take.py`` path in :class:`server.processing.PodTakeProvider`.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 WS = os.environ.get("AGENTLODGE_POD_WS", "/workspace")
-DAEMON_DIR = Path(WS) / "gen_daemon"
+DAEMON_ROOT = Path(WS) / "gen_daemon"
 _HB_STALE = 45          # seconds; a daemon whose heartbeat is older than this is considered dead
 _START_LOCK = threading.Lock()
 
@@ -34,69 +35,79 @@ def _daemon_script() -> Path:
     return Path(WS) / "AgentLODGE" / "scripts" / "gen_daemon.py"
 
 
+def _dir(backbone: str) -> Path:
+    return DAEMON_ROOT / str(backbone)
+
+
+def _feats(sid: str, backbone: str) -> Path:
+    return Path(WS) / (f"lodge_fd_{sid}_feats.npy" if backbone == "lodge" else f"edge{sid}_slices.npy")
+
+
 def on_pod() -> bool:
     host = (os.environ.get("AGENTLODGE_POD_HOST") or "").strip().lower()
     return host in ("127.0.0.1", "localhost", "0.0.0.0") and _daemon_script().exists()
 
 
-def available(sid: str) -> bool:
-    """True when the warm LODGE daemon can serve ``sid`` (co-located + song preprocessed for gen)."""
-    return on_pod() and (Path(WS) / f"lodge_fd_{sid}_feats.npy").exists()
+def available(sid: str, backbone: str) -> bool:
+    """True when the warm daemon can serve ``(sid, backbone)`` (co-located + preprocessed for gen)."""
+    return backbone in ("lodge", "edge") and on_pod() and _feats(sid, backbone).exists()
 
 
-def _alive() -> bool:
-    hb = DAEMON_DIR / "daemon.hb"
+def _alive(backbone: str) -> bool:
+    d = _dir(backbone)
+    hb = d / "daemon.hb"
     try:
-        return (DAEMON_DIR / "daemon.ready").exists() and hb.exists() \
+        return (d / "daemon.ready").exists() and hb.exists() \
             and (time.time() - hb.stat().st_mtime) < _HB_STALE
     except OSError:
         return False
 
 
-def ensure_daemon() -> bool:
+def ensure_daemon(backbone: str) -> bool:
     if not on_pod():
         return False
+    d = _dir(backbone)
     with _START_LOCK:
-        if _alive():
+        if _alive(backbone):
             return True
-        DAEMON_DIR.mkdir(parents=True, exist_ok=True)
+        d.mkdir(parents=True, exist_ok=True)
         for name in ("daemon.ready", "daemon.hb"):
             try:
-                (DAEMON_DIR / name).unlink()
+                (d / name).unlink()
             except OSError:
                 pass
-        cmd = (f"WORKSPACE={WS} {_py()} {_daemon_script()} --requests-dir {DAEMON_DIR} "
-               f"> {DAEMON_DIR}/daemon.log 2>&1")
+        cmd = (f"WORKSPACE={WS} {_py()} {_daemon_script()} --backbone {backbone} "
+               f"--requests-dir {d} > {d}/daemon.log 2>&1")
         try:
             subprocess.Popen(["setsid", "bash", "-c", cmd], stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, close_fds=True)
         except Exception as exc:  # noqa: BLE001 - best-effort warm-up
-            logger.warning("warm gen daemon failed to start: %s", exc)
+            logger.warning("warm %s gen daemon failed to start: %s", backbone, exc)
             return False
-    # wait briefly for the daemon to write daemon.ready (it does so before loading models)
-    deadline = time.time() + 20
-    while time.time() < deadline and not (DAEMON_DIR / "daemon.ready").exists():
+    deadline = time.time() + 20                             # daemon writes daemon.ready before loading models
+    while time.time() < deadline and not (d / "daemon.ready").exists():
         time.sleep(0.5)
-    return (DAEMON_DIR / "daemon.ready").exists()
+    return (d / "daemon.ready").exists()
 
 
 def warm_generate(sid: str, backbone: str, seed: int, a: int, b: int, *,
                   timeout: float = 600.0) -> Path | None:
-    """Submit a warm LODGE window generation and wait for it. Returns the bank ``.npy`` path or None.
+    """Submit a warm window generation and wait for it. Returns the bank ``.npy`` path or None.
 
-    The FIRST request pays the one-time model load (~150s); subsequent seeds are just the diffusion.
-    Only LODGE is served warm; EDGE and any failure return None so the caller falls back.
+    The FIRST request to a backbone pays its one-time model load; subsequent seeds are just the
+    diffusion. Any failure returns None so the caller falls back to the per-call path.
     """
-    if str(backbone) != "lodge" or not available(sid):
+    if not available(sid, backbone):
         return None
-    if not ensure_daemon():
+    if not ensure_daemon(backbone):
         return None
+    d = _dir(backbone)
     rid = "g" + uuid.uuid4().hex[:10]
-    req = {"id": rid, "sid": sid, "backbone": "lodge", "seed": int(seed), "a": int(a), "b": int(b)}
-    tmp = DAEMON_DIR / f"{rid}.req.tmp"
+    req = {"id": rid, "sid": sid, "backbone": backbone, "seed": int(seed), "a": int(a), "b": int(b)}
+    tmp = d / f"{rid}.req.tmp"
     tmp.write_text(json.dumps(req))
-    tmp.rename(DAEMON_DIR / f"{rid}.req")                    # atomic publish
-    done, fail = DAEMON_DIR / f"{rid}.done", DAEMON_DIR / f"{rid}.fail"
+    tmp.rename(d / f"{rid}.req")                            # atomic publish
+    done, fail = d / f"{rid}.done", d / f"{rid}.fail"
     deadline = time.time() + timeout
     while time.time() < deadline:
         if done.exists():
@@ -106,9 +117,9 @@ def warm_generate(sid: str, backbone: str, seed: int, a: int, b: int, *,
                 return None
             return path if path.exists() else None
         if fail.exists():
-            logger.warning("warm gen %s failed: %s", rid, fail.read_text()[-300:])
+            logger.warning("warm %s gen %s failed: %s", backbone, rid, fail.read_text()[-300:])
             return None
-        if not _alive() and not done.exists():              # daemon died mid-request
+        if not _alive(backbone) and not done.exists():     # daemon died mid-request
             return None
         time.sleep(0.5)
     return None
