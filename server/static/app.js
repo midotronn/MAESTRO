@@ -366,10 +366,11 @@ function renderChecks(trace) {
   const el = $("checks");
   const checks = (trace && trace.final && trace.final.checks) || [];
   if (!checks.length) { el.innerHTML = ""; return; }
-  el.innerHTML = checks.map((c) =>
-    `<span class="chk ${c.met ? "met" : "miss"}" title="${c.met ? "goal met" : "not fully met"}">`
-    + `${escapeHtml(c.label)} <b>${c.before.toFixed(2)}${ARROW[c.status] || ""}${c.after.toFixed(2)}</b></span>`
-  ).join("");
+  el.innerHTML = checks.map((c) => {
+    const bv = metricDisp(c.metric, c.before), av = metricDisp(c.metric, c.after);
+    return `<span class="chk ${c.met ? "met" : "miss"}" title="${c.met ? "goal met" : "not fully met"}">`
+      + `${escapeHtml(c.label)} <b>${bv.toFixed(2)}${ARROW[c.status] || ""}${av.toFixed(2)}</b></span>`;
+  }).join("");
 }
 
 function paramsStr(p) {
@@ -406,7 +407,7 @@ function renderTrace(trace) {
     }).join("") + `</ol>`;
     if ((v.checks || []).length) {
       html += `<div class="rz-sub">\u2713 Verify</div><ul class="rz-checks">` + v.checks.map((c) =>
-        `<li class="${c.met ? "met" : "miss"}">${escapeHtml(c.label)}: ${c.before.toFixed(3)}\u2192${c.after.toFixed(3)} <em>(${c.status})</em></li>`
+        `<li class="${c.met ? "met" : "miss"}">${escapeHtml(c.label)}: ${metricDisp(c.metric, c.before).toFixed(3)}\u2192${metricDisp(c.metric, c.after).toFixed(3)} <em>(${c.status})</em></li>`
       ).join("") + `</ul>`;
     }
     html += `</div>`;

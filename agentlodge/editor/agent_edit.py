@@ -693,16 +693,6 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
             no_reg = not any(c.get("status") == "regressed" for c in checks)
         else:
             ok, checks, verdict, reward, no_reg = True, [], "applied the planned edit", 0.0, True
-        # A generative (regenerate) content edit ships genuinely NEW choreography; accept the best
-        # candidate unless it BADLY regresses a goal (best-of-K already keeps the seed that advances
-        # the goals most). This ships new moves instead of silently keeping the original when no seed
-        # strictly beats the metric on this window -- the alternative (regenerate forever) is worse.
-        if goals and not ok and any(s.tool == "regenerate" for s in plan.steps):
-            big_regress = any(c.get("status") == "regressed"
-                              and abs(c["after"] - c["before"]) > 3.0 * (_tol(c["metric"], c["before"]) or 1e-6)
-                              for c in checks)
-            if not big_regress:
-                ok = True
         # artifact guardrail: never make the window jittery / foot-skating, even off-goal. A
         # violation penalises the reward, keeps the loop refining toward a clean solution, and is
         # dispreferred vs an edit (or the untouched baseline) that stays clean.
@@ -761,8 +751,12 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
 
     refined = f" (refined {n_attempts - 1}x)" if n_attempts > 1 else ""
     if kept_original:
-        detail = ", ".join(f"{lbl} {before.get(m, 0.0):.3f}" for m, _d, lbl in goals)
-        feedback = f"left unchanged: no edit beat the current {detail} without hurting it" + refined
+        if any(s.tool == "regenerate" for s in plan.steps):
+            goal_txt = ", ".join(lbl for _m, _d, lbl in goals) or "the goal"
+            feedback = f"kept the original: none of the regenerated takes improved {goal_txt} on this window" + refined
+        else:
+            detail = ", ".join(f"{lbl} {before.get(m, 0.0):.3f}" for m, _d, lbl in goals)
+            feedback = f"left unchanged: no edit beat the current {detail} without hurting it" + refined
     else:
         parts = "  ".join(f"{c['label']} {c['before']:.3f}\u2192{c['after']:.3f}"
                           for c in checks if not c.get("guard")) or "applied"
