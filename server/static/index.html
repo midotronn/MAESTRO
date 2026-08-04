@@ -30,6 +30,7 @@
         <button id="redo" class="icon-btn" title="Redo" disabled>↷</button>
         <button id="reset" class="icon-btn" title="Clear the edit history and start over from the original dance">↺</button>
       </div>
+      <button id="helpBtn" class="icon-btn" title="How to use the editor — quick walkthrough">?</button>
       <a href="/project/" class="ghost-btn proj-link" title="MAESTRO project page">Project ↗</a>
     </div>
   </header>
@@ -42,12 +43,9 @@
         <video id="video" controls playsinline preload="auto"></video>
         <span class="viewer-tag" id="viewerTag">preview · base take</span>
         <div class="render-ctl">
-          <select id="renderScope" class="render-scope" title="What to render">
-            <option value="window">edited window (fast)</option>
-            <option value="full">full dance + music</option>
-          </select>
-          <button id="renderBtn" class="render-btn" title="Render the edited dance on the GPU (Blender)">🎬 Render</button>
-          <button id="compareBtn" class="render-btn ghost" title="Render the edited window before vs after, side by side">⇄ Compare</button>
+          <button id="renderBtn" class="render-btn" title="Render the edited window on the GPU (fast) — this is the usual preview">🎬 Render</button>
+          <button id="compareBtn" class="render-btn ghost" title="Compare the current window against an earlier version, side by side (with music)">⇄ Compare</button>
+          <button id="fullRenderBtn" class="render-btn ghost" title="Render the whole dance with the music — slower, for a final look">♪ Full song</button>
         </div>
         <div id="renderStatus" class="render-status"></div>
         <div id="renderProgWrap" class="progwrap render-prog" hidden><div id="renderProg" class="progbar"></div></div>
@@ -123,6 +121,21 @@
       </div>
     </aside>
   </main>
+</div>
+
+<!-- ─────────────── first-run walkthrough ─────────────── -->
+<div id="tour" class="tour" hidden>
+  <div id="tourRing" class="tour-ring"></div>
+  <div id="tourCard" class="tour-card">
+    <span id="tourStep" class="tour-stepnum"></span>
+    <h4 id="tourTitle" class="tour-title"></h4>
+    <p id="tourText" class="tour-text"></p>
+    <div class="tour-foot">
+      <button id="tourSkip" class="tour-skip">Skip</button>
+      <div id="tourDots" class="tour-dots"></div>
+      <button id="tourNext" class="tour-next">Next</button>
+    </div>
+  </div>
 </div>
 <script src="/static/app.js"></script>
 </body>

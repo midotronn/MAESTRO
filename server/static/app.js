@@ -32,16 +32,16 @@ function escapeHtml(s) {
 }
 
 // -------------------------------------------------------------- render the edited dance (Blender/pod)
-async function startRender() {
-  const scope = $("renderScope").value;
+async function startRender(scope = "window") {
   const body = { scope };
+  ST.lastRenderScope = scope;
   // window render targets the LAST EDIT by default; a valid drag selection overrides it
   if (scope === "window" && ST.sel && ST.sel[1] > ST.sel[0] + 0.1) {
     body.a_sec = ST.sel[0]; body.b_sec = ST.sel[1];
   }
   $("renderBtn").disabled = true;
   const st = $("renderStatus"); st.style.display = "block"; st.className = "render-status";
-  st.textContent = "starting render\u2026";
+  st.textContent = scope === "full" ? "starting full render (with music)\u2026" : "starting render\u2026";
   $("renderProgWrap").hidden = false; $("renderProg").style.width = "3%";
   try {
     await api(`/api/session/${ST.sid}/render`, {
@@ -61,7 +61,7 @@ async function pollRender() {
     const v = $("video");
     v.src = `/api/session/${ST.sid}/media/${j.video}?t=` + Date.now();
     v.load(); v.play().catch(() => {});
-    $("viewerTag").textContent = "edited render";
+    $("viewerTag").textContent = ST.lastRenderScope === "full" ? "full dance + music" : "edited render";
     st.className = "render-status ok";
     st.textContent = `\u2714 rendered${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
     $("renderProgWrap").hidden = true;
@@ -208,7 +208,8 @@ function wireControls() {
   wireTimeline();
   wireUpload();
   $("apply").onclick = runEdit;
-  $("renderBtn").onclick = startRender;
+  $("renderBtn").onclick = () => startRender("window");
+  $("fullRenderBtn").onclick = () => startRender("full");
   $("compareBtn").onclick = startCompare;
   $("cmpClose").onclick = () => {
     $("compare").hidden = true;
@@ -229,6 +230,67 @@ function wireControls() {
     toast("Edit history cleared \u2014 back to the original");
   };
   $("instruction").addEventListener("keydown", (e) => { if (e.key === "Enter") runEdit(); });
+  wireTour();
+}
+
+// -------------------------------------------------------------- first-run walkthrough (skippable)
+const TOUR_KEY = "maestro_onboarded_v1";
+const TOUR_STEPS = [
+  { el: "timeline", title: "1 · Pick the part to edit",
+    text: "Drag across this bar to choose the window of the dance you want to change. The shaded band is your window." },
+  { el: "instruction", title: "2 · Say what you want",
+    text: "Describe the change in plain English \u2014 e.g. \u201cmake it more energetic\u201d, \u201ctighten to the beat\u201d, or \u201cgive me new moves\u201d. An AI agent turns it into an edit." },
+  { el: "apply", title: "3 · Apply the edit",
+    text: "The agent plans the right tools, applies them, and verifies the result actually hit your goal \u2014 refining if it didn\u2019t." },
+  { el: "renderBtn", title: "4 · See the result",
+    text: "Render the edited window on the GPU. Use Compare to watch it against an earlier version side by side, with the music." },
+  { el: "history", title: "5 · Iterate freely",
+    text: "Every edit is a checkpoint \u2014 undo, redo, compare versions, or reset to start over. Edit, listen, refine." },
+  { el: "song", title: "That\u2019s it \u2014 have fun!",
+    text: "Switch songs here or upload your own. Tap the \u201c?\u201d in the top bar to see this again anytime." },
+];
+let tourIdx = 0;
+
+function showTourStep(i) {
+  const step = TOUR_STEPS[i];
+  if (!step) return endTour();
+  const target = $(step.el), ring = $("tourRing"), card = $("tourCard");
+  if (target) {
+    const r = target.getBoundingClientRect(), pad = 6;
+    ring.style.display = "block";
+    ring.style.left = (r.left - pad) + "px"; ring.style.top = (r.top - pad) + "px";
+    ring.style.width = (r.width + 2 * pad) + "px"; ring.style.height = (r.height + 2 * pad) + "px";
+    const cardW = 300, cardH = 190;
+    let left = Math.min(Math.max(12, r.left), window.innerWidth - cardW - 12);
+    let top = r.bottom + 14;
+    if (top + cardH > window.innerHeight - 12) top = Math.max(12, r.top - cardH - 14);
+    card.style.left = left + "px"; card.style.top = top + "px";
+  } else {
+    ring.style.display = "none";
+    card.style.left = (window.innerWidth / 2 - 150) + "px"; card.style.top = "40%";
+  }
+  $("tourStep").textContent = `Step ${i + 1} of ${TOUR_STEPS.length}`;
+  $("tourTitle").textContent = step.title;
+  $("tourText").textContent = step.text;
+  $("tourNext").textContent = i === TOUR_STEPS.length - 1 ? "Done" : "Next";
+  $("tourDots").innerHTML = TOUR_STEPS.map((_s, k) => `<i class="${k === i ? "on" : ""}"></i>`).join("");
+}
+
+function startTour() { tourIdx = 0; $("tour").hidden = false; showTourStep(0); }
+function endTour() { $("tour").hidden = true; try { localStorage.setItem(TOUR_KEY, "1"); } catch (e) {} }
+
+function wireTour() {
+  $("helpBtn").onclick = startTour;
+  $("tourSkip").onclick = endTour;
+  $("tourNext").onclick = () => { tourIdx += 1; tourIdx >= TOUR_STEPS.length ? endTour() : showTourStep(tourIdx); };
+  window.addEventListener("resize", () => { if (!$("tour").hidden) showTourStep(tourIdx); });
+  window.addEventListener("keydown", (e) => { if (!$("tour").hidden && e.key === "Escape") endTour(); });
+}
+
+function maybeAutoTour() {
+  let seen = false;
+  try { seen = !!localStorage.getItem(TOUR_KEY); } catch (e) {}
+  if (!seen) setTimeout(startTour, 800);                    // once the first song has loaded in
 }
 
 async function loadSongs(maxAttempts = 20) {
@@ -261,6 +323,7 @@ async function init() {
   songs.forEach((s) => { const o = document.createElement("option"); o.value = s.sid; o.textContent = s.name || s.sid; sel.appendChild(o); });
   sel.onchange = () => openSession(sel.value);
   await openSession(songs[0].sid);
+  maybeAutoTour();                                          // first-run walkthrough (skippable)
 }
 
 async function openSession(sid) {

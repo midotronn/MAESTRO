@@ -70,6 +70,34 @@ select {
 .icon-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .icon-btn:disabled { opacity: .4; cursor: default; }
 
+/* ─────────────── first-run walkthrough ─────────────── */
+.tour { position: fixed; inset: 0; z-index: 1000; }
+.tour[hidden] { display: none; }
+.tour-ring {
+  position: absolute; border-radius: 10px; border: 2px solid var(--accent);
+  box-shadow: 0 0 0 9999px rgba(15, 18, 28, .60); pointer-events: none;
+  transition: left .25s ease, top .25s ease, width .25s ease, height .25s ease;
+}
+.tour-card {
+  position: absolute; width: 300px; max-width: 82vw; background: var(--card);
+  border: 1px solid var(--line2); border-radius: 12px; box-shadow: 0 14px 44px rgba(0, 0, 0, .30);
+  padding: 15px 16px 12px; transition: left .2s ease, top .2s ease;
+}
+.tour-stepnum { font-size: 11px; color: var(--accent); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.tour-title { margin: 5px 0 6px; font-size: 15px; color: var(--text); }
+.tour-text { margin: 0 0 13px; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.tour-foot { display: flex; align-items: center; gap: 10px; }
+.tour-dots { display: flex; gap: 5px; margin: 0 auto; }
+.tour-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--line2); display: block; }
+.tour-dots i.on { background: var(--accent); }
+.tour-skip { background: none; border: none; color: var(--faint); font-size: 12px; cursor: pointer; padding: 4px; }
+.tour-skip:hover { color: var(--muted); }
+.tour-next {
+  background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 7px 16px;
+  font-size: 13px; font-weight: 600; cursor: pointer; transition: .12s;
+}
+.tour-next:hover { filter: brightness(1.08); }
+
 /* ---------- main grid ---------- */
 .grid {
   flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 360px;
