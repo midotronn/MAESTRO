@@ -297,17 +297,46 @@ def _active_guards(goals) -> list[tuple[str, str, str]]:
     return [(m, d, l) for (m, d, l) in _ARTIFACT_GUARDS if m not in requested]
 
 
+def _jerk_ceiling(before: dict, after: dict, goals) -> float:
+    """Absolute jerk value the artifact guard tolerates before calling the edit 'jittery'.
+
+    Bigger, more energetic dancing is legitimately jerkier (larger, faster, snappier moves have a
+    higher third derivative), so when the user asked to RAISE energy the jerk budget scales with the
+    energy actually delivered -- otherwise the quality guard would smooth the very energy the user
+    requested straight back out (the "more energetic did almost nothing" bug). When energy is NOT a
+    goal the budget is tight (near baseline), so an incidental jerk rise from beat_align is still
+    polished away.
+    """
+    base_j = float(before.get("jerk", 0.0))
+    up_energy = any(m == "energy" and d == "up" for m, d, _l in goals)
+    eb = float(before.get("energy", 0.0))
+    if up_energy and eb > 1e-6:
+        ratio = float(after.get("energy", 0.0)) / eb           # energy delivered (>= 1 when raised)
+        return base_j * min(2.6, 1.2 + 1.6 * max(0.0, ratio - 1.0))
+    return base_j * 1.08
+
+
 def _guard_report(before: dict, after: dict, goals) -> tuple[bool, float, list]:
     """(clean, penalty, checks) for the artifact guards. ``clean`` is False if the edit regressed
     smoothness or foot-contact; ``penalty`` is the summed regression (in tolerance units) to subtract
-    from the attempt's reward; ``checks`` are UI rows flagged ``guard=True``."""
+    from the attempt's reward; ``checks`` are UI rows flagged ``guard=True``. The smoothness (jerk)
+    guard uses an energy-proportional ceiling (:func:`_jerk_ceiling`) so a requested energy increase
+    is not treated as an artifact, while incidental jitter still is."""
     clean, penalty, checks = True, 0.0, []
+    jceil = _jerk_ceiling(before, after, goals)
     for metric, good_dir, label in _active_guards(goals):
         b, a = float(before.get(metric, 0.0)), float(after.get(metric, 0.0))
-        status = _classify(metric, b, a, good_dir)
-        if status == "regressed":
-            clean = False
-            penalty += abs(a - b) / (_tol(metric, b) or 1.0)
+        if metric == "jerk":
+            over = a > jceil + _tol("jerk", b)                 # only jerk beyond the budget is an artifact
+            status = "regressed" if over else _classify(metric, b, min(a, jceil), good_dir)
+            if over:
+                clean = False
+                penalty += (a - jceil) / (_tol(metric, b) or 1.0)
+        else:
+            status = _classify(metric, b, a, good_dir)
+            if status == "regressed":
+                clean = False
+                penalty += abs(a - b) / (_tol(metric, b) or 1.0)
         checks.append({"metric": metric, "label": label, "dir": good_dir,
                        "before": round(b, 4), "after": round(a, 4), "status": status,
                        "met": status != "regressed", "guard": True})
@@ -328,18 +357,22 @@ def _merge_goals(primary: list, secondary: list) -> list:
 
 
 def _smoothness_polish(win_cur, motion, a, b, goals, before, wbeats, blend_frames):
-    """Quality guard: keep the edit from making the dance jittery. Amplitude scaling and the beat
-    time-warp raise jerk as a side effect, so -- UNLESS the user asked for sharper (jerk up) -- apply
-    the smallest light temporal smooth that pulls the window's jerk back toward baseline WITHOUT
-    regressing any declared goal. Smoothing removes high-frequency jitter but leaves the lower-frequency
-    energy/beat content, so the goals survive (measured). Returns (spliced, after, checks, note) or
-    None when no polish is needed or none preserves the goals."""
+    """Quality guard: keep the edit from making the dance JITTERY without smoothing away the effect
+    the user asked for. The beat time-warp and (for non-energy edits) the accentuate lever raise jerk
+    as a side effect, so -- UNLESS the user asked for sharper (jerk up) -- apply the smallest light
+    temporal smooth that pulls the window's jerk back under an energy-proportional ceiling
+    (:func:`_jerk_ceiling`) WITHOUT regressing any declared goal. When the user asked for MORE energy,
+    that ceiling is generous (bigger moves are legitimately jerkier), so the energy survives; when they
+    did not, it is near baseline, so incidental jitter is removed. Returns (spliced, after, checks,
+    note) or None when no polish is needed or none preserves the goals."""
     if any(m == "jerk" and d == "up" for m, d, _lbl in goals):
         return None
     spliced0 = crossfade_edit(motion, a, b, win_cur, blend_frames=blend_frames)
-    j0 = window_metrics(spliced0[a:b], wbeats)["jerk"]
+    m0 = window_metrics(spliced0[a:b], wbeats)
+    j0 = m0["jerk"]
     base_j = float(before.get("jerk", 0.0))
-    if base_j <= 0 or j0 <= base_j * 1.08:                 # already about as smooth as the original
+    jceil = _jerk_ceiling(before, m0, goals)               # energy-proportional budget for this edit
+    if base_j <= 0 or j0 <= jceil:                         # already within the jitter budget
         return None
     chosen = None
     for amt in (0.06, 0.14, 0.24, 0.34):
@@ -350,8 +383,8 @@ def _smoothness_polish(win_cur, motion, a, b, goals, before, wbeats, blend_frame
         if not ok:
             break                                          # this much smoothing broke a goal -> stop
         chosen = (spl, m, checks, amt)
-        if m["jerk"] <= base_j * 1.05:
-            break                                          # restored to baseline smoothness
+        if m["jerk"] <= max(jceil, base_j * 1.05):
+            break                                          # within budget -> stop (keep the energy)
     if chosen is None:
         return None
     spl, m, checks, amt = chosen

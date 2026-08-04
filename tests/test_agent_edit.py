@@ -262,10 +262,11 @@ def test_merge_goals_planner_wins_keyword_fills_gaps():
     assert merged["bas"] == "up"                                 # keyword fills the metric it missed
 
 
-def test_smoothness_polish_picks_smooth_that_restores_jerk(monkeypatch):
+def test_smoothness_polish_keeps_energy_jerk_within_proportional_budget(monkeypatch):
     # deterministic logic test (the random-walk mock entangles energy+jerk, so use controlled metrics):
-    # tag the clip with the smooth amount; map amount -> jerk. The polish should pick the smallest
-    # amount that restores jerk to ~baseline while the energy goal stays met.
+    # tag the clip with the smooth amount; map amount -> jerk. For an ENERGY-UP goal the polish must
+    # trim jitter only down to the energy-proportional budget (not all the way to baseline), so the
+    # requested energy survives -- it should pick the smallest amount that lands within budget.
     def fake_smooth(clip, amt):
         c = clip.copy(); c[0, 1] = amt; return c
     JERK = {0.0: 0.30, 0.06: 0.20, 0.14: 0.12, 0.24: 0.10, 0.34: 0.09}
@@ -276,13 +277,28 @@ def test_smoothness_polish_picks_smooth_that_restores_jerk(monkeypatch):
     monkeypatch.setattr(AE, "window_metrics", fake_metrics)
     win_cur = np.zeros((120, 139), np.float32)                  # tag 0 -> jerk 0.30 (jittery edit)
     before = {"energy": 0.4, "bas": 0.7, "jerk": 0.12, "foot": 1.0}   # baseline jerk 0.12
-    pol = AE._smoothness_polish(win_cur, win_cur, 0, 120,
-                                [("energy", "up", "energy")], before, np.array([10.0, 20.0]), 12)
-    assert pol is not None
+    goals = [("energy", "up", "energy")]
+    pol = AE._smoothness_polish(win_cur, win_cur, 0, 120, goals, before, np.array([10.0, 20.0]), 12)
+    assert pol is not None                                     # 0.30 exceeds the budget -> polish runs
     _spl, after, checks, note = pol
-    assert after["jerk"] <= before["jerk"] * 1.05              # restored to ~baseline smoothness
+    budget = AE._jerk_ceiling(before, after, goals)           # energy 0.6/0.4 -> generous ceiling
+    assert after["jerk"] < 0.30 and after["jerk"] <= budget   # trimmed to within budget
+    assert after["jerk"] > before["jerk"]                     # but NOT smoothed back to baseline
     assert after["energy"] > before["energy"]                 # energy goal kept
-    assert all(c["met"] for c in checks) and "smoothed" in note
+    assert all(c["met"] for c in checks) and "0.06" in note   # smallest amount that lands in budget
+
+
+def test_jerk_ceiling_strict_unless_energy_requested():
+    before = {"energy": 0.4, "jerk": 0.10}
+    # energy NOT a goal -> near-baseline budget (incidental jitter is polished away)
+    strict = AE._jerk_ceiling(before, {"energy": 0.4, "jerk": 0.20}, [("bas", "up", "beat alignment")])
+    assert abs(strict - 0.10 * 1.08) < 1e-9
+    # energy UP a goal -> budget grows with the energy actually delivered (bigger moves are jerkier)
+    gen = AE._jerk_ceiling(before, {"energy": 0.56, "jerk": 0.20}, [("energy", "up", "energy")])
+    assert gen > strict and gen > 0.10
+    # capped so it can never run away
+    huge = AE._jerk_ceiling(before, {"energy": 4.0, "jerk": 9.0}, [("energy", "up", "energy")])
+    assert huge <= 0.10 * 2.6 + 1e-9
 
 
 def test_smoothness_polish_skipped_when_sharper_requested():
