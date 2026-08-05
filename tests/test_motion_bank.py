@@ -20,6 +20,14 @@ def _base(n=240):
     return MockWindowGenerator().generate("edge", 0, n, 4, energy=0.5, beats=None)
 
 
+_TMPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "server", "data", "smplx_neu_J_1.npy")
+# The posture checks below need forward kinematics, which needs the licence-gated
+# SMPL-X joint template. It is fetched from the pod, so it is absent on a clean clone.
+needs_fk = pytest.mark.skipif(not os.path.exists(_TMPL),
+                              reason="SMPL-X joint template not present (fetched from the pod)")
+
+
 def test_manifest_has_twenty_valid_redistributable_motions():
     bank = default_motion_bank()
     assert len(bank.specs) == 20
@@ -145,6 +153,7 @@ def test_motion_bank_is_one_tool_not_twenty_special_cases():
     assert not (bank_ids & set(AE.TOOLS))
 
 
+@needs_fk
 @pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
 def test_planted_feet_never_sink_through_the_floor(motion_id):
     """Hand-authoring a root drop next to a knee bend used to push the feet underground."""
@@ -159,6 +168,7 @@ def test_planted_feet_never_sink_through_the_floor(motion_id):
     assert float(np.min(lowest[grounded])) > floor - 0.03, motion_id
 
 
+@needs_fk
 @pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
 def test_every_motion_animates_a_meaningful_share_of_the_body(motion_id):
     """Guards against clips that read as a mannequin with a single moving limb."""
@@ -170,6 +180,7 @@ def test_every_motion_animates_a_meaningful_share_of_the_body(motion_id):
     assert int((excursion > 0.02).sum()) >= 10, motion_id
 
 
+@needs_fk
 def test_lateral_steps_spread_the_stance_instead_of_leaning_both_legs_one_way():
     """A side step is a weight transfer: the legs must open, not swing over together."""
     from server.fk import compute_poses
