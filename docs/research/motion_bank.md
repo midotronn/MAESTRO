@@ -104,4 +104,9 @@ CC BY 4.0 attribution after their action identity and output quality are reviewe
 4. Choose a validator type and threshold that the canonical clip passes for the intended reason.
 5. Add the action to the table-driven planner, fitting, insertion, and adversarial tests by relying
    on manifest enumeration rather than writing a new executor branch.
-6. Render and visually review the action before publishing it.
+6. Render and visually review the action before publishing it. `scripts/build_motion_bank_reel.py`
+   stitches the whole bank into one continuous take with the editor's own seam blend, and
+   `scripts/render_motion_bank_reel.sh` renders it on the GPU pod as the Y-Bot with each action's
+   name burned in, so a new action is judged against the rest of the vocabulary in one pass rather
+   than as an isolated clip. Numeric checks are the gate, not the review: a 2D contact sheet
+   flattens depth badly enough to invent problems that measurement disproves.

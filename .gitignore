@@ -20,3 +20,7 @@ temp/
 
 # SMPL-X-derived FK joint template (licence gated; fetched from the pod at runtime)
 server/data/smplx_neu_J_1.npy
+
+# Derived motion-bank review reel (rebuilt by scripts/render_motion_bank_reel.sh)
+assets/motion_bank/review_reel.npy
+assets/motion_bank/review_reel.labels.json
