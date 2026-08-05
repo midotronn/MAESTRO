@@ -42,6 +42,7 @@ from agentlodge.editor.remote_generator import (
     LiveWindowGenerator,
     ResilientWindowGenerator,
 )
+from agentlodge.editor.motion_bank import default_motion_bank
 from agentlodge.editor.session import EditSession, SongAssets
 from agentlodge.editor.window_edit import MockWindowGenerator, _window_beats, window_metrics
 from server import processing
@@ -261,6 +262,12 @@ def songs() -> dict:
         if d.is_dir() and (d / "base_motion.npy").exists():
             out.append({"sid": d.name, "name": _display_name(d), "has_bank": (d / "bank").is_dir()})
     return {"songs": out}
+
+
+@app.get("/api/motions")
+def motions() -> dict:
+    bank = default_motion_bank()
+    return {"version": bank.version, "motions": bank.list_public()}
 
 
 @app.post("/api/upload")

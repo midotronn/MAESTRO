@@ -29,8 +29,10 @@ from agentlodge.dance.transition import (
     crossfade_edit,
     mirror,
     retrograde,
+    splice_window,
     temporal_smooth,
 )
+from agentlodge.editor.motion_bank import default_motion_bank, normalize_name, verify_applied_motion
 from agentlodge.editor.window_edit import (
     EditGoal,
     WindowEditResult,
@@ -152,6 +154,24 @@ def _tool_regenerate(clip, ctx, *, backbone: str = "auto", energy: float = 0.5, 
     return best, f"regenerated the window with {chosen} (best of {k} seeds{goal_txt})"
 
 
+def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
+                      anchor: str = "center", mirror: bool = False,
+                      intensity: float = 0.5, repeats: int = 1):
+    bank = default_motion_bank()
+    out, report = bank.apply(
+        clip, motion_id, beats=ctx.get("wbeats"), mode=mode, anchor=anchor,
+        mirror=bool(mirror), intensity=float(intensity), repeats=int(repeats),
+        blend_frames=int(ctx.get("blend_frames", 8)),
+    )
+    ctx["_motion_bank_report"] = report
+    ctx["_foreign_motion"] = True
+    note = (
+        f"placed {report['name']} as a {report['mode']} edit, aligned at frame "
+        f"{report['event_frame']} ({report['source']}, {report['license']})"
+    )
+    return out, note
+
+
 @dataclass
 class ToolSpec:
     fn: object
@@ -184,6 +204,13 @@ TOOLS: dict[str, ToolSpec] = {
         "it up', 'surprise me', i.e. when the user wants DIFFERENT movement, not a metric tweak of the "
         "current dance",
         'params: {"backbone": "lodge"|"edge"|"auto", "energy": 0..1}'),
+    "motion_bank": ToolSpec(_tool_motion_bank,
+        "retrieve a specific common action from the curated named-motion bank, then fit it to this "
+        "window while preserving the song duration. Use for clap, jump, wave, point, punch, steps, "
+        "turns, body roll, crouch, rise, and other listed named actions",
+        'params: {"motion_id": "<bank id>", "mode": "replace"|"insert", '
+        '"anchor": "early"|"center"|"late"|"beat", "mirror": bool, '
+        '"intensity": 0..1, "repeats": 1..8}'),
 }
 
 
@@ -492,6 +519,36 @@ def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
     Beat-align is ordered LAST so it re-times after any amplitude change. Falls back to the
     single-objective mapping when no metric keyword is present (e.g. "flip and reverse").
     """
+    bank_spec = default_motion_bank().match_instruction(instruction)
+    if bank_spec is not None:
+        text = f" {normalize_name(instruction)} "
+        explicit_insert = any(phrase in text for phrase in (
+            " insert ", " before ", " after ", " between ", " ahead of ", " following ",
+        ))
+        anchor = "early" if any(x in text for x in (" before ", " ahead of ")) else (
+            "late" if any(x in text for x in (" after ", " following ")) else "beat"
+        )
+        repeats = 3 if any(x in text for x in (" three times ", " thrice ")) else (
+            2 if any(x in text for x in (" twice ", " two times ")) else 1
+        )
+        mirror_requested = bool(
+            bank_spec.mirrorable
+            and any(x in text for x in (" left ", " left side ", " left hand ", " to the left "))
+        )
+        intensity = 0.8 if any(x in text for x in (
+            " big ", " strong ", " explosive ", " dramatic ", " high ", " deep ",
+        )) else 0.5
+        mode = "insert" if explicit_insert else "replace"
+        params = {
+            "motion_id": bank_spec.id, "mode": mode, "anchor": anchor,
+            "mirror": mirror_requested, "intensity": intensity, "repeats": repeats,
+        }
+        return AgentPlan(
+            summary=f"{mode} {bank_spec.name.lower()} in the selected window",
+            steps=[PlanStep("motion_bank", params, f"retrieve the named {bank_spec.name} action")],
+            goals=[],
+        )
+
     reqs = _requested_metrics(instruction)
     cycle = int(feedback.get("cycle", 1)) if feedback else 0
     s = " " + instruction.lower().strip() + " "
@@ -555,6 +612,8 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
     from openai import OpenAI
 
     tool_lines = "\n".join(f"- {name}({spec.params}): {spec.doc}" for name, spec in TOOLS.items())
+    bank_lines = ", ".join(f"{s.id} ({s.name}; aliases: {', '.join(s.aliases)})"
+                           for s in default_motion_bank().specs)
     prompt = (
         "You are a dance-motion editing agent. The user selected the window "
         f"[{a_sec:.1f}s..{b_sec:.1f}s] of a dance and asked: \"{instruction}\".\n"
@@ -563,6 +622,11 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         f"jerk(lower=smoother): {ctx_metrics.get('jerk')}, "
         f"foot_contact(0-1, higher=less sliding): {ctx_metrics.get('foot')}.\n\n"
         "Compose 1-3 of these tools, in order, to satisfy the request:\n" + tool_lines + "\n\n"
+        "Named-motion vocabulary for motion_bank:\n" + bank_lines + "\n"
+        "For a recognized named action, use motion_bank instead of regenerate. Use mode=replace for "
+        "ordinary requests such as 'add a clap here'. Use mode=insert only for explicit relational "
+        "wording such as insert/before/after/between. Insert still preserves the selected window and "
+        "song duration. Never invent a motion_id outside this vocabulary.\n\n"
         "Return JSON ONLY:\n"
         '{"summary": "<one plain-English line describing your plan>",\n'
         ' "steps": [{"tool": "<name>", "params": {...}, "why": "<short reason>"}],\n'
@@ -806,6 +870,8 @@ def _execute_plan(base_clip: np.ndarray, plan: AgentPlan, ctx: dict, wbeats, *,
             log.append(entry); _emit_step(i, step.tool, step.why, reason, "rejected", m_before)
             continue                                        # cur unchanged -> regression discarded
         entry.update(status="applied", note=note, metrics_after=m_after)
+        if step.tool == "motion_bank" and ctx.get("_motion_bank_report"):
+            entry["motion_bank"] = dict(ctx["_motion_bank_report"])
         log.append(entry)
         cur = cur2
         _emit_step(i, step.tool, step.why, note, "applied", m_after)
@@ -870,7 +936,7 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     # adopted, and the post-regen guarantee dials it onto the target). A pure metric tweak (no
     # regenerate) DOES seed the untouched baseline, so the agent can honestly keep the original when no
     # deterministic edit can beat it. Goalless ops (reverse/mirror) always apply.
-    wants_new = any(s.tool == "regenerate" for s in plan.steps)
+    wants_new = any(s.tool in ("regenerate", "motion_bank") for s in plan.steps)
     if goals and not wants_new:
         ok0, checks0, _ = _verify_goals(goals, before, before)
         best = (0.0, motion, before, ok0, True, True, checks0, 0, base_clip)   # (reward, spliced, after, ok, guard_ok, no_reg, checks, cycle, win_cur)
@@ -879,6 +945,8 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
 
     for cycle in range(total_attempts):
         ctx["_cycle"] = cycle + 1
+        ctx.pop("_motion_bank_report", None)
+        ctx.pop("_foreign_motion", None)
         cur, step_log = _execute_plan(base_clip, plan, ctx, wbeats, cycle=cycle + 1, emit=_emit)
         # Post-regenerate guarantee: dial each goal metric onto the target on the SPLICED window so a
         # fresh take that merely held the metric is put on the user's target instead of being rejected.
@@ -895,7 +963,11 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
         # not the raw edited clip. crossfade_edit blends the window's edges back toward its OWN original
         # boundary, so an unchanged edit is a true no-op (no phantom energy/BAS loss) and a real edit's
         # effect survives the splice -- unlike neighbour-snap splicing, which hid the earlier regression.
-        spliced_try = crossfade_edit(motion, a, b, cur, blend_frames=blend_frames)
+        spliced_try = (
+            splice_window(motion, a, b, cur, blend_frames=blend_frames)
+            if ctx.get("_foreign_motion")
+            else crossfade_edit(motion, a, b, cur, blend_frames=blend_frames)
+        )
         after = window_metrics(spliced_try[a:b], wbeats)
         if goals:
             ok, checks, verdict = _verify_goals(goals, before, after)
@@ -903,6 +975,37 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
             no_reg = not any(c.get("status") == "regressed" for c in checks)
         else:
             ok, checks, verdict, reward, no_reg = True, [], "applied the planned edit", 0.0, True
+        bank_report = ctx.get("_motion_bank_report")
+        bank_steps = [s for s in step_log if s.get("tool") == "motion_bank"]
+        if bank_steps and bank_report is None:
+            failure = bank_steps[-1].get("note", "named motion was not applied")
+            checks.append({
+                "metric": "semantic", "label": "named motion", "dir": "match",
+                "before": 0.0, "after": 0.0, "status": "regressed", "met": False,
+                "detail": failure,
+            })
+            ok, no_reg = False, False
+            verdict = failure
+        elif bank_report is not None:
+            semantic = verify_applied_motion(spliced_try[a:b], bank_report)
+            semantic_check = {
+                "metric": "semantic",
+                "label": bank_report["name"],
+                "dir": "match",
+                "before": 0.0,
+                "after": 1.0 if semantic["ok"] else 0.0,
+                "status": "improved" if semantic["ok"] else "regressed",
+                "met": bool(semantic["ok"]),
+                "detail": semantic["detail"],
+            }
+            checks.append(semantic_check)
+            ok = ok and semantic["ok"]
+            no_reg = no_reg and semantic["ok"]
+            verdict = (
+                f"verified {bank_report['name']}: {semantic['detail']}"
+                if semantic["ok"] else
+                f"{bank_report['name']} failed verification: {semantic['detail']}"
+            )
         # artifact guardrail: never make the window jittery / foot-skating, even off-goal. A
         # violation penalises the reward, keeps the loop refining toward a clean solution, and is
         # dispreferred vs an edit (or the untouched baseline) that stays clean.

@@ -46,7 +46,8 @@
           recurring motif. A structure-aware selector realizes that plan from complementary <b>LODGE</b> and
           <b>EDGE</b> motions plus mirrored, retimed, or retrograded motifs, and joins source changes with
           inertialized transitions. MAESTRO also provides a windowed <b>natural-language editor</b>. Its planner
-          declares measurable goals and routes metric requests to deterministic monotone levers, while requests
+          declares measurable goals, routes metric requests to deterministic monotone levers, and retrieves
+          common semantic actions such as claps, jumps, waves, and turns from a licensed motion bank. Requests
           for genuinely new choreography invoke window regeneration. The executor rejects regressions, adapts
           regenerated motion to the requested targets on the final crossfaded window, and verifies every goal
           before saving an undoable checkpoint. This combines whole-song compositional structure with localized,
@@ -95,7 +96,8 @@
       <figure class="figure card-m diagram">
         <img src="static/images/editing_loop.svg?v=20260804-2" alt="MAESTRO natural-language editing agent" />
         <figcaption>Select a window and describe the change. The planner declares goals, deterministic levers
-          handle measurable edits, and LODGE or EDGE regeneration supplies genuinely new motion. The result is
+          handle measurable edits, a named bank supplies common actions, and LODGE or EDGE regeneration supplies
+          genuinely new motion. The result is
           crossfaded, adaptively dialed to its targets, and verified on the final window before checkpointing.</figcaption>
       </figure>
     </div>
@@ -120,10 +122,11 @@
         <div>
           <p class="prose" style="font-size:1rem">
             Select a time window on the beat-aligned timeline and describe the change in your own words:
-            <i>&ldquo;calmer but keep it tight to the beat&rdquo;</i>, <i>&ldquo;explosive hits on the drop&rdquo;</i>,
-            <i>&ldquo;flip and reverse this&rdquo;</i>. A planner and executor agent apply the edit, verify it against every
-            requested goal on the final spliced motion, protect artifact guardrails, and show their reasoning. Then compare the window
-            <b>before and after</b> side by side.
+            <i>&ldquo;calmer but keep it tight to the beat&rdquo;</i>, <i>&ldquo;add a clap here&rdquo;</i>,
+            <i>&ldquo;insert a wave before the next move&rdquo;</i>. A planner and executor agent route the request
+            through deterministic levers, a curated named-motion bank, or LODGE and EDGE regeneration. It verifies
+            the final spliced motion, protects artifact guardrails, and shows its reasoning. Then compare the
+            window <b>before and after</b> side by side.
           </p>
           <div class="btns" style="justify-content:flex-start;margin-top:1rem">
             <a class="btn primary" href="/"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></svg></span> Launch live editor</a>

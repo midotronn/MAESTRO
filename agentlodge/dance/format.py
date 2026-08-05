@@ -27,6 +27,20 @@ def _looks_like_contact(values: np.ndarray) -> bool:
     return float(np.mean((values >= -0.01) & (values <= 1.01))) > 0.9
 
 
+def _rotation_layout_score(values: np.ndarray) -> float:
+    """Lower is better for a block of 22 valid 6D rotations.
+
+    This resolves the ambiguous stationary-pose case where zero translation makes the first four
+    AgentLODGE channels look contact-like even though the real contacts are at the end.
+    """
+    r6 = np.asarray(values, dtype=np.float32).reshape(-1, 22, 6)
+    a, b = r6[..., :3], r6[..., 3:]
+    na = np.linalg.norm(a, axis=-1)
+    nb = np.linalg.norm(b, axis=-1)
+    dot = np.sum(a * b, axis=-1) / (na * nb + 1e-8)
+    return float(np.mean(np.abs(na - 1.0) + np.abs(nb - 1.0) + np.abs(dot)))
+
+
 def to_agentlodge139(motion: np.ndarray) -> np.ndarray:
     """Normalize a 139-dim motion to AgentLODGE layout ``[trans(3) | rot(132) | contact(4)]``.
 
@@ -40,7 +54,9 @@ def to_agentlodge139(motion: np.ndarray) -> np.ndarray:
     motion = motion.astype(np.float32)
     start_contact = _looks_like_contact(motion[:, :4])
     end_contact = _looks_like_contact(motion[:, 135:139])
-    if start_contact and not end_contact:
+    native_score = _rotation_layout_score(motion[:, 7:139])
+    agent_score = _rotation_layout_score(motion[:, 3:135])
+    if start_contact and (not end_contact or native_score + 1e-4 < agent_score):
         # native [contact(4) | trans(3) | rot(132)] -> [trans(3) | rot(132) | contact(4)]
         return np.concatenate(
             [motion[:, 4:7], motion[:, 7:139], motion[:, 0:4]], axis=1
@@ -59,7 +75,9 @@ def to_native_finedance139(motion: np.ndarray) -> np.ndarray:
     motion = motion.astype(np.float32)
     start_contact = _looks_like_contact(motion[:, :4])
     end_contact = _looks_like_contact(motion[:, 135:139])
-    if end_contact and not start_contact:
+    native_score = _rotation_layout_score(motion[:, 7:139])
+    agent_score = _rotation_layout_score(motion[:, 3:135])
+    if end_contact and (not start_contact or agent_score <= native_score + 1e-4):
         return np.concatenate(
             [motion[:, 135:139], motion[:, :3], motion[:, 3:135]],
             axis=1,

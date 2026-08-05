@@ -234,7 +234,7 @@ const TOUR_STEPS = [
   { el: "timeline", title: "1 · Pick the part to edit",
     text: "Drag across this bar to choose the window of the dance you want to change. The shaded band is your window." },
   { el: "instruction", title: "2 · Say what you want",
-    text: "Describe the change in plain English \u2014 e.g. \u201cmake it more energetic\u201d, \u201ctighten to the beat\u201d, or \u201cgive me new moves\u201d. An AI agent turns it into an edit." },
+    text: "Describe the change in plain English, for example \u201cmake it more energetic\u201d, \u201ctighten to the beat\u201d, \u201cadd a clap here\u201d, or \u201cinsert a wave before the next move\u201d. The agent chooses the right edit." },
   { el: "apply", title: "3 · Apply the edit",
     text: "The agent plans the right tools, applies them, and verifies the result actually hit your goal \u2014 refining if it didn\u2019t." },
   { el: "compareBtn", title: "4 · Review the result",
@@ -288,6 +288,29 @@ function maybeAutoTour() {
   if (!seen) setTimeout(startTour, 800);                    // once the first song has loaded in
 }
 
+async function loadMotionBank() {
+  const host = $("motionSuggestions");
+  if (!host) return;
+  try {
+    const data = await api("/api/motions");
+    host.innerHTML = "";
+    (data.motions || []).forEach((motion) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chip";
+      button.textContent = motion.name;
+      button.title = `${motion.category} · try this named motion`;
+      button.onclick = () => {
+        $("instruction").value = `add a ${motion.name.toLowerCase()} here`;
+        $("instruction").focus();
+      };
+      host.appendChild(button);
+    });
+  } catch (e) {
+    host.textContent = "Named motions are unavailable.";
+  }
+}
+
 async function loadSongs(maxAttempts = 20) {
   // Retry: the page can load while the pod editor is still starting, in which case the very first
   // /api/songs may fail or return empty. Poll until it answers so the page self-heals instead of
@@ -307,6 +330,7 @@ async function init() {
   const sel = $("song");
   sel.innerHTML = "<option>Loading\u2026</option>"; sel.disabled = true;
   wireControls();                                            // wire up-front so controls work at once
+  loadMotionBank();
   const songs = await loadSongs();
   sel.innerHTML = "";
   if (!songs.length) {

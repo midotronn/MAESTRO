@@ -11,6 +11,8 @@ def test_abstract_matches_current_composition_and_editing_paths():
 
     assert "chroma, MFCC, energy, and downbeats" in html
     assert "deterministic monotone levers" in html
+    assert "licensed motion bank" in html
+    assert "add a clap here" in html
     assert "genuinely new choreography invoke window regeneration" in html
     assert "final crossfaded window" in html
     assert "undoable checkpoint" in html
@@ -25,7 +27,8 @@ def test_method_diagrams_cover_current_pipeline_contracts():
                   "Inertialized assembly", "LODGE", "EDGE"):
         assert label in framework
     for label in ("Planner", "Routed executor", "Final-window adaptation", "Verify",
-                  "Checkpointed result", "monotone levers", "new motion: LODGE / EDGE"):
+                  "Checkpointed result", "monotone levers", "named action: motion bank",
+                  "new motion: LODGE / EDGE"):
         assert label in editing
 
 

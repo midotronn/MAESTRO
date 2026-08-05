@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from agentlodge.editor.checkpoints import Checkpoint, CheckpointStore
 from agentlodge.editor.remote_generator import BankWindowGenerator, ResilientWindowGenerator
+from agentlodge.editor.motion_bank import MotionBank, MotionSpec, default_motion_bank
 from agentlodge.editor.session import EditSession, SongAssets
 from agentlodge.editor.window_edit import (
     EditGoal,
@@ -41,12 +42,15 @@ __all__ = [
     "EditGoal",
     "EditSession",
     "MockWindowGenerator",
+    "MotionBank",
+    "MotionSpec",
     "ResilientWindowGenerator",
     "SongAssets",
     "WindowEditResult",
     "WindowGenerator",
     "apply_window_edit",
     "goal_reward",
+    "default_motion_bank",
     "parse_window_instruction",
     "reward_weights_for",
     "splice_window",

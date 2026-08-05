@@ -85,6 +85,28 @@ pipeline falls back to hybrid, then single-model selection.
 AGENTLODGE_STORY=1 python run_pipeline.py --audio path/to/song.wav --output_dir ./outputs
 ```
 
+## Interactive editor and named motions
+
+The editor routes each natural-language request through one or more agent tools:
+
+- deterministic levers for energy, beat alignment, smoothness, sharpness, mirror, and reverse;
+- a curated bank of 20 named actions for requests such as "add a clap here", "jump on the next
+  beat", or "insert a wave before the next move";
+- windowed LODGE or EDGE regeneration when the user asks for genuinely new choreography.
+
+Named actions are defined by `assets/motion_bank/manifest.json`. The manifest is the single source
+for names, aliases, capabilities, provenance, licensing, beat anchors, and semantic validation.
+Ordinary named-action requests replace the selected interval. Explicit insertion wording fits the
+action inside the selected interval and preserves the song duration, beat grid, and every frame
+outside the window. The bank is rebuilt deterministically with:
+
+```bash
+python scripts/build_motion_bank.py
+```
+
+See [Named motion bank](docs/research/motion_bank.md) for the vocabulary, extension contract,
+validation rules, and attribution policy.
+
 ## Requirements
 
 - Python 3.10+

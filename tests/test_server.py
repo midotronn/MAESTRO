@@ -41,6 +41,16 @@ def test_lists_songs_and_opens_session(client):
     assert st["head"] and len(st["timeline"]) == 1
 
 
+def test_lists_named_motions_from_the_shared_manifest(client):
+    data = client.get("/api/motions").json()
+    assert data["version"] == "1.0.0"
+    assert len(data["motions"]) == 20
+    clap = next(m for m in data["motions"] if m["id"] == "clap_single")
+    assert clap["name"] == "Single clap"
+    assert "clap" in clap["aliases"]
+    assert clap["source"] and clap["license"] and clap["attribution"]
+
+
 def test_edit_commits_and_moves_metrics(client):
     client.post("/api/session/sng")
     r = client.post("/api/session/sng/edit",
@@ -107,6 +117,10 @@ def test_editor_review_actions_explain_the_user_flow():
     assert 'id="renderBtn"' not in html
     assert "startFullRender" in js
     assert 'startRender("window")' not in js
+    assert 'id="motionSuggestions"' in html
+    assert "/api/motions" in js
+    assert "add a clap here" in js
+    assert "insert a wave before the next move" in js
 
 
 def test_basic_auth_middleware_guards_when_env_set():

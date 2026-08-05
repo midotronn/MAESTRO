@@ -132,7 +132,7 @@ def editing_loop():
     W, H = 1160, 410
     b = []
     b.append(txt(W / 2, 34, "The natural-language editing agent", 17, INK, 800))
-    b.append(txt(W / 2, 55, "metric edits use guaranteed levers; new-motion requests regenerate, then adapt to the same goals",
+    b.append(txt(W / 2, 55, "guaranteed levers, named-action retrieval, and windowed generation share one verified edit loop",
                  12.5, MUTED, 500))
     yr = 112; h = 96
     b.append(node(18, yr, 172, h, "You", ["select a window +", "describe the change"],
@@ -140,10 +140,10 @@ def editing_loop():
     b.append(node(216, yr, 190, h, "Planner", ["declare measurable goals", "+ choose a tool path"],
                   fill=AGENT, stroke=BRAND, accent=BRAND, title_fill=BRAND, badge="LLM"))
     b.append(node(432, yr, 228, h, "Routed executor",
-                  ["metric intent: monotone levers", "new motion: LODGE / EDGE"],
+                  ["metric intent: monotone levers", "named action: motion bank", "new motion: LODGE / EDGE"],
                   fill=CARD, stroke=LINE, accent=ACCENT, title_fill=INK))
     b.append(node(686, yr, 202, h, "Final-window adaptation",
-                  ["crossfade into the dance", "dial regenerated goals to target"],
+                  ["fit + splice into the dance", "dial measurable goals to target"],
                   accent=REUSE, title_size=13.5))
     b.append(node(914, yr, 152, h, "Verify", ["goals + artifact", "guardrails"]))
     b.append(node(968, 302, 174, 68, "Checkpointed result", ["undo · compare · branch"],
@@ -170,7 +170,7 @@ def editing_loop():
         b.append(txt(cx + wdt / 2, ty + 18, t, 10.5, MUTED, 600))
         cx += wdt + 8
     b.append(txt(tx + 12, ty + 47,
-                 "verification measures the final spliced motion; new-motion requests never fall back to the untouched original",
+                 "verification measures the final spliced motion; unknown named actions fail visibly rather than silently substituting",
                  10.5, FAINT, 500, anchor="start"))
     return svg(W, H, "".join(b))
 
