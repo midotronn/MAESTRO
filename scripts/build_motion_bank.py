@@ -230,7 +230,10 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         aa[:, 12, 1] -= 0.16 * raise_arm
     elif motion_id == "point_side":
         point = _smoothstep(t / 0.42) * (1.0 - 0.35 * _smoothstep((t - 0.82) / 0.18))
-        target = np.array([-0.52, 0.13, -0.46], dtype=np.float32)
+        # Reach across the body's side, not diagonally forward: the arm is roughly 0.58 long, so
+        # a target 0.55 out and 0.18 ahead of the shoulder reads as a side point while staying
+        # legible to a front-on camera. A larger forward term makes it a forward reach instead.
+        target = np.array([-0.72, 0.12, -0.18], dtype=np.float32)
         _solve_arm(aa, "right", _arm_targets("right", point, target))
         aa[:, 9, 2] += 0.16 * point
         aa[:, 12, 1] -= 0.38 * point                         # sustained: the head follows the point

@@ -195,3 +195,45 @@ def test_lateral_steps_spread_the_stance_instead_of_leaning_both_legs_one_way():
         assert same_side < 0.75, (motion_id, same_side)
         separation = np.linalg.norm(joints[:, 7, :2] - joints[:, 8, :2], axis=-1)
         assert float(separation.max()) > 0.35, (motion_id, separation.max())
+
+
+# The manifest validators are generic shape checks -- joint_activity only asks that the arms
+# move, so an action can satisfy its contract while failing to depict what it is named after.
+# These pin the meaning of the actions where the rendered review found the gap.
+
+@needs_fk
+@pytest.mark.parametrize("motion_id", ["clap_single", "clap_repeat", "clap_overhead"])
+def test_claps_bring_the_hands_together_on_the_beat(motion_id):
+    """The event frame is what the editor snaps to a beat, so that is where the hands must meet."""
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    spec = bank.resolve(motion_id)
+    joints = compute_poses(bank.load_clip(motion_id))["fk_joints"]
+    gap = float(np.linalg.norm(joints[spec.event_frame, 20] - joints[spec.event_frame, 21]))
+    assert gap < 0.12, (motion_id, gap)
+
+
+@needs_fk
+def test_pointing_to_the_side_reaches_sideways_rather_than_forward():
+    """A target only slightly off the forward axis renders as a forward reach, not a side point."""
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    spec = bank.resolve("point_side")
+    joints = compute_poses(bank.load_clip("point_side"))["fk_joints"]
+    offset = joints[spec.event_frame, 21] - joints[spec.event_frame, 17]
+    assert abs(offset[0]) > 1.5 * abs(offset[1]), offset
+
+
+@needs_fk
+@pytest.mark.parametrize("motion_id", ["jump_two_foot", "jump_arms_up"])
+def test_jumps_are_off_the_ground_at_their_accent(motion_id):
+    """A jump whose accent lands while the feet are planted reads as a squat."""
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    spec = bank.resolve(motion_id)
+    clip = bank.load_clip(motion_id)
+    joints = compute_poses(clip)["fk_joints"]
+    assert int(clip[spec.event_frame, 135:139].sum()) == 0, motion_id
+    lift = float(joints[spec.event_frame, (7, 8, 10, 11), 2].min()
+                 - joints[0, (7, 8, 10, 11), 2].min())
+    assert lift > 0.08, (motion_id, lift)

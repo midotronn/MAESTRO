@@ -76,6 +76,13 @@ validators:
 - at least ten joints move meaningfully, so no action reads as a mannequin with one moving limb;
 - lateral steps open the stance instead of leaning both legs the same way.
 
+The manifest validators are generic shape checks, so they constrain magnitude rather than meaning:
+`joint_activity` asks only that the named joints move, which a clap satisfies whether or not the
+hands ever meet, and a side point satisfies while sweeping diagonally forward. Where an action's
+name makes a specific claim, that claim is pinned by a test instead — claps close at the event
+frame, the side point stays lateral, and jumps are airborne at their accent — because the event
+frame is what the editor snaps to a beat and is therefore the frame the viewer actually reads.
+
 ## Authoring style
 
 Clips are authored from a shared "ready" stance — arms carried below horizontal with soft elbows and
