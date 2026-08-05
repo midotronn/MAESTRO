@@ -41,6 +41,10 @@ def main() -> None:
         )
         for offset, frame, color in zip((-0.75, 0.0, 0.75), frames, colors):
             pose = joints[frame]
+            # Centre each frame horizontally on its own root: travelling actions (steps, turns)
+            # otherwise drift into the neighbouring frame and read as a broken skeleton. Vertical
+            # position is kept so jumps, crouches, and rises still show their level change.
+            pose = pose - np.array([joints[frame][0, 0], joints[frame][0, 1], 0.0])
             x = pose[:, 0] + 0.55 * pose[:, 1] + offset
             z = pose[:, 2]
             for child, parent in enumerate(BODY_PARENTS):

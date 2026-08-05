@@ -67,6 +67,24 @@ The final spliced result is checked again after temporal fitting and seam handli
 unsupported actions fail visibly. They never silently select another motion or report success while
 keeping the original.
 
+Three posture invariants are enforced for every canonical clip, independently of the per-action
+validators:
+
+- planted feet rest on the floor. Root height is solved from the pose by `_ground` rather than
+  authored by hand, because a hand-picked drop distance sinks the feet through the ground whenever
+  it disagrees with how much the bent legs actually shorten;
+- at least ten joints move meaningfully, so no action reads as a mannequin with one moving limb;
+- lateral steps open the stance instead of leaning both legs the same way.
+
+## Authoring style
+
+Clips are authored from a shared "ready" stance — arms carried below horizontal with soft elbows and
+slightly bent knees — rather than the SMPL T-pose, and every clip carries a small endpoint-neutral
+performance layer (breathing, weight shift, torso counter-rotation). Accents wind up before the hit
+and settle after it, and locomotion carries opposite-arm swing. Because the performance layer
+vanishes at the first and last frame, validators that compare clip endpoints measure exactly what
+the authoring recipe produced.
+
 ## Authoring and licensing
 
 Run `python scripts/build_motion_bank.py` to regenerate every canonical `.npy` clip and validate the

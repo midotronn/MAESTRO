@@ -143,3 +143,44 @@ def test_motion_bank_is_one_tool_not_twenty_special_cases():
     assert "motion_bank" in AE.TOOLS
     bank_ids = {s.id for s in default_motion_bank().specs}
     assert not (bank_ids & set(AE.TOOLS))
+
+
+@pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
+def test_planted_feet_never_sink_through_the_floor(motion_id):
+    """Hand-authoring a root drop next to a knee bend used to push the feet underground."""
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    clip = bank.load_clip(motion_id)
+    joints = compute_poses(clip)["fk_joints"]
+    lowest = np.min(joints[:, (7, 8, 10, 11), 2], axis=1)
+    grounded = clip[:, 135:139].sum(axis=1) > 0
+    assert grounded.any(), motion_id
+    floor = float(np.median(lowest[grounded]))
+    assert float(np.min(lowest[grounded])) > floor - 0.03, motion_id
+
+
+@pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
+def test_every_motion_animates_a_meaningful_share_of_the_body(motion_id):
+    """Guards against clips that read as a mannequin with a single moving limb."""
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    joints = compute_poses(bank.load_clip(motion_id))["fk_joints"]
+    relative = joints - joints[:, :1, :]
+    excursion = np.linalg.norm(relative - relative[0], axis=-1).max(axis=0)
+    assert int((excursion > 0.02).sum()) >= 10, motion_id
+
+
+def test_lateral_steps_spread_the_stance_instead_of_leaning_both_legs_one_way():
+    """A side step is a weight transfer: the legs must open, not swing over together."""
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    for motion_id in ("side_step", "step_touch"):
+        joints = compute_poses(bank.load_clip(motion_id))["fk_joints"]
+        left = joints[:, 7] - joints[:, 1]
+        right = joints[:, 8] - joints[:, 2]
+        left_angle = np.arctan2(left[:, 0], -left[:, 2])
+        right_angle = np.arctan2(right[:, 0], -right[:, 2])
+        same_side = float(np.mean(np.sign(left_angle) == np.sign(right_angle)))
+        assert same_side < 0.75, (motion_id, same_side)
+        separation = np.linalg.norm(joints[:, 7, :2] - joints[:, 8, :2], axis=-1)
+        assert float(separation.max()) > 0.35, (motion_id, separation.max())
