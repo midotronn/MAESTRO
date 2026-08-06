@@ -30,7 +30,8 @@ $env:AGENTLODGE_POD_KEY="$HOME\.ssh\id_ed25519"
 ```
 
 `setup_pod.sh` installs, idempotently:
-1. the system libs Blender/ffmpeg need, `libXrender/libXi/libEGL/libglvnd/...` + `ffmpeg`
+1. the system libs Blender/ffmpeg need, `libXrender/libXi/libEGL/libglvnd/...` + `libOSMesa`
+   (which LODGE's PyOpenGL import needs, not Blender) + `ffmpeg`
    (these are wiped on **every** restart);
 2. a Python venv (`/root/al_venv`, fast local disk) with `torch` + `pytorch3d` + the LODGE/EDGE
    generation deps (`pytorch-lightning`, `accelerate`, ...);

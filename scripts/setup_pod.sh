@@ -3,7 +3,8 @@
 # (RunPod wipes apt-installed system libs AND anything on /root, keeping only /workspace).
 #
 # It installs, in order:
-#   1. system libraries Blender/ffmpeg need (X11 / GL / EGL) + ffmpeg    -> wiped on every restart
+#   1. system libraries Blender/ffmpeg need (X11 / GL / EGL) + LODGE's OSMesa + ffmpeg
+#                                                                      -> wiped on every restart
 #   2. a Python venv with torch + pytorch3d + the LODGE/EDGE deps        -> gone if it lived on /root
 #   3. LODGE/EDGE venv links so the subprocess backends resolve
 # and verifies the result. Checkpoints/data live on the /workspace network volume and survive
@@ -23,12 +24,16 @@ AL="$WORKSPACE/AgentLODGE"
 
 echo "=== AgentLODGE pod setup (workspace=$WORKSPACE venv=$VENV torch=$TORCH_INDEX) ==="
 
-echo "--- [1/4] system libraries (Blender X11/GL/EGL + ffmpeg) ---"
+echo "--- [1/4] system libraries (Blender X11/GL/EGL + LODGE OSMesa + ffmpeg) ---"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq 2>/dev/null || true
+# libosmesa6 is for LODGE, not Blender: dld/data/utils imports PyOpenGL, which resolves an OSMesa
+# backend at import time, so without it generation dies on `ImportError: Unable to load OpenGL
+# library` before a single diffusion step runs.
 apt-get install -y -qq \
   libxrender1 libxi6 libxxf86vm1 libxfixes3 libxkbcommon0 libgl1 libglu1-mesa \
   libsm6 libice6 libxext6 libx11-6 libegl1 libglvnd0 libgles2 libopengl0 libgl1-mesa-dri \
+  libosmesa6 \
   ffmpeg git build-essential 2>&1 | tail -n 2 || true
 
 echo "--- [2/4] python venv ($VENV) ---"
