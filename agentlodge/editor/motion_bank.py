@@ -26,6 +26,13 @@ from agentlodge.dance.transition import (
 
 _ROOT = slice(3, 9)
 _ROT = slice(3, 135)
+# Peak rate, in radians per frame, at which a seam is allowed to close a pose gap. Calibrated
+# against the joint speeds the songs themselves reach: above this the hand-over outruns the dance.
+_JOIN_MAX_RATE = 0.05
+# ...but never for longer than about a beat. A hand-over borrows frames from the song's own
+# choreography to fade the clip's pose offset out in, so letting it grow with the selection would
+# quietly rewrite seconds of dance either side of a one-second gesture.
+_JOIN_MAX_FRAMES = 16
 _CONTACT = slice(135, 139)
 _DEFAULT_ROOT = Path(__file__).resolve().parents[2] / "assets" / "motion_bank"
 
@@ -373,6 +380,11 @@ def _target_event(n: int, beats: np.ndarray | None, anchor: str) -> int:
     return int(np.clip(target, 0, n - 1))
 
 
+def _join_tail(n: int) -> int:
+    """Frames of dance kept after an action so the hand-back has somewhere to happen."""
+    return int(min(8, max(0, int(n) // 8)))
+
+
 def _beat_locked_length(natural: int, n: int, beats: np.ndarray | None) -> int:
     """How many frames the action gets: its authored duration, snapped to a whole number of beats.
 
@@ -384,16 +396,23 @@ def _beat_locked_length(natural: int, n: int, beats: np.ndarray | None) -> int:
     start and the finish on the groove instead of drifting against it.
     """
     natural = int(max(1, natural))
+    # Always keep a few frames of dance after the action to hand back into. Filling the window to
+    # its last frame leaves the join no room, and the whole pose gap gets closed in one or two
+    # frames: measured joint speed hit nearly six times anything in the song when the action ended
+    # two frames from the edge. Dropping a beat is far cheaper than that lurch.
+    room = int(max(1, n - _join_tail(n)))
     if beats is None:
-        return int(min(natural, n))
+        return int(min(natural, room))
     b = np.unique(np.asarray(beats, dtype=float))
     if b.size < 2:
-        return int(min(natural, n))
+        return int(min(natural, room))
     period = float(np.median(np.diff(b)))
     if not np.isfinite(period) or period < 1.0:
-        return int(min(natural, n))
+        return int(min(natural, room))
     whole = max(1, int(round(natural / period)))
-    return int(np.clip(int(round(whole * period)), 1, n))
+    while whole > 1 and int(round(whole * period)) > room:
+        whole -= 1
+    return int(np.clip(int(round(whole * period)), 1, room))
 
 
 def _replace_beat_locked(
@@ -420,7 +439,8 @@ def _replace_beat_locked(
     """
     n = int(base.shape[0])
     ratio = float(np.clip(event / max(1, action.shape[0] - 1), 0.0, 1.0))
-    start = int(np.clip(target_event - int(round(ratio * (action_len - 1))), 0, n - action_len))
+    latest = max(0, n - action_len - _join_tail(n))
+    start = int(np.clip(target_event - int(round(ratio * (action_len - 1))), 0, latest))
     end = start + action_len
 
     anchor = max(0, start - 1)
@@ -428,11 +448,16 @@ def _replace_beat_locked(
     fitted = _align_translation(fitted, base[anchor, :3])
     fitted = _align_yaw(fitted, _root_yaw_series(base[anchor:anchor + 1])[0])
 
-    combined = _ease_join(base[:start], fitted, min(blend_frames, max(1, action_len // 4)))
+    combined = _ease_join(base[:start], fitted,
+                          _join_frames(base[max(0, start - 1)], fitted[0],
+                                       min(blend_frames, max(1, action_len // 4)), action_len // 2))
     suffix = base[end:]
     if suffix.shape[0]:
         suffix = _align_yaw(suffix, _root_yaw_series(combined[-1:])[0])
-        combined = _ease_join(combined, suffix, min(blend_frames, max(1, suffix.shape[0] // 3)))
+        combined = _ease_join(combined, suffix,
+                              _join_frames(combined[-1], suffix[0],
+                                           min(blend_frames, max(1, suffix.shape[0] // 3)),
+                                           max(1, (2 * suffix.shape[0]) // 3)))
     if combined.shape[0] != n:                       # defensive; the pieces already sum to n
         combined = retime(combined, n)
     return np.ascontiguousarray(combined, dtype=np.float32), [start, end]
@@ -544,26 +569,51 @@ def _close_root_residual(clip: np.ndarray, base: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(out, dtype=np.float32)
 
 
+def _join_frames(left_end: np.ndarray, right_start: np.ndarray, requested: int, available: int) -> int:
+    """How long to take handing over at a seam, given how far apart the two poses are.
+
+    A fixed blend closes a small gap gently and a large one violently: the same eight frames that
+    suit a clap returning to a neutral stance have to fling the body through a much bigger change
+    when a bounce hands back mid-cycle, and the rush read as a hitch at twice any speed in the
+    song. Scaling the hand-over with the gap keeps the rate roughly constant instead.
+    """
+    a = _sixd_to_matrix(np.asarray(left_end[_ROT], dtype=np.float32).reshape(1, 22, 6))
+    b = _sixd_to_matrix(np.asarray(right_start[_ROT], dtype=np.float32).reshape(1, 22, 6))
+    gap = float(np.abs(_matrix_to_axis_angle(a @ np.swapaxes(b, -1, -2))).max())
+    # Smoothstep's steepest slope is 1.5/count, so this bounds the rate the gap is closed at.
+    need = int(np.ceil(1.5 * gap / _JOIN_MAX_RATE))
+    return int(np.clip(max(int(requested), need), 1, max(1, min(int(available), _JOIN_MAX_FRAMES))))
+
+
 def _ease_join(left: np.ndarray, right: np.ndarray, frames: int) -> np.ndarray:
     if left.shape[0] == 0:
         return right
     if right.shape[0] == 0:
         return left
     out = right.copy()
-    out[:, :3] += left[-1, :3] - out[0, :3]
+    # Hand over onto where the outgoing motion was *going*, not onto where it stopped. Landing on
+    # `left[-1]` itself makes the first joined frame a pose-for-pose copy of the last one, so a
+    # frame of time passes with the dancer perfectly still: measured joint speed was exactly 0.000
+    # at every seam, read as a stutter, and the catch-up afterwards overshot the song's own peak.
+    step = left[-1] - left[-2] if left.shape[0] > 1 else np.zeros_like(left[-1])
+    out[:, :3] += (left[-1, :3] + step[:3]) - out[0, :3]
     count = int(max(0, min(frames, out.shape[0])))
     if count:
-        ref = np.repeat(left[-1:, :], count, axis=0)
         k = np.linspace(0.0, 1.0, count, dtype=np.float32)
         smooth = (3 * k ** 2 - 2 * k ** 3)[:, None]
-        out[:count, :3] = (1.0 - smooth) * ref[:, :3] + smooth * out[:count, :3]
-        r_ref = _sixd_to_matrix(ref[:, _ROT].reshape(count, 22, 6))
+        # Decay the pose difference while carrying the incoming motion, rather than easing toward
+        # a frozen pose. Smoothstep is flat at k=0, so the join leaves at the clip's own speed.
+        r_pred = _sixd_to_matrix(left[-1:, _ROT].reshape(1, 22, 6))
+        if left.shape[0] > 1:
+            r_prev = _sixd_to_matrix(left[-2:-1, _ROT].reshape(1, 22, 6))
+            r_pred = (r_pred @ np.swapaxes(r_prev, -1, -2)) @ r_pred
         r_out = _sixd_to_matrix(out[:count, _ROT].reshape(count, 22, 6))
-        aa = _matrix_to_axis_angle(r_out @ np.swapaxes(r_ref, -1, -2))
+        offset = _matrix_to_axis_angle(r_pred @ np.swapaxes(r_out[:1], -1, -2))
         from agentlodge.dance.transition import _axis_angle_to_matrix, _matrix_to_sixd
-        blended = _axis_angle_to_matrix(aa * smooth[:, None, :]) @ r_ref
+        blended = _axis_angle_to_matrix(offset * (1.0 - smooth)[:, None, :]) @ r_out
         out[:count, _ROT] = _matrix_to_sixd(blended).reshape(count, 132)
-        out[:count, _CONTACT] = np.where(smooth >= 0.5, out[:count, _CONTACT], ref[:, _CONTACT])
+        held = np.repeat(left[-1:, _CONTACT], count, axis=0)
+        out[:count, _CONTACT] = np.where(smooth >= 0.5, out[:count, _CONTACT], held)
     return np.concatenate([left, out], axis=0).astype(np.float32)
 
 

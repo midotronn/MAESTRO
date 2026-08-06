@@ -31,8 +31,23 @@ The offline planner resolves aliases from the manifest, and the LLM receives the
 ## Timing semantics
 
 Replacement is the default interpretation for ordinary wording such as "add a clap here". The
-canonical action is retimed to the selected interval, its semantic event is aligned to a nearby
-music beat, and the foreign clip is joined with two-sided seam handling.
+action plays at *its own authored speed*, snapped to a whole number of beats, and only the frames
+it actually occupies are replaced — everything else in the window stays the song's own
+choreography. Its semantic event is aligned to a nearby music beat, and the foreign clip is joined
+with two-sided seam handling.
+
+The action's duration is deliberately not a function of the selection. Retiming the clip to fill
+whatever interval the user happened to drag makes its speed an accident of the gesture that
+selected it: a 1.5 s clap dropped on a 4 s selection played at 0.4x, smeared across nearly eight
+beats, and read as slow motion fighting the song rather than as dancing with it. Measured against
+the song's own beat alignment across eight window positions and all twenty motions, playing each
+clip at its authored length left only 2/20 motions below the groove the song was already in,
+against 5/20 when the clip was stretched to the window.
+
+Beat-locking never fills the window to its last frame. A few frames of real dance are always kept
+after the action for the hand-back to fade into; when an action finished two frames from the edge
+the whole pose difference had to be closed inside those two frames and the dancer was flung at
+nearly six times any speed in the song. Dropping a beat from the gesture is far cheaper than that.
 
 Explicit wording such as "insert", "before", "after", or "between" selects fixed-duration
 in-window insertion. MAESTRO allocates part of the selected interval to the named action and fits
@@ -69,6 +84,25 @@ the single window where the song turned 89 degrees on its own, measuring 2.567 r
 threshold. `insert` mode, which shifts the surrounding motion instead of pinning it, passed every
 window. This is inherent to pinning both edges rather than a defect in the motion, so it is recorded
 rather than tuned away — raising the threshold would only hide the tension.
+
+### Handing over at a seam
+
+Splicing at the action's own length puts two seams *inside* every window where filling the window
+put none. Both are handed over by fading the pose difference out while the incoming motion carries
+on, rather than by easing toward the outgoing pose.
+
+The distinction matters more than it sounds. Landing the incoming clip *on* `left[-1]` makes the
+first joined frame a pose-for-pose copy of the last one, so a frame of time passes with nobody
+moving and the dance then rushes to catch up: measured joint speed was exactly 0.000 at every
+seam, followed by a spike to twice the song's own peak. A held frame reads as a dropped frame or a
+hitch, which is far more visible than a fast one. The join therefore targets where the outgoing
+motion was *going* — `left[-1]` advanced by one frame of its own velocity — so the seam frame
+advances like any other.
+
+The hand-over is as long as the pose gap needs, bounded at one beat. A fixed length closes a small
+gap gently and a large one violently, but an unbounded one would fade a clip's offset out across
+seconds of the song's own choreography. With both in place the worst seam across all twenty
+motions sits at 1.4x the song's own 99th-percentile joint speed, against 3.0x before.
 
 ## Validation
 
@@ -122,6 +156,19 @@ enough to see, no raised hand is stranded behind the back, and each named step t
 name says both as a bank clip and after it has been spliced into a song — because the event frame is
 what the editor snaps to a beat and is therefore the frame the viewer actually reads. **Validators
 pin magnitude; tests pin meaning.**
+
+A proximity claim needs a floor as well as a ceiling. The clap test asserted only that the hands
+finished closer than 0.12 m, and two hands driven to a *single point* satisfy that better than two
+hands meeting: `_clap_arms` gave the left and right IK solvers the same target, so every clap in
+the bank rendered as crossed, interpenetrating forearms with a measured gap of 0.0001 m while both
+the validator and the test passed. Clap targets are now mirrored either side of the midline like
+every other two-armed recipe, and the gap is asserted from both directions.
+
+Nothing in that failure was subtle at full size — it survived because the twenty-per-page contact
+sheet used to review the bank renders each action too small to see a hand at. `scripts/review_motion_visually.py`
+draws one motion per sheet from four angles, forces the closest-approach frame into the sample
+rather than sampling evenly past it, and keeps world height so a jump still looks like a jump.
+Review new clips with that, not with the reel.
 
 Those tests ran only against `MockWindowGenerator` for most of the bank's life, which is a tidy
 base: it starts at yaw 0 and dances on the spot. `tests/data/lodge_sample_dance.npy` is 24 seconds

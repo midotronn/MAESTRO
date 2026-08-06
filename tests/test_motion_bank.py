@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agentlodge.editor import agent_edit as AE
 from agentlodge.editor.motion_bank import (
     MotionBank,
+    _JOIN_MAX_FRAMES,
     _root_yaw_series,
     default_motion_bank,
     validate_semantics,
@@ -615,9 +616,63 @@ def test_the_dance_outside_a_spliced_gesture_is_left_alone(motion_id):
     # Body joints only. Translation and root orientation (channels 0:9) are legitimately
     # re-anchored so the window still starts and ends where the song expects; the pose the
     # dancer is holding either side of the gesture is what must survive untouched.
-    for lo, hi in ((0, a - 12), (b + 12, n)):
+    # The hand-over either side fades the clip's pose offset out over at most one beat, so the
+    # dance is only its own from there on. That bound is the point: without it the blend grows
+    # with the selection and a one-second gesture quietly rewrites seconds of choreography.
+    margin = _JOIN_MAX_FRAMES + 4
+    for lo, hi in ((0, a - margin), (b + margin, n)):
         drift = float(np.abs(window[lo:hi, 9:135] - base[lo:hi, 9:135]).max())
         assert drift < 1e-3, (motion_id, (lo, hi), drift)
+
+
+@pytest.mark.parametrize("motion_id", sorted(s.id for s in default_motion_bank().specs))
+def test_a_spliced_motion_never_stops_the_dancer_dead(motion_id):
+    """No frame of a spliced window may be a still copy of the one before it.
+
+    The seams used to hand over by landing the incoming clip exactly on the outgoing pose, so a
+    frame of time passed with nobody moving and the dance then rushed to catch up. Measured joint
+    speed was precisely 0.000 at every seam. A held frame is far more visible than a fast one --
+    it reads as a hitch or dropped frame -- and the splice now creates two seams inside every
+    window, so this has to hold for each of them.
+    """
+    from server.fk import compute_poses
+
+    bank = default_motion_bank()
+    n = 240
+    base = _base(n)
+    window, report = bank.apply(base, motion_id, mode="replace", anchor="center",
+                                beats=np.arange(0, n, 16))
+    speed = np.linalg.norm(np.diff(compute_poses(window)["fk_joints"], axis=0), axis=-1).mean(axis=-1)
+    a, b = report["action_range"]
+    # A held frame shows up as a local dip, not as a low absolute speed: a calm gesture is
+    # legitimately slower than the dance around it, so comparing against the window as a whole
+    # would flag a quiet wave. What must not happen is the hand-over frame sitting still while
+    # the frames on both sides of it are moving.
+    for seam in (a, b):
+        if seam < 2 or seam >= len(speed):
+            continue
+        held, before, after = speed[seam - 1], speed[seam - 2], speed[seam]
+        floor = 0.25 * float(min(before, after))
+        assert float(held) > floor, (motion_id, seam, float(held), float(before), float(after))
+
+
+@pytest.mark.parametrize("motion_id", sorted(s.id for s in default_motion_bank().specs))
+def test_a_spliced_motion_leaves_the_dance_room_to_come_back(motion_id):
+    """An action may never run to the last frame of the window.
+
+    The hand-over needs frames of real dance to fade into. When the action finished two frames
+    from the edge the entire pose difference was closed inside those two frames, and the dancer
+    was flung at nearly six times any speed in the song. Reserving a tail costs at most one beat
+    of the gesture and is what keeps the return to the choreography watchable.
+    """
+    bank = default_motion_bank()
+    for n in (96, 120, 168, 240):
+        base = _base(240)[:n]
+        _, report = bank.apply(base, motion_id, mode="replace", anchor="center",
+                               beats=np.arange(0, n, 16))
+        a, b = report["action_range"]
+        assert n - b >= min(8, n // 8), (motion_id, n, report["action_range"])
+        assert a >= 0 and b <= n, (motion_id, n, report["action_range"])
 
 
 def test_asking_for_repetition_a_motion_cannot_do_still_edits_the_window():
