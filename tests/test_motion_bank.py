@@ -34,6 +34,13 @@ needs_fk = pytest.mark.skipif(not os.path.exists(_TMPL),
                               reason="SMPL-X joint template not present (fetched from the pod)")
 
 
+def _body_forward(joints):
+    """The direction the dancer faces, read off the feet rather than a world convention."""
+    toe = (joints[0, 10] - joints[0, 7]) + (joints[0, 11] - joints[0, 8])
+    forward = np.array([toe[0], toe[1], 0.0])
+    return forward / np.linalg.norm(forward)
+
+
 def test_manifest_has_twenty_valid_redistributable_motions():
     bank = default_motion_bank()
     assert len(bank.specs) == 20
@@ -221,6 +228,17 @@ def test_claps_bring_the_hands_together_on_the_beat(motion_id):
 
 
 @needs_fk
+def test_the_overhead_clap_actually_clears_the_head():
+    """Height is the only thing separating it from clap_single, and nothing pinned it."""
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    spec = bank.resolve("clap_overhead")
+    joints = compute_poses(bank.load_clip("clap_overhead"))["fk_joints"]
+    ev = spec.event_frame
+    assert float(min(joints[ev, 20, 2], joints[ev, 21, 2]) - joints[ev, 15, 2]) > 0.12
+
+
+@needs_fk
 def test_pointing_to_the_side_reaches_sideways_rather_than_forward():
     """A target only slightly off the forward axis renders as a forward reach, not a side point."""
     from server.fk import compute_poses
@@ -244,6 +262,73 @@ def test_jumps_are_off_the_ground_at_their_accent(motion_id):
     lift = float(joints[spec.event_frame, (7, 8, 10, 11), 2].min()
                  - joints[0, (7, 8, 10, 11), 2].min())
     assert lift > 0.08, (motion_id, lift)
+
+
+@needs_fk
+def test_a_bounce_actually_travels_far_enough_to_see():
+    """The bounce lives entirely in the knees, and a shallow one is invisible on a rendered body.
+
+    ``_ground`` re-derives pelvis height from the leg pose on every grounded frame, so an authored
+    root rise is silently cancelled and only leg flexion moves the dancer. That made an earlier
+    version bob by 2cm -- numerically a bounce, visually a statue. Pin the travel a viewer sees.
+    """
+    from server.fk import compute_poses
+    clip = default_motion_bank().load_clip("bounce_in_place")
+    pelvis = compute_poses(clip)["fk_joints"][:, 0, 2]
+    travel = float(pelvis.max() - pelvis.min())
+    assert travel > 0.07, travel
+
+
+@pytest.mark.parametrize("motion_id", ["side_step", "step_touch"])
+def test_mirroring_a_step_reverses_it_sideways_not_front_to_back(motion_id):
+    """Mirroring reflects across the sagittal plane, so it must not touch forward travel.
+
+    The lateral and sagittal axes are adjacent in the stored layout, and the bank was once
+    authored against the wrong one. If `mirror` ever negated the sagittal component instead,
+    mirroring a step would quietly turn it into its opposite rather than its reflection.
+    """
+    from agentlodge.dance.transition import mirror
+    clip = default_motion_bank().load_clip(motion_id)
+    flipped = mirror(clip)
+    lateral = float(clip[-1, 0] - clip[0, 0])
+    assert abs(lateral) > 0.2, lateral
+    assert float(flipped[-1, 0] - flipped[0, 0]) == pytest.approx(-lateral, abs=1e-5)
+    sagittal = float(clip[-1, 1] - clip[0, 1])
+    assert float(flipped[-1, 1] - flipped[0, 1]) == pytest.approx(sagittal, abs=1e-5)
+
+
+@needs_fk
+@pytest.mark.parametrize("motion_id,sign", [("step_forward", 1.0), ("step_backward", -1.0)])
+def test_a_named_step_travels_and_leans_the_way_its_name_says(motion_id, sign):
+    """`root_displacement` is unsigned, so it cannot tell a forward step from a moonwalk.
+
+    Both step clips satisfied their contract while travelling in opposite directions to the
+    ones they are named after, because the recipes were authored against the wrong template
+    axis. Facing has to be measured off the skeleton for the check to mean anything.
+    """
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    clip = bank.load_clip(motion_id)
+    joints = compute_poses(clip)["fk_joints"]
+    forward = _body_forward(joints)
+    travel = float((clip[-1, :3] - clip[0, :3]) @ forward)
+    assert sign * travel > 0.25, (motion_id, travel)
+    lean = (joints[:, 9] - joints[:, 0]) @ forward - float((joints[0, 9] - joints[0, 0]) @ forward)
+    assert sign * float(lean[np.argmax(np.abs(lean))]) > 0, (motion_id, lean.min(), lean.max())
+
+
+@needs_fk
+@pytest.mark.parametrize("motion_id,wrist", [("clap_single", 20), ("clap_repeat", 20),
+                                             ("clap_overhead", 20), ("arm_punch", 21)])
+def test_the_hands_do_their_work_in_front_of_the_body(motion_id, wrist):
+    """The same axis error clapped and punched behind the back while passing every validator."""
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    spec = bank.resolve(motion_id)
+    joints = compute_poses(bank.load_clip(motion_id))["fk_joints"]
+    reach = float((joints[spec.event_frame, wrist] - joints[spec.event_frame, 9])
+                  @ _body_forward(joints))
+    assert reach > 0.15, (motion_id, reach)
 
 
 def _spliced(bank, motion_id, mode, n=240):

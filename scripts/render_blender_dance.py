@@ -275,10 +275,19 @@ def render_blender_dance(
 
 
 def _encode_video(frames_dir: Path, work: Path, output_mp4: Path,
-                  audio_path: Path | None, fps: int, render_stdout: str = "") -> Path:
+                  audio_path: Path | None, fps: int, render_stdout: str = "",
+                  render_stderr: str = "") -> Path:
     frames = sorted(frames_dir.glob("frame_*.png"))
     if not frames:
-        raise RuntimeError(f"Blender produced no frames in {frames_dir}\n{render_stdout[-1500:]}")
+        # Blender exits 0 even when the -P script raises or never runs at all, so a zero-frame
+        # render is the only signal that anything went wrong -- and the reason is usually on
+        # stderr. Report both streams here or the failure is indistinguishable from a silent hang.
+        raise RuntimeError(
+            f"Blender produced no frames in {frames_dir}. Blender exits 0 even when its script "
+            f"fails, so check that --blender-script points at a runnable entry point rather than "
+            f"a helpers module.\nstdout tail:\n{render_stdout[-1500:]}\n"
+            f"stderr tail:\n{render_stderr[-1500:]}"
+        )
     logger.info("Blender rendered %d frames; encoding video...", len(frames))
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
@@ -352,7 +361,8 @@ def render_ybot_dance(
             f"Blender Y-Bot render failed (exit {result.returncode}).\n"
             f"stdout tail:\n{result.stdout[-2000:]}\nstderr tail:\n{result.stderr[-2000:]}"
         )
-    out = _encode_video(frames_dir, work, output_mp4, audio_path, fps, result.stdout)
+    out = _encode_video(frames_dir, work, output_mp4, audio_path, fps,
+                        result.stdout, result.stderr)
     shutil.rmtree(work, ignore_errors=True)
     return out
 

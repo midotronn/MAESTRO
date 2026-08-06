@@ -105,10 +105,37 @@ validators:
 
 The manifest validators are generic shape checks, so they constrain magnitude rather than meaning:
 `joint_activity` asks only that the named joints move, which a clap satisfies whether or not the
-hands ever meet, and a side point satisfies while sweeping diagonally forward. Where an action's
-name makes a specific claim, that claim is pinned by a test instead — claps close at the event
-frame, the side point stays lateral, and jumps are airborne at their accent — because the event
-frame is what the editor snaps to a beat and is therefore the frame the viewer actually reads.
+hands ever meet, and a side point satisfies while sweeping diagonally forward. `root_displacement`
+and `root_yaw` are **unsigned excursions**, so `step_forward` and `step_backward` — which share an
+axis and a threshold — validate each other's clips exactly. Where an action's name makes a specific
+claim, that claim is pinned by a test instead — claps close at the event frame and land in front of
+the chest, the side point stays lateral, jumps are airborne at their accent, a bounce travels far
+enough to see, and each named step travels the way its name says — because the event frame is what
+the editor snaps to a beat and is therefore the frame the viewer actually reads. **Validators pin
+magnitude; tests pin meaning.**
+
+## Frame conventions
+
+Three separate coordinate conventions meet in `scripts/build_motion_bank.py`, and they do not agree
+with one another. Getting one wrong produces clips that pass every validator while doing the
+opposite of what they are named, so each is stated once and derived from the skeleton rather than
+remembered:
+
+- the **SMPL joint template faces native +Z**, with +X to the dancer's left and +Y up. IK targets
+  passed to `_solve_arm` are absolute positions in that frame, so **+z is in front of the dancer**;
+- `to_zup` maps `y_zup = -z_native`, so in the stored Z-up editing frame **+y is *behind* the
+  dancer**. Travelling forwards means *subtracting* from `trans[:, 1]`, which is why root travel
+  goes through the `_travel()` helper instead of being written inline;
+- spine and hip pitch (`aa[:, j, 0]`) is **positive = leaning forwards**, which is the opposite sign
+  to the root translation it usually accompanies.
+
+An early version of the bank was authored believing native -Z was forward. Every clap, punch and
+reach happened behind the body, and `step_forward` moonwalked. Facing is now measured off the
+skeleton in tests (`_body_forward` derives it from the ankle-to-toe vector) rather than assumed.
+
+A fourth trap is vertical: `_ground` re-solves root height from the leg pose on every grounded
+frame, so an authored `trans[:, 2]` rise is silently cancelled whenever the feet stay planted. A
+bounce or a dip has to come from knee flexion, not from the root.
 
 ## Authoring style
 

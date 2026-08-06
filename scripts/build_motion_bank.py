@@ -24,6 +24,23 @@ BANK = ROOT / "assets" / "motion_bank"
 MANIFEST = BANK / "manifest.json"
 _FOOT_JOINTS = (7, 8, 10, 11)
 
+# Which way is forward? The two frames in this file disagree, and getting it wrong is silent:
+# the manifest's ``root_displacement`` validator is unsigned, so a clip that travels backwards
+# satisfies the forward step's contract exactly.
+#
+#   * IK targets are absolute positions in the native SMPL template frame, which faces +Z.
+#     A target with a POSITIVE z reaches in FRONT of the body.
+#   * ``trans`` is in MAESTRO's Z-up editing frame, where y = -z_native. Its +Y therefore
+#     points BEHIND the dancer, so travelling forward means SUBTRACTING from ``trans[:, 1]``.
+#
+# Both were once assumed to be the other way round, which authored every clap, punch and reach
+# behind the body and made step_forward moonwalk. ``_travel`` exists so the sign is stated once.
+
+
+def _travel(trans, distance):
+    """Move the root along the way the dancer faces; positive distance is forwards."""
+    trans[:, 1] -= distance
+
 
 def _smoothstep(x):
     x = np.clip(x, 0.0, 1.0)
@@ -147,7 +164,10 @@ def _arm_targets(side: str, signal: np.ndarray, target: np.ndarray) -> np.ndarra
 
 
 def _clap_arms(aa, signal, *, overhead=False):
-    target = np.array([0.0, 0.42 if overhead else 0.04, -0.24], dtype=np.float32)
+    # The overhead variant has to clear the head to read as overhead, and reaching forward
+    # costs height, so it trades a little of the forward travel back for lift.
+    target = np.array([0.0, 0.62 if overhead else 0.04,
+                       0.18 if overhead else 0.24], dtype=np.float32)
     _solve_arm(aa, "left", _arm_targets("left", signal, target))
     _solve_arm(aa, "right", _arm_targets("right", signal, target))
 
@@ -197,8 +217,8 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         aa[:, 12, 0] -= 0.14 * air
         contacts[air > 0.22] = 0.0
         if motion_id == "jump_arms_up":
-            left = np.array([0.25, 0.48, -0.04], dtype=np.float32)
-            right = np.array([-0.25, 0.48, -0.04], dtype=np.float32)
+            left = np.array([0.25, 0.48, 0.04], dtype=np.float32)
+            right = np.array([-0.25, 0.48, 0.04], dtype=np.float32)
             _solve_arm(aa, "left", _arm_targets("left", air, left))
             _solve_arm(aa, "right", _arm_targets("right", air, right))
         else:
@@ -206,9 +226,11 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
             aa[:, 17, 1] += 0.55 * crouch - 0.30 * air
     elif motion_id == "bounce_in_place":
         bounce = 0.5 - 0.5 * np.cos(6.0 * np.pi * t)
-        trans[:, 2] += 0.075 * bounce
-        aa[:, 4, 0] += 0.32 * (1.0 - bounce)
-        aa[:, 5, 0] += 0.32 * (1.0 - bounce)
+        # No authored root rise here: _ground re-solves pelvis height from the leg pose on every
+        # grounded frame, so a hand-written trans[:, 2] term is silently cancelled. The bounce has
+        # to come from the knees, and 0.72 rad of flexion buys ~10cm of travel -- a visible groove.
+        aa[:, 4, 0] += 0.72 * (1.0 - bounce)
+        aa[:, 5, 0] += 0.72 * (1.0 - bounce)
         aa[:, 3, 0] += 0.1 * np.sin(6.0 * np.pi * t)
         aa[:, 0, 2] += 0.13 * np.sin(3.0 * np.pi * t)        # hips answer every other bounce
         aa[:, 16, 1] -= 0.16 * np.sin(3.0 * np.pi * t)
@@ -218,7 +240,7 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         target = np.column_stack([
             -0.30 + 0.08 * np.sin(8.0 * np.pi * t),
             np.full(n, 0.43),
-            np.full(n, -0.08),
+            np.full(n, 0.08),
         ]).astype(np.float32)
         rest = _stance_wrist("right")
         target = rest[None, :] + raise_arm[:, None] * (target - rest[None, :])
@@ -233,7 +255,7 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         # Reach across the body's side, not diagonally forward: the arm is roughly 0.58 long, so
         # a target 0.55 out and 0.18 ahead of the shoulder reads as a side point while staying
         # legible to a front-on camera. A larger forward term makes it a forward reach instead.
-        target = np.array([-0.72, 0.12, -0.18], dtype=np.float32)
+        target = np.array([-0.72, 0.12, 0.18], dtype=np.float32)
         _solve_arm(aa, "right", _arm_targets("right", point, target))
         aa[:, 9, 2] += 0.16 * point
         aa[:, 12, 1] -= 0.38 * point                         # sustained: the head follows the point
@@ -268,11 +290,11 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         aa[:, 17, 2] += 0.30 * hit
         aa[:, 4, 0] += 0.18 * hit
         aa[:, 5, 0] += 0.18 * hit
-        trans[:, 1] -= 0.035 * drive
+        _travel(trans, -0.035 * drive)                       # hips settle back off the chest
     elif motion_id == "arm_punch":
         hit = _pulse(t, 0.55, 0.10)
         recoil = _pulse(t, 0.78, 0.12)
-        target = np.array([-0.12, 0.04, -0.72], dtype=np.float32)
+        target = np.array([-0.12, 0.04, 0.72], dtype=np.float32)
         _solve_arm(aa, "right", _arm_targets(
             "right", np.clip(hit - 0.30 * recoil, 0.0, None), target))
         aa[:, 9, 1] -= 0.42 * hit                            # sharp: the whole torso rotates in
@@ -280,7 +302,7 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         aa[:, 16, 1] += 0.40 * hit                           # opposite arm pulls back
         aa[:, 12, 1] -= 0.12 * hit
         aa[:, 4, 0] += 0.20 * hit
-        trans[:, 1] += 0.06 * hit
+        _travel(trans, 0.06 * hit)                           # a short step into the punch
     elif motion_id == "side_step":
         # A lateral weight transfer, NOT a walking gait: the feet stay square to the front, the
         # hips carry the weight sideways, and the torso counter-leans. This is what separates it
@@ -316,7 +338,7 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         contacts[:, 2:4] = (cycle >= 0)[:, None]
     elif motion_id in {"step_forward", "step_backward"}:
         direction = 1.0 if motion_id == "step_forward" else -1.0
-        trans[:, 1] += direction * 0.46 * _smoothstep(t)
+        _travel(trans, direction * 0.46 * _smoothstep(t))
         _legs(aa, 2.0 * np.pi * t, 0.55 * direction)
         _arm_swing(aa, 2.0 * np.pi * t, 0.34 * direction)    # opposite arm to the leading leg
         aa[:, 3, 0] += direction * 0.10 * np.sin(np.pi * t)  # lean into the travel direction
@@ -369,10 +391,10 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         # One continuous reach up and slightly forward, with the leading arm ahead of the other,
         # so it reads as a rise rather than the symmetric held V of celebrate_hands_up.
         _solve_arm(aa, "left", _arm_targets(
-            "left", rise, np.array([0.14, 0.55, -0.20], dtype=np.float32)))
+            "left", rise, np.array([0.14, 0.55, 0.20], dtype=np.float32)))
         _solve_arm(aa, "right", _arm_targets(
             "right", _smoothstep(np.clip((t - 0.12) / 0.72, 0.0, 1.0)),
-            np.array([-0.20, 0.47, -0.10], dtype=np.float32)))
+            np.array([-0.20, 0.47, 0.10], dtype=np.float32)))
         aa[:, 3, 0] -= 0.26 * rise                           # spine extends through the rise
         aa[:, 12, 0] -= 0.24 * rise
     else:
