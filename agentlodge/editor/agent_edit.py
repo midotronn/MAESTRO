@@ -158,17 +158,30 @@ def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
                       anchor: str = "center", mirror: bool = False,
                       intensity: float = 0.5, repeats: int = 1):
     bank = default_motion_bank()
+    spec = bank.resolve(motion_id)
+    dropped = []
+    # The bank refuses repetition or mirroring it cannot do, which would sink the whole edit.
+    # Doing the nearest valid thing and saying so beats handing the user back an unchanged window.
+    if int(repeats) > 1 and not spec.repeatable:
+        repeats = 1
+        dropped.append("repetition")
+    if bool(mirror) and not spec.mirrorable:
+        mirror = False
+        dropped.append("mirroring")
     out, report = bank.apply(
         clip, motion_id, beats=ctx.get("wbeats"), mode=mode, anchor=anchor,
         mirror=bool(mirror), intensity=float(intensity), repeats=int(repeats),
         blend_frames=int(ctx.get("blend_frames", 8)),
     )
+    report["dropped"] = dropped
     ctx["_motion_bank_report"] = report
     ctx["_foreign_motion"] = True
     note = (
         f"placed {report['name']} as a {report['mode']} edit, aligned at frame "
         f"{report['event_frame']} ({report['source']}, {report['license']})"
     )
+    if dropped:
+        note += f"; {spec.name} does not support {' or '.join(dropped)}, so it plays once as authored"
     return out, note
 
 
@@ -612,8 +625,10 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
     from openai import OpenAI
 
     tool_lines = "\n".join(f"- {name}({spec.params}): {spec.doc}" for name, spec in TOOLS.items())
-    bank_lines = ", ".join(f"{s.id} ({s.name}; aliases: {', '.join(s.aliases)})"
-                           for s in default_motion_bank().specs)
+    _specs = default_motion_bank().specs
+    bank_lines = ", ".join(f"{s.id} ({s.name}; aliases: {', '.join(s.aliases)})" for s in _specs)
+    repeatable = ", ".join(s.id for s in _specs if s.repeatable) or "none"
+    mirrorable = ", ".join(s.id for s in _specs if s.mirrorable) or "none"
     prompt = (
         "You are a dance-motion editing agent. The user selected the window "
         f"[{a_sec:.1f}s..{b_sec:.1f}s] of a dance and asked: \"{instruction}\".\n"
@@ -626,7 +641,10 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         "For a recognized named action, use motion_bank instead of regenerate. Use mode=replace for "
         "ordinary requests such as 'add a clap here'. Use mode=insert only for explicit relational "
         "wording such as insert/before/after/between. Insert still preserves the selected window and "
-        "song duration. Never invent a motion_id outside this vocabulary.\n\n"
+        "song duration. Never invent a motion_id outside this vocabulary.\n"
+        f"Only these accept repeats>1: {repeatable}. Only these accept mirror=true: {mirrorable}. "
+        "Asking for either outside those lists is dropped and the action simply plays once, so "
+        "prefer a motion that supports repetition when the user asks for something twice.\n\n"
         "Return JSON ONLY:\n"
         '{"summary": "<one plain-English line describing your plan>",\n'
         ' "steps": [{"tool": "<name>", "params": {...}, "why": "<short reason>"}],\n'

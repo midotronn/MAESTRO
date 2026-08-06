@@ -17,6 +17,7 @@ import numpy as np
 
 from agentlodge.dance.transition import (
     _matrix_to_axis_angle,
+    _matrix_to_sixd,
     _sixd_to_matrix,
     accentuate,
     mirror as mirror_motion,
@@ -27,6 +28,13 @@ _ROOT = slice(3, 9)
 _ROT = slice(3, 135)
 _CONTACT = slice(135, 139)
 _DEFAULT_ROOT = Path(__file__).resolve().parents[2] / "assets" / "motion_bank"
+
+_FPS = 30.0
+_CLOSE_YAW_RATE = 2.5      # rad/s the root may turn while giving an offset back
+_CLOSE_TRANS_RATE = 1.0    # m/s the root may travel while giving an offset back
+_CLOSE_LIFT_RATE = 0.6     # m/s for height, which reads as a bob rather than a step
+_SMOOTHSTEP_PEAK = 1.5     # a smoothstep ramp peaks at 1.5x its average rate
+_CLOSE_MAX_RATIO = 0.35    # never spend more than this share of the window closing
 
 
 def normalize_name(value: str) -> str:
@@ -213,6 +221,7 @@ class MotionBank:
         else:
             raise ValueError(f"unsupported motion-bank mode: {mode!r}")
 
+        fitted = _close_root_residual(fitted, base)
         action = fitted[action_range[0]:action_range[1]]
         validation = validate_semantics(action, spec)
         if not validation["ok"]:
@@ -265,7 +274,13 @@ def validate_canonical_clip(clip: np.ndarray, spec: MotionSpec) -> None:
 
 
 def validate_semantics(clip: np.ndarray, spec: MotionSpec) -> dict:
-    """Run the declarative validator contract stored in the manifest."""
+    """Run the declarative validator contract stored in the manifest.
+
+    Root contracts measure the largest excursion from the opening pose rather than the
+    difference between the first and last frame. A window is spliced with its edges pinned
+    to the surrounding dance, so an endpoint measure reports zero for a turn or a step that
+    plainly happened -- the same reason ``vertical_peak`` already measures a peak.
+    """
     contract = spec.validator
     kind = str(contract.get("type", "")).strip()
     threshold = float(contract.get("threshold", 0.0))
@@ -294,19 +309,18 @@ def validate_semantics(clip: np.ndarray, spec: MotionSpec) -> dict:
         metric = float(turns)
         detail = f"vertical peaks {turns}"
     elif kind == "root_yaw":
-        root = _sixd_to_matrix(clip[:, _ROOT].reshape(-1, 6))
-        yaw = np.unwrap(np.arctan2(root[:, 1, 0], root[:, 0, 0]))
-        metric = float(abs(yaw[-1] - yaw[0]))
-        detail = f"yaw change {metric:.3f} rad"
+        yaw = _root_yaw_series(clip)
+        metric = float(np.max(np.abs(yaw - yaw[0])))
+        detail = f"yaw excursion {metric:.3f} rad"
     elif kind == "root_level":
         direction = str(contract.get("direction", "down"))
-        delta = float(clip[-1, 2] - clip[0, 2])
-        metric = -delta if direction == "down" else delta
-        detail = f"root level delta {delta:.3f}"
+        delta = clip[:, 2] - float(clip[0, 2])
+        metric = float(np.max(-delta if direction == "down" else delta))
+        detail = f"root level excursion {metric:.3f}"
     elif kind == "root_displacement":
         axes = {"x": 0, "y": 1, "z": 2}
         axis = axes.get(str(contract.get("axis", "x")), 0)
-        metric = float(abs(clip[-1, axis] - clip[0, axis]))
+        metric = float(np.max(np.abs(clip[:, axis] - float(clip[0, axis]))))
         detail = f"root displacement {metric:.3f}"
     elif kind == "articulation_chain":
         joints = [int(j) for j in contract.get("joints", [])]
@@ -359,6 +373,94 @@ def _align_translation(clip: np.ndarray, target: np.ndarray) -> np.ndarray:
     return out
 
 
+def _root_yaw_series(clip: np.ndarray) -> np.ndarray:
+    root = _sixd_to_matrix(np.asarray(clip[:, _ROOT], dtype=np.float32).reshape(-1, 6))
+    return np.unwrap(np.arctan2(root[:, 1, 0], root[:, 0, 0]))
+
+
+def _yaw_rotate(clip: np.ndarray, angle: np.ndarray | float, pivot: np.ndarray) -> np.ndarray:
+    """Turn a clip about the world up axis, per frame, around a fixed ground pivot."""
+    n = int(clip.shape[0])
+    ang = np.broadcast_to(np.asarray(angle, dtype=np.float32), (n,))
+    cos, sin = np.cos(ang), np.sin(ang)
+    out = clip.copy()
+    spin = np.zeros((n, 3, 3), dtype=np.float32)
+    spin[:, 0, 0], spin[:, 0, 1] = cos, -sin
+    spin[:, 1, 0], spin[:, 1, 1] = sin, cos
+    spin[:, 2, 2] = 1.0
+    root = _sixd_to_matrix(np.asarray(out[:, _ROOT], dtype=np.float32).reshape(-1, 6))
+    out[:, _ROOT] = _matrix_to_sixd(spin @ root).reshape(n, 6)
+    rel = out[:, :3] - np.asarray(pivot, dtype=np.float32)
+    out[:, 0] = pivot[0] + cos * rel[:, 0] - sin * rel[:, 1]
+    out[:, 1] = pivot[1] + sin * rel[:, 0] + cos * rel[:, 1]
+    return out
+
+
+def _align_yaw(clip: np.ndarray, target_yaw: float) -> np.ndarray:
+    """Face a clip the way its predecessor ended, so the join has nothing to snap through."""
+    yaw = _root_yaw_series(clip[:1])[0]
+    delta = float((target_yaw - yaw + np.pi) % (2.0 * np.pi) - np.pi)
+    if abs(delta) < 1e-4:
+        return clip
+    return _yaw_rotate(clip, delta, clip[0, :3].copy())
+
+
+def _closing_frames(yaw_gap: float, trans_gap: np.ndarray, n: int) -> int:
+    """Frames needed to give an offset back at a rate a dancer could actually move."""
+    seconds = _SMOOTHSTEP_PEAK * max(
+        abs(yaw_gap) / _CLOSE_YAW_RATE,
+        float(np.linalg.norm(trans_gap[:2])) / _CLOSE_TRANS_RATE,
+        abs(float(trans_gap[2])) / _CLOSE_LIFT_RATE,
+    )
+    return int(np.clip(round(seconds * _FPS), 0, int(_CLOSE_MAX_RATIO * n)))
+
+
+def _closing_ramp(n: int, tail: int) -> np.ndarray:
+    k = np.linspace(0.0, 1.0, tail + 1, dtype=np.float32)
+    ramp = np.zeros(n, dtype=np.float32)
+    ramp[n - 1 - tail:] = 3.0 * k ** 2 - 2.0 * k ** 3
+    return ramp
+
+
+def _close_root_residual(clip: np.ndarray, base: np.ndarray) -> np.ndarray:
+    """Land the root where the surrounding dance expects it, using the window's own tail.
+
+    The splice pins the window's edges back to the song, so a motion that ends somewhere
+    other than it started gets yanked back across a handful of blend frames -- a half turn
+    snapping 180 degrees in a quarter second. Handing the offset back here instead, spread
+    over a danceable tail, leaves the action intact and the seam calm. A turn is continued
+    into a full revolution whenever that is no further than reversing it, because a dancer
+    finishes a spin rather than rewinding one.
+    """
+    n = int(clip.shape[0])
+    if n < 4:
+        return clip
+    yaw = _root_yaw_series(clip)
+    trans_gap = np.asarray(base[-1, :3], dtype=np.float32) - clip[-1, :3]
+    gap = float(_root_yaw_series(base[-1:])[0] - yaw[-1])
+    wrapped = (gap + np.pi) % (2.0 * np.pi) - np.pi
+    turning = float(yaw[-1] - yaw[max(0, n - 6)])
+    yaw_gap = min(
+        (wrapped, wrapped + 2.0 * np.pi, wrapped - 2.0 * np.pi),
+        key=lambda d: abs(d) * (0.6 if turning and (d > 0) == (turning > 0) else 1.0),
+    )
+
+    tail = _closing_frames(yaw_gap, trans_gap, n)
+    if tail < 2:
+        return clip
+    # Turning the root moves it, so the distance still owed is only known after the spin.
+    for _ in range(3):
+        ramp = _closing_ramp(n, tail)
+        out = _yaw_rotate(clip, ramp * yaw_gap, clip[n - 1 - tail, :3].copy())
+        trans_gap = np.asarray(base[-1, :3], dtype=np.float32) - out[-1, :3]
+        need = _closing_frames(yaw_gap, trans_gap, n)
+        if need <= tail:
+            break
+        tail = need
+    out[:, :3] += ramp[:, None] * trans_gap[None, :]
+    return np.ascontiguousarray(out, dtype=np.float32)
+
+
 def _ease_join(left: np.ndarray, right: np.ndarray, frames: int) -> np.ndarray:
     if left.shape[0] == 0:
         return right
@@ -405,7 +507,11 @@ def _insert_fixed_duration(
     post_len = n - end
     suffix = retime(base[split:], post_len) if post_len > 0 else base[:0].copy()
     fitted_action = _align_translation(fitted_action, prefix[-1, :3] if prefix.shape[0] else base[0, :3])
+    if prefix.shape[0]:
+        fitted_action = _align_yaw(fitted_action, _root_yaw_series(prefix[-1:])[0])
     combined = _ease_join(prefix, fitted_action, min(blend_frames, max(1, action_len // 4)))
+    if post_len:
+        suffix = _align_yaw(suffix, _root_yaw_series(combined[-1:])[0])
     combined = _ease_join(combined, suffix, min(blend_frames, max(1, post_len // 3))) if post_len else combined
     if combined.shape[0] != n:
         combined = retime(combined, n)

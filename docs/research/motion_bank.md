@@ -46,6 +46,22 @@ the original in-window prefix and suffix around it. This preserves:
 MAESTRO does not lengthen the global timeline for named-motion insertion because that would
 desynchronize the source audio, beat map, cached previews, and comparison renders.
 
+### Closing the window
+
+Whatever the dancer does inside the window, the next window begins where the song left off: the
+splice pins the edited window's first and last frames back to the surrounding dance. Anything a
+motion still owes at the last frame — a facing, a position, a height — is therefore taken back by
+the crossfade over a handful of blend frames. A half turn used to unwind 180 degrees in a quarter
+of a second, peaking at 55 rad/s against the song's own 8.9.
+
+`apply()` closes that debt itself, easing the root back over a tail inside the window sized to the
+offset and to rates a dancer could actually hold (2.5 rad/s turning, 1.0 m/s travelling, 0.6 m/s
+lifting, allowing for a smoothstep peaking at 1.5x its average). A turn is *continued* into a full
+revolution whenever that is no further than reversing it, because a dancer finishes a spin rather
+than rewinding one — which is why a half turn spliced into a fixed window reads as a full spin and
+measures around 2*pi of yaw. The invariant is worth stating plainly: **a motion may travel or turn
+inside the window, but it must give the root back before the window ends.**
+
 ## Validation
 
 Canonical and fitted clips must have shape `(frames, 139)` at 30 FPS using:
@@ -63,9 +79,20 @@ validators cover:
 - spine-chain activity for chest pops and body rolls;
 - root level direction for drops and rises.
 
+The root contracts measure the **largest excursion from the opening pose**, not the difference
+between the first and last frame. An endpoint measure cannot survive the splice: the window's edges
+are pinned to the surrounding dance, so a turn or a step that plainly happened reports as zero once
+the root closes back. `vertical_peak` already worked this way for jumps, which land where they took
+off. Reading a turn out of a spliced window as `yaw change 0.000` is what made the agent tell users
+it "couldn't fully satisfy" a spin it had placed perfectly.
+
 The final spliced result is checked again after temporal fitting and seam handling. Unknown or
 unsupported actions fail visibly. They never silently select another motion or report success while
-keeping the original.
+keeping the original. Capabilities are the one exception: a request to repeat or mirror an action
+whose manifest entry does not allow it is dropped, the action plays once as authored, and the step
+note says so — failing the whole edit would hand back an unchanged window, which serves the user
+worse than the nearest valid edit. The planner is told which motions accept `repeats` and `mirror`
+so it can choose a better one, but the degradation is what makes it safe when it does not.
 
 Three posture invariants are enforced for every canonical clip, independently of the per-action
 validators:

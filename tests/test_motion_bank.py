@@ -12,7 +12,13 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agentlodge.editor import agent_edit as AE
-from agentlodge.editor.motion_bank import MotionBank, default_motion_bank, validate_semantics
+from agentlodge.editor.motion_bank import (
+    MotionBank,
+    _root_yaw_series,
+    default_motion_bank,
+    validate_semantics,
+    verify_applied_motion,
+)
 from agentlodge.editor.window_edit import MockWindowGenerator
 
 
@@ -117,11 +123,12 @@ def test_direction_repeat_and_intensity_variants_are_data_driven():
         "motion_id": "point_side", "mode": "replace", "anchor": "beat",
         "mirror": True, "intensity": 0.8, "repeats": 2,
     }
-    # Point is intentionally non-repeatable, so the generic capability contract rejects it visibly.
+    # Point is intentionally non-repeatable. The request still lands as a single point with the
+    # dropped repetition stated, rather than failing and leaving the window untouched.
     motion = _base(240)
     result = AE.run_agent_edit(motion, 30, 210, "add a big point left twice here")
-    assert not result.ok
-    assert result.log[0]["status"] == "failed"
+    assert result.ok
+    assert result.log[0]["status"] != "failed"
     assert "does not support repetition" in result.log[0]["note"]
 
 
@@ -237,3 +244,80 @@ def test_jumps_are_off_the_ground_at_their_accent(motion_id):
     lift = float(joints[spec.event_frame, (7, 8, 10, 11), 2].min()
                  - joints[0, (7, 8, 10, 11), 2].min())
     assert lift > 0.08, (motion_id, lift)
+
+
+def _spliced(bank, motion_id, mode, n=240):
+    """Apply a named motion and put it back in the song the way the editor does."""
+    from agentlodge.dance.transition import crossfade_edit
+    song = np.concatenate([_base(n)] * 3, axis=0)
+    a, b = n, 2 * n
+    window, report = bank.apply(song[a:b], motion_id, mode=mode, anchor="center")
+    return song, window, crossfade_edit(song, a, b, window, blend_frames=8)[a:b], report
+
+
+@pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
+def test_a_named_motion_still_reads_as_itself_once_it_is_spliced(motion_id):
+    """Validating the clip in isolation proves nothing: the splice pins the window's edges
+    back to the song, which used to erase a turn or a step from the record entirely."""
+    bank = default_motion_bank()
+    for mode in ("replace", "insert"):
+        _song, _window, spliced, report = _spliced(bank, motion_id, mode)
+        check = verify_applied_motion(spliced, report)
+        assert check["ok"], (motion_id, mode, check["detail"])
+
+
+@pytest.mark.parametrize("motion_id", ["turn_half", "turn_quarter", "step_forward",
+                                       "step_backward", "side_step", "crouch_drop", "rise_reach"])
+def test_a_travelling_motion_hands_the_root_back_before_the_window_ends(motion_id):
+    """Whatever the dancer does inside the window, the next window starts where the song
+    left off. Anything still owed at the last frame gets ripped back by the crossfade."""
+    bank = default_motion_bank()
+    for mode in ("replace", "insert"):
+        song, window, _spliced_win, _report = _spliced(bank, motion_id, mode)
+        gap = float(np.linalg.norm(window[-1, :3] - song[2 * 240 - 1, :3]))
+        yaw = _root_yaw_series(np.stack([window[-1], song[2 * 240 - 1]]))
+        assert gap < 0.02, (motion_id, mode, gap)
+        assert abs(float((yaw[1] - yaw[0] + np.pi) % (2 * np.pi) - np.pi)) < 0.05, (motion_id, mode)
+
+
+@pytest.mark.parametrize("motion_id", ["turn_half", "turn_quarter"])
+def test_a_spliced_turn_does_not_whip_round_at_the_seam(motion_id):
+    """A half turn left owing 180 degrees at the seam used to be unwound across the eight
+    blend frames -- 55 rad/s, six times anything in the song."""
+    bank = default_motion_bank()
+    for mode in ("replace", "insert"):
+        _song, _window, spliced, _report = _spliced(bank, motion_id, mode)
+        rate = float(np.abs(np.diff(_root_yaw_series(spliced))).max() * 30)
+        assert rate < 10.0, (motion_id, mode, rate)
+
+
+def test_asking_for_repetition_a_motion_cannot_do_still_edits_the_window():
+    """The bank refuses repetition it cannot perform. Letting that sink the whole edit hands
+    the user back an unchanged window, which is worse than the action happening once."""
+    bank = default_motion_bank()
+    spec = next(s for s in bank.specs if not s.repeatable)
+    clip = _base(120)
+    ctx = {"wbeats": None}
+    out, note = AE._tool_motion_bank(clip, ctx, motion_id=spec.id, repeats=3)
+    assert out.shape == clip.shape
+    assert ctx["_motion_bank_report"]["repeats"] == 1
+    assert ctx["_motion_bank_report"]["dropped"] == ["repetition"]
+    assert "does not support repetition" in note
+
+
+def test_a_motion_that_can_repeat_still_repeats():
+    bank = default_motion_bank()
+    spec = next(s for s in bank.specs if s.repeatable)
+    ctx = {"wbeats": None}
+    AE._tool_motion_bank(_base(120), ctx, motion_id=spec.id, repeats=2)
+    assert ctx["_motion_bank_report"]["repeats"] == 2
+    assert ctx["_motion_bank_report"]["dropped"] == []
+
+
+def test_the_planner_tells_the_model_which_motions_repeat_or_mirror():
+    """The model cannot avoid asking for repetition it will not get unless it is told."""
+    import inspect
+    src = inspect.getsource(AE._llm_plan)
+    assert "repeats>1" in src and "mirror=true" in src
+    bank = default_motion_bank()
+    assert any(not s.repeatable for s in bank.specs)
