@@ -318,9 +318,20 @@ def validate_semantics(clip: np.ndarray, spec: MotionSpec) -> dict:
         metric = float(np.max(-delta if direction == "down" else delta))
         detail = f"root level excursion {metric:.3f}"
     elif kind == "root_displacement":
+        # Measured in the dancer's own frame, not the world's. `insert` yaw-aligns the action to
+        # whatever direction the dancer happens to be facing at the splice point, so a world-axis
+        # component collapses as the dancer turns: the identical edit passed at 0 and 180 degrees
+        # but failed at 90 and 270 purely because the travel had rotated onto the other world
+        # axis. "Stepped 0.28 forward" is a claim about the dancer, so it is read off the dancer.
         axes = {"x": 0, "y": 1, "z": 2}
         axis = axes.get(str(contract.get("axis", "x")), 0)
-        metric = float(np.max(np.abs(clip[:, axis] - float(clip[0, axis]))))
+        if axis == 2:
+            metric = float(np.max(np.abs(clip[:, 2] - float(clip[0, 2]))))
+        else:
+            yaw = float(_root_yaw_series(clip[:1])[0])
+            basis = (np.array([np.cos(yaw), np.sin(yaw)], dtype=np.float32) if axis == 0
+                     else np.array([-np.sin(yaw), np.cos(yaw)], dtype=np.float32))
+            metric = float(np.max(np.abs((clip[:, :2] - clip[0, :2]) @ basis)))
         detail = f"root displacement {metric:.3f}"
     elif kind == "articulation_chain":
         joints = [int(j) for j in contract.get("joints", [])]

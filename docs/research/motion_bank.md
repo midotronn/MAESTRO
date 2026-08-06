@@ -110,16 +110,17 @@ and `root_yaw` are **unsigned excursions**, so `step_forward` and `step_backward
 axis and a threshold — validate each other's clips exactly. Where an action's name makes a specific
 claim, that claim is pinned by a test instead — claps close at the event frame and land in front of
 the chest, the side point stays lateral, jumps are airborne at their accent, a bounce travels far
-enough to see, and each named step travels the way its name says — because the event frame is what
-the editor snaps to a beat and is therefore the frame the viewer actually reads. **Validators pin
-magnitude; tests pin meaning.**
+enough to see, no raised hand is stranded behind the back, and each named step travels the way its
+name says both as a bank clip and after it has been spliced into a song — because the event frame is
+what the editor snaps to a beat and is therefore the frame the viewer actually reads. **Validators
+pin magnitude; tests pin meaning.**
 
 ## Frame conventions
 
 Three separate coordinate conventions meet in `scripts/build_motion_bank.py`, and they do not agree
-with one another. Getting one wrong produces clips that pass every validator while doing the
-opposite of what they are named, so each is stated once and derived from the skeleton rather than
-remembered:
+with one another, plus two more that bite outside it. Getting one wrong produces clips that pass
+every validator while doing the opposite of what they are named, so each is stated once and derived
+from the skeleton rather than remembered:
 
 - the **SMPL joint template faces native +Z**, with +X to the dancer's left and +Y up. IK targets
   passed to `_solve_arm` are absolute positions in that frame, so **+z is in front of the dancer**;
@@ -136,6 +137,16 @@ skeleton in tests (`_body_forward` derives it from the ankle-to-toe vector) rath
 A fourth trap is vertical: `_ground` re-solves root height from the leg pose on every grounded
 frame, so an authored `trans[:, 2]` rise is silently cancelled whenever the feet stay planted. A
 bounce or a dip has to come from knee flexion, not from the root.
+
+A fifth is that the *validator* has a frame too, and it is not the same one the clip is in by the
+time it runs. `insert` yaw-aligns the action to whatever direction the dancer faces at the splice
+point, so a `root_displacement` contract read along a fixed world axis measures the travel only
+while the dancer happens to face down that axis. Every travelling motion failed validation at 45,
+90, 225 and 270 degrees of song rotation and passed at 0 and 180 — a user-visible edit that worked
+or failed on nothing they could see. `root_displacement` is now projected onto the dancer's own
+lateral and sagittal directions, derived from the clip's opening root yaw, so the check means the
+same thing wherever the dancer is pointing. A world axis is never the right frame for a claim about
+a body.
 
 ## Authoring style
 

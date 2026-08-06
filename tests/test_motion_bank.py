@@ -331,6 +331,110 @@ def test_the_hands_do_their_work_in_front_of_the_body(motion_id, wrist):
     assert reach > 0.15, (motion_id, reach)
 
 
+@needs_fk
+@pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
+def test_no_motion_strands_a_raised_hand_behind_the_dancer(motion_id):
+    """A raised hand belongs in front of the body or beside it, never behind the back.
+
+    This is the general form of the axis bug: an arm target authored with the wrong sign puts
+    the hand behind the torso, which every manifest validator accepts because `joint_activity`
+    only asks that the joint moved. Rather than enumerate the motions that happen to reach, this
+    checks the whole bank, so a new recipe cannot reintroduce the mistake unnoticed. Hands hanging
+    in the rest stance are exempt -- the bound only applies once a hand is actually lifted.
+
+    The bound is placed against measured evidence rather than guessed. Rebuilding the pre-fix
+    recipes (3122133) trips it on five motions -- arm_punch -0.557, rise_reach -0.308,
+    point_side -0.296, clap_repeat -0.236, clap_single -0.220 -- while the current bank's worst
+    case is celebrate_hands_up at -0.083, whose hands genuinely travel a little behind the chest
+    plane on the way into an overhead V. That leaves room on both sides: loose enough not to
+    outlaw a natural celebration, tight enough to catch a flipped sign.
+    """
+    from server.fk import compute_poses
+    joints = compute_poses(default_motion_bank().load_clip(motion_id))["fk_joints"]
+    forward = _body_forward(joints)
+    chest = joints[:, 9]
+    for wrist in (20, 21):
+        lifted = joints[:, wrist, 2] > chest[:, 2]
+        if not lifted.any():
+            continue
+        behind = ((joints[:, wrist] - chest) @ forward)[lifted].min()
+        assert behind > -0.2, (motion_id, wrist, float(behind))
+
+
+@pytest.mark.parametrize("motion_id", ["step_forward", "step_backward", "side_step",
+                                       "turn_half", "jump_two_foot", "clap_single"])
+@pytest.mark.parametrize("degrees", [0, 45, 90, 135, 180, 225, 270, 315])
+@pytest.mark.parametrize("mode", ["replace", "insert"])
+def test_an_edit_is_legal_no_matter_which_way_the_dancer_is_facing(motion_id, degrees, mode):
+    """Rotating the whole song must not change whether an edit is allowed.
+
+    It did. `insert` yaw-aligns the action to the dancer's heading at the splice point, but the
+    `root_displacement` contract was measured along a fixed world axis, so once the dancer turned,
+    the travel rotated onto the other axis and the check read almost zero. Every travelling motion
+    -- forward, backward, sideways -- failed at 45, 90, 225 and 270 degrees while passing at 0 and
+    180. A real song points the dancer wherever the music takes them, so this surfaced as an edit
+    that worked or failed depending on nothing the user could see or control.
+    """
+    from agentlodge.editor.motion_bank import _yaw_rotate
+    base = _base()
+    if degrees:
+        base = _yaw_rotate(base.copy(), np.deg2rad(degrees), base[0, :3].copy())
+    window, report = default_motion_bank().apply(base, motion_id, mode=mode, anchor="center")
+    assert window.shape[1] == base.shape[1]
+    assert report["validation"]["ok"]
+
+
+@needs_fk
+@pytest.mark.parametrize("motion_id,sign", [("step_forward", 1.0), ("step_backward", -1.0)])
+def test_a_spliced_step_still_travels_the_way_it_is_named(motion_id, sign):
+    """The bank clip going the right way is not the same as the spliced result going the right way.
+
+    Splicing pins the window's end to wherever the song expects the dancer, so start-to-end travel
+    is the base's, not the motion's, and says nothing about the action. What has to survive is the
+    excursion: a forward step must reach forward of where it began before the tail hands the root
+    back. Nothing checked this, and `root_displacement` is unsigned, so a reversed step would have
+    validated cleanly -- exactly how the original axis bug stayed hidden.
+
+    The base is pinned in place first. The mock base wanders 0.79 backward on its own, which is
+    more than either step contributes, so against it a backward step is indistinguishable from the
+    base's own drift -- it "passed" even when built from the reversed pre-fix recipe. Dancing on
+    the spot makes the travel attributable to the motion: the fixed bank reaches +0.410 and -0.410,
+    the pre-fix bank 0.000 in both directions.
+    """
+    from server.fk import compute_poses
+    base = _base()
+    base[:, :2] = base[0, :2]
+    window, _ = default_motion_bank().apply(base, motion_id, mode="replace", anchor="center")
+    forward = _body_forward(compute_poses(window)["fk_joints"])
+    travel = (window[:, :3] - window[0, :3]) @ forward
+    peak = float(travel.max() if sign > 0 else travel.min())
+    assert sign * peak > 0.25, (motion_id, peak, travel.min(), travel.max())
+
+
+@needs_fk
+def test_rise_reach_leads_with_one_arm_up_and_forward_as_its_recipe_claims():
+    """The recipe comment promises a reach "up and slightly forward" with one arm leading.
+
+    Before this was pinned the right hand actually sat 0.098 behind the chest, so the recipe
+    documented an intent the clip did not honour -- the same class of silent mismatch as the
+    original axis bug, just smaller. Asserting the relationship rather than the raw numbers
+    keeps the target free to be retuned as long as it still reads as a leading diagonal rise.
+    """
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    spec = bank.resolve("rise_reach")
+    joints = compute_poses(bank.load_clip("rise_reach"))["fk_joints"]
+    forward = _body_forward(joints)
+    chest = joints[spec.event_frame, 9]
+    left, right = joints[spec.event_frame, 20], joints[spec.event_frame, 21]
+    reach = [float((h - chest) @ forward) for h in (left, right)]
+    lift = [float(h[2] - chest[2]) for h in (left, right)]
+    assert min(reach) > 0.0, reach
+    assert reach[0] > reach[1] + 0.05, reach
+    assert min(lift) > 0.4, lift
+    assert min(lift) > max(reach), (lift, reach)
+
+
 def _spliced(bank, motion_id, mode, n=240):
     """Apply a named motion and put it back in the song the way the editor does."""
     from agentlodge.dance.transition import crossfade_edit

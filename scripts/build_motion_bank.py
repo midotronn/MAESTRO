@@ -389,12 +389,13 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         aa[:, 4, 0] += 1.85 * fall
         aa[:, 5, 0] += 1.85 * fall
         # One continuous reach up and slightly forward, with the leading arm ahead of the other,
-        # so it reads as a rise rather than the symmetric held V of celebrate_hands_up.
+        # so it reads as a rise rather than the symmetric held V of celebrate_hands_up. Both
+        # targets stay dominantly vertical -- the forward term only keeps the hands off the back.
         _solve_arm(aa, "left", _arm_targets(
-            "left", rise, np.array([0.14, 0.55, 0.20], dtype=np.float32)))
+            "left", rise, np.array([0.14, 0.55, 0.44], dtype=np.float32)))
         _solve_arm(aa, "right", _arm_targets(
             "right", _smoothstep(np.clip((t - 0.12) / 0.72, 0.0, 1.0)),
-            np.array([-0.20, 0.47, 0.10], dtype=np.float32)))
+            np.array([-0.20, 0.47, 0.30], dtype=np.float32)))
         aa[:, 3, 0] -= 0.26 * rise                           # spine extends through the rise
         aa[:, 12, 0] -= 0.24 * rise
     else:
