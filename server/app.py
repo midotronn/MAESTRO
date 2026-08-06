@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
 import secrets
 import shutil
@@ -53,6 +54,8 @@ MEDIA = HERE / "media"
 STATIC = HERE / "static"
 SESSIONS = HERE / "sessions"
 FPS = 30
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="MAESTRO Interactive Editor")
 _sessions: dict[str, EditSession] = {}
@@ -111,6 +114,25 @@ def _prewarm() -> None:
         rendering.prewarm_pod()
     except Exception:  # noqa: BLE001
         pass
+
+
+@app.on_event("startup")
+def _report_planner() -> None:
+    """Say at startup which planner the editor will use, and why.
+
+    Without a key the editor silently degrades to keyword planning, and the only sign is a small
+    tag on an edit result reading "offline planner". That is easy to miss and easier to
+    misdiagnose -- it looks like the edit went wrong rather than like the server was launched
+    without a credential. Launching is exactly when this is worth knowing.
+    """
+    if os.environ.get("OPENAI_API_KEY"):
+        logger.info("LLM edit planner enabled (OPENAI_API_KEY present)")
+    else:
+        logger.warning(
+            "LLM edit planner DISABLED: no OPENAI_API_KEY in the server environment. "
+            "Edits will use the offline keyword planner and results will be tagged "
+            "'offline planner' in the UI. Relaunch with the key set to enable it."
+        )
 
 
 # --------------------------------------------------------------------------- session loading
