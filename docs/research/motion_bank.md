@@ -62,6 +62,14 @@ than rewinding one — which is why a half turn spliced into a fixed window read
 measures around 2*pi of yaw. The invariant is worth stating plainly: **a motion may travel or turn
 inside the window, but it must give the root back before the window ends.**
 
+There is a known edge to this. When the surrounding dance is *itself* turning hard, the closing
+rotation and the action's own turn partly cancel, and the action can end up short of its contract:
+across 17 windows of real backbone output, `turn_half` in `replace` mode failed validation once, on
+the single window where the song turned 89 degrees on its own, measuring 2.567 rad against a 2.6
+threshold. `insert` mode, which shifts the surrounding motion instead of pinning it, passed every
+window. This is inherent to pinning both edges rather than a defect in the motion, so it is recorded
+rather than tuned away — raising the threshold would only hide the tension.
+
 ## Validation
 
 Canonical and fitted clips must have shape `(frames, 139)` at 30 FPS using:
@@ -114,6 +122,14 @@ enough to see, no raised hand is stranded behind the back, and each named step t
 name says both as a bank clip and after it has been spliced into a song — because the event frame is
 what the editor snaps to a beat and is therefore the frame the viewer actually reads. **Validators
 pin magnitude; tests pin meaning.**
+
+Those tests ran only against `MockWindowGenerator` for most of the bank's life, which is a tidy
+base: it starts at yaw 0 and dances on the spot. `tests/data/lodge_sample_dance.npy` is 24 seconds
+of real LODGE diffusion output — 512 frames from a 112 bpm click track, turning through 136 degrees
+and travelling a metre each way — so the bank is also exercised against what the product actually
+generates. Regenerate it with `scripts/make_lodge_test_fixture.py`, which synthesises the click track,
+extracts librosa features and runs `run_lodge_inference.py` against the FineDance checkpoints on
+the pod. The track is synthesised rather than sampled so the fixture carries no licence.
 
 ## Frame conventions
 

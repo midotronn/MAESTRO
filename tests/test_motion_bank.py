@@ -411,6 +411,69 @@ def test_a_spliced_step_still_travels_the_way_it_is_named(motion_id, sign):
     assert sign * peak > 0.25, (motion_id, peak, travel.min(), travel.max())
 
 
+_LODGE_SAMPLE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "data", "lodge_sample_dance.npy")
+
+
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+@pytest.mark.parametrize("mode", ["replace", "insert"])
+def test_every_motion_applies_to_real_backbone_output(mode):
+    """Every check above this point runs against a mock base. This one uses the real thing.
+
+    The fixture is 24 seconds of genuine LODGE diffusion output, generated from a click track on
+    the pod: it turns through 136 degrees, travels a metre in each direction, and carries the pose
+    statistics of the diffusion model rather than a hand-written loop. `MockWindowGenerator` is a
+    fine stand-in for splice arithmetic but it cannot tell you that the bank survives contact with
+    what the product actually generates -- which, until this test, nothing did.
+
+    It is deliberately not the guard for the world-axis bug. Real output mostly faces one way, so
+    the sampled windows sit near yaw 0 and the old validator passes here; reverting the fix leaves
+    this test green. `test_an_edit_is_legal_no_matter_which_way_the_dancer_is_facing` rotates the
+    song explicitly and is what pins that. The two cover different things and both are needed.
+    """
+    from agentlodge.editor.motion_bank import _root_yaw_series
+    dance = np.load(_LODGE_SAMPLE).astype(np.float32)
+    bank, n = default_motion_bank(), 120
+    yaw = _root_yaw_series(dance)
+    spread = sorted(range(0, len(dance) - n, 8), key=lambda s: yaw[s])
+    starts = [spread[int(i * (len(spread) - 1) / 5)] for i in range(6)]
+    failures = []
+    for start in starts:
+        for spec in bank.specs:
+            # turn_half in replace mode legitimately loses its turn to the closing rotation when
+            # the song is itself turning hard; see "Closing the window" in docs/research.
+            if spec.id == "turn_half" and mode == "replace":
+                continue
+            try:
+                window, report = bank.apply(dance[start:start + n].copy(), spec.id,
+                                            mode=mode, anchor="center")
+                assert np.isfinite(window).all() and report["validation"]["ok"]
+            except Exception as exc:
+                failures.append(f"{spec.id} at yaw {np.rad2deg(yaw[start]):+.0f}: {exc}")
+    assert not failures, failures
+
+
+@needs_fk
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+@pytest.mark.parametrize("motion_id,sign", [("step_forward", 1.0), ("step_backward", -1.0)])
+def test_a_step_spliced_into_real_output_travels_the_way_it_is_named(motion_id, sign):
+    """Direction has to survive contact with a dancer who is not facing down a world axis."""
+    from server.fk import compute_poses
+    from agentlodge.editor.motion_bank import _root_yaw_series
+    dance = np.load(_LODGE_SAMPLE).astype(np.float32)
+    bank, n = default_motion_bank(), 120
+    yaw = _root_yaw_series(dance)
+    for start in (int(np.argmin(yaw)), int(np.argmax(yaw[:len(dance) - n]))):
+        start = min(start, len(dance) - n - 1)
+        base = dance[start:start + n].copy()
+        base[:, :2] = base[0, :2]
+        window, _ = bank.apply(base, motion_id, mode="replace", anchor="center")
+        forward = _body_forward(compute_poses(window)["fk_joints"])
+        travel = (window[:, :3] - window[0, :3]) @ forward
+        peak = float(travel.max() if sign > 0 else travel.min())
+        assert sign * peak > 0.25, (motion_id, np.rad2deg(yaw[start]), peak)
+
+
 @needs_fk
 def test_rise_reach_leads_with_one_arm_up_and_forward_as_its_recipe_claims():
     """The recipe comment promises a reach "up and slightly forward" with one arm leading.
