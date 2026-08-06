@@ -55,8 +55,6 @@ STATIC = HERE / "static"
 SESSIONS = HERE / "sessions"
 FPS = 30
 
-logger = logging.getLogger(__name__)
-
 app = FastAPI(title="MAESTRO Interactive Editor")
 _sessions: dict[str, EditSession] = {}
 
@@ -125,6 +123,10 @@ def _report_planner() -> None:
     misdiagnose -- it looks like the edit went wrong rather than like the server was launched
     without a credential. Launching is exactly when this is worth knowing.
     """
+    # Deliberately uvicorn's own logger rather than a module one: uvicorn configures logging for
+    # its loggers only, so a __name__ logger emits nothing under the way this server is actually
+    # run -- verified by grepping the pod's log and finding zero lines. Do not "tidy" this back.
+    logger = logging.getLogger("uvicorn.error")
     if os.environ.get("OPENAI_API_KEY"):
         logger.info("LLM edit planner enabled (OPENAI_API_KEY present)")
     else:
