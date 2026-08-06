@@ -164,6 +164,35 @@ the bank rendered as crossed, interpenetrating forearms with a measured gap of 0
 the validator and the test passed. Clap targets are now mirrored either side of the midline like
 every other two-armed recipe, and the gap is asserted from both directions.
 
+**Hands meeting is not enough; *where* and *how* they meet is the action.** With the gap fixed,
+every clap still passed every check while rendering as a bow: the palms met above the chest at
+collarbone height with the elbows winged out level with the shoulders. The user rejected it on
+sight as "not a clap at all". Three separate authoring errors produced it, none visible to any
+magnitude check:
+
+- **Height.** The target was `y=+0.04` in the template frame. The shoulders sit at `+0.083` and
+  the chest at `-0.057`, so it landed *above* the chest, under the chin. A clap belongs a little
+  below the chest line — `_CLAP_POINT`.
+- **Elbow swivel.** Two arm poses reach the same hand target, and `_solve_arm` chose between them
+  with one hint vector that pointed straight out sideways for every motion. For a hand carried in
+  front of the sternum that lifts the elbows to shoulder height and splays them wide. The hint is
+  now a parameter (`_ELBOW_OUT` default, `_CLAP_ELBOW` for claps).
+- **Between the claps.** `clap_repeat` drove the arms straight off its hit pulses, so they
+  returned to the rest stance after every clap and swung the full 0.84 m of stance width three
+  times over — flapping, not clapping. `_CLAP_GUARD` holds them up across the phrase, parting
+  about 0.27 m per clap, while the envelope still vanishes at both ends so the clip starts and
+  finishes on the stance the splice hands over on.
+
+Judge posture in the **dancer's own frame**, never world Z. The host dance leans and twists the
+torso, so reading "hands above the shoulders" off the world vertical charges that lean to the
+clip: the same bit-identical spliced arm pose measured anywhere from -0.14 to +0.26 m depending
+only on what the song was doing, which looks exactly like the splice having broken the clap. This
+is the same error as grading a spliced clip's speed against the song's own.
+
+The generic version of this trap: an elbow at shoulder height is correct for an *extended* arm
+(a punch, a side point, a reach) and wrong only for a *folded* one. A check that ignores the
+distinction flags eight of the twenty motions and buries the one real defect in false positives.
+
 Nothing in that failure was subtle at full size — it survived because the twenty-per-page contact
 sheet used to review the bank renders each action too small to see a hand at. `scripts/review_motion_visually.py`
 draws one motion per sheet from four angles, forces the closest-approach frame into the sample

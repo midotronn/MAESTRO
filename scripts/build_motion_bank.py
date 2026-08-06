@@ -132,7 +132,15 @@ def _align_vector(source, target):
     return _axis_angle_to_matrix((axis * angle).astype(np.float32))
 
 
-def _solve_arm(aa, side: str, targets: np.ndarray):
+# Where the elbow swings to when the wrist target leaves it free to choose. Two positions of
+# the arm reach the same hand target -- elbow out to the side, or elbow tucked down by the ribs
+# -- and the IK picks between them with this hint alone. The default carries the elbow outward,
+# which suits a reach or a punch; a motion that works in front of the chest must say otherwise
+# or it comes out flapping its arms. ``x`` is signed per side inside ``_solve_arm``.
+_ELBOW_OUT = np.array([1.0, 0.15, 0.0], dtype=np.float32)
+
+
+def _solve_arm(aa, side: str, targets: np.ndarray, *, elbow_hint=_ELBOW_OUT):
     joints = (16, 18, 20) if side == "left" else (17, 19, 21)
     shoulder, elbow, wrist = joints
     J = _template()
@@ -140,6 +148,7 @@ def _solve_arm(aa, side: str, targets: np.ndarray):
     fore = J[wrist] - J[elbow]
     l1, l2 = float(np.linalg.norm(upper)), float(np.linalg.norm(fore))
     sign = 1.0 if side == "left" else -1.0
+    elbow_hint = np.asarray(elbow_hint, dtype=np.float32)
     for frame, hand in enumerate(targets):
         origin = J[shoulder]
         delta = hand - origin
@@ -147,7 +156,7 @@ def _solve_arm(aa, side: str, targets: np.ndarray):
         direction = delta / (np.linalg.norm(delta) + 1e-9)
         a = (l1 * l1 - l2 * l2 + distance * distance) / (2.0 * distance)
         height = np.sqrt(max(0.0, l1 * l1 - a * a))
-        hint = np.array([sign, 0.15, 0.0], dtype=np.float32)
+        hint = np.array([sign * elbow_hint[0], elbow_hint[1], elbow_hint[2]], dtype=np.float32)
         bend = hint - np.dot(hint, direction) * direction
         bend /= np.linalg.norm(bend) + 1e-9
         elbow_target = origin + a * direction + height * bend
@@ -161,6 +170,22 @@ def _solve_arm(aa, side: str, targets: np.ndarray):
 # Half the distance between the wrists when the palms are together. A hand is roughly 9cm
 # across, so the wrists finish about that far apart -- touching, not occupying the same point.
 _CLAP_HALF_GAP = 0.040
+
+# Where the palms meet. In the template frame the shoulders sit at y=+0.083 and the chest
+# (spine3) at y=-0.057, so a clap belongs a little BELOW the chest line. This was authored at
+# y=+0.04 -- above the chest, level with the collarbones -- which renders as hands pressed
+# together under the chin, closer to a bow than a clap.
+_CLAP_POINT = (-0.045, 0.26)                        # (height, distance in front)
+
+# Clapping hands are carried in front of the sternum, so the elbows hang DOWN and only a little
+# outward. Left to the default outward hint the solver lifts them to shoulder height and the
+# clip reads as flapping wings.
+_CLAP_ELBOW = np.array([0.55, -1.0, -0.1], dtype=np.float32)
+
+# How far towards the meeting point the hands stay BETWEEN repeated claps: 1.0 would leave them
+# touching, 0.0 drops them to the hips. Sets the parting of the hands, so it trades readability
+# of each clap (needs travel) against the hands staying up (needs little).
+_CLAP_GUARD = 0.68
 
 
 def _arm_targets(side: str, signal: np.ndarray, target: np.ndarray) -> np.ndarray:
@@ -176,10 +201,12 @@ def _clap_arms(aa, signal, *, overhead=False):
     # hands at x=0 asks two wrists to occupy one point: the solver obliges, the forearms pass
     # through each other, and the clap reads as folded, tangled arms rather than a clap.
     half = _CLAP_HALF_GAP
-    y = 0.62 if overhead else 0.04
-    z = 0.18 if overhead else 0.24
-    _solve_arm(aa, "left", _arm_targets("left", signal, np.array([half, y, z], dtype=np.float32)))
-    _solve_arm(aa, "right", _arm_targets("right", signal, np.array([-half, y, z], dtype=np.float32)))
+    y, z = (0.62, 0.18) if overhead else _CLAP_POINT
+    hint = _CLAP_ELBOW
+    _solve_arm(aa, "left", _arm_targets("left", signal, np.array([half, y, z], dtype=np.float32)),
+               elbow_hint=hint)
+    _solve_arm(aa, "right", _arm_targets("right", signal, np.array([-half, y, z], dtype=np.float32)),
+               elbow_hint=hint)
 
 
 def _legs(aa, phase, amount=0.45):
@@ -208,7 +235,14 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         aa[:, 5, 0] += 0.16 * wind + 0.10 * settle
     elif motion_id == "clap_repeat":
         hit = np.maximum.reduce([_pulse(t, c, 0.07) for c in (0.27, 0.52, 0.77)])
-        _clap_arms(aa, hit)
+        # Someone clapping three times keeps their hands UP between the claps and parts them a
+        # few inches. Driving the arms straight off ``hit`` sends them all the way back to the
+        # hips after every clap, and a 0.84m swing three times over reads as flapping, not
+        # clapping. So raise them once, hold that guard across the phrase, and let each hit
+        # close the last of the gap. The envelope still vanishes at both ends, which is what
+        # keeps the clip's first and last frame on the shared stance the splice hands over on.
+        ready = _smoothstep(t / 0.18) * _smoothstep((1.0 - t) / 0.18)
+        _clap_arms(aa, ready * (_CLAP_GUARD + (1.0 - _CLAP_GUARD) * hit))
         trans[:, 2] += 0.025 * np.sin(6.0 * np.pi * t)
         aa[:, 3, 0] += 0.10 * hit
         aa[:, 0, 2] += 0.10 * np.sin(3.0 * np.pi * t)        # groove side to side across the claps

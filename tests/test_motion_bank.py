@@ -259,6 +259,125 @@ def test_no_motion_drives_the_two_hands_through_each_other(motion_id):
 
 
 @needs_fk
+@pytest.mark.parametrize("motion_id", ["clap_single", "clap_repeat"])
+def test_a_clap_lands_in_front_of_the_chest_not_under_the_chin(motion_id):
+    """Hands meeting is not enough -- WHERE they meet is what makes it read as a clap.
+
+    The target was authored at y=+0.04 in the template frame. The shoulders sit at +0.083 and
+    the chest at -0.057, so that put the palms ABOVE the chest, level with the collarbones and
+    tucked in close: rendered, it read as a bow or a prayer rather than a clap, and the user
+    rejected it on sight. Every existing assertion passed, because all of them only ever asked
+    whether the hands got close to each other. So pin the height and the reach as well.
+    """
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    spec = bank.resolve(motion_id)
+    joints = compute_poses(bank.load_clip(motion_id))["fk_joints"]
+    ev = spec.event_frame
+    hands = 0.5 * (joints[ev, 20] + joints[ev, 21])
+    shoulders = 0.5 * (joints[ev, 16] + joints[ev, 17])
+    drop = float(hands[2] - shoulders[2])
+    assert -0.32 < drop < -0.10, (motion_id, "clap height vs shoulders", drop)
+    ahead = float((hands - shoulders) @ np.array([0.0, -1.0, 0.0]))
+    assert ahead > 0.15, (motion_id, "clap is not out in front of the body", ahead)
+
+
+@needs_fk
+@pytest.mark.parametrize("motion_id", ["clap_single", "clap_repeat"])
+def test_a_clap_keeps_its_elbows_down_rather_than_winged_out(motion_id):
+    """Two arm poses reach the same hand target, and only one of them looks like clapping.
+
+    ``_solve_arm`` picks between them with a single hint vector, which pointed straight out to
+    the side for every motion. For a clap that lifts the elbows to near shoulder height and
+    splays them wide, so the clip reads as flapping wings. Nobody clapping holds their elbows
+    up; they hang down by the ribs. The winged build measured -0.08/-0.11 m below the shoulder
+    line and 0.25-0.31 m out from the midline, so this would have failed on both counts.
+    """
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    spec = bank.resolve(motion_id)
+    joints = compute_poses(bank.load_clip(motion_id))["fk_joints"]
+    ev = spec.event_frame
+    for elbow, shoulder in ((18, 16), (19, 17)):
+        drop = float(joints[ev, elbow, 2] - joints[ev, shoulder, 2])
+        assert drop < -0.18, (motion_id, "elbow is winged up to shoulder height", drop)
+        out = abs(float(joints[ev, elbow, 0] - joints[ev, 0, 0]))
+        assert out < 0.24, (motion_id, "elbow is splayed out wide", out)
+
+
+@needs_fk
+def test_the_repeated_clap_keeps_the_hands_up_between_claps():
+    """A repeat clap parts the hands a few inches; it does not drop them back to the hips.
+
+    Driving the arms straight off the hit pulses returned them to the rest stance after every
+    clap, so the hands swung the full 0.84 m of the stance width three times over. Rendered,
+    that is flapping, not clapping. Measured on the broken build, the hands re-opened to
+    0.48-0.68 m between claps and fell to 0.29-0.44 m below the shoulders.
+
+    The ends are deliberately excluded: the clip still has to start and finish on the shared
+    neutral stance, because that is what the splice hands over to the surrounding dance.
+    """
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    joints = compute_poses(bank.load_clip("clap_repeat"))["fk_joints"]
+    n = len(joints)
+    held = slice(int(0.25 * n), int(0.85 * n))
+    gap = np.linalg.norm(joints[held, 20] - joints[held, 21], axis=-1)
+    assert gap.max() < 0.36, ("hands drop back to the sides between claps", float(gap.max()))
+
+    hands = 0.5 * (joints[held, 20] + joints[held, 21])
+    shoulders = 0.5 * (joints[held, 16] + joints[held, 17])
+    assert float((hands[:, 2] - shoulders[:, 2]).min()) > -0.26, "hands fall away between claps"
+
+    # ...and it is still three separate claps, not one long squeeze. Count dips the hands
+    # recover from on both sides, since once they correctly stay up no fixed threshold on the
+    # gap can separate the claps from the hold.
+    full = np.linalg.norm(joints[:, 20] - joints[:, 21], axis=-1)
+    closings = sum(
+        1 for i in range(1, len(full) - 1)
+        if full[i] <= full[i - 1] and full[i] < full[i + 1]
+        and min(full[:i].max(initial=full[i]), full[i + 1:].max(initial=full[i])) - full[i] >= 0.03
+    )
+    assert closings == 3, ("expected three claps", closings)
+
+
+@needs_fk
+@pytest.mark.parametrize("motion_id", ["clap_single", "clap_repeat"])
+@pytest.mark.parametrize("window", [(60, 240), (100, 196), (200, 460)])
+def test_a_spliced_clap_still_reads_as_a_clap(motion_id, window):
+    """The clip is not what anyone watches -- the spliced result is.
+
+    Retiming to a beat-locked window and blending both ends into the surrounding choreography
+    all happen after the clip is authored, so the posture has to be re-checked downstream of
+    them rather than assumed to survive.
+
+    Measured in the DANCER'S frame, not world Z. The host dance leans and twists the torso, and
+    reading "hands above the shoulders" off the world vertical charges that lean to the clap:
+    the same bit-identical arm pose scores anywhere from -0.14 to +0.26 depending only on what
+    the song was doing. That is the same mistake as grading a clip's speed against the song's.
+    """
+    from server.fk import compute_poses
+    a, b = window
+    base = _base(600)
+    spliced, _ = default_motion_bank().apply(base[a:b], motion_id,
+                                             beats=np.arange(0, b - a, 16))
+    out = base.copy()
+    out[a:b] = spliced
+    j = compute_poses(out)["fk_joints"]
+
+    gap = np.linalg.norm(j[a:b, 20] - j[a:b, 21], axis=-1)
+    k = int(np.argmin(gap)) + a
+    assert 0.06 < float(gap.min()) < 0.16, ("hands do not meet after splicing", float(gap.min()))
+
+    up = j[k, 12] - j[k, 0]
+    up = up / np.linalg.norm(up)
+    hands = 0.5 * (j[k, 20] + j[k, 21]) - 0.5 * (j[k, 16] + j[k, 17])
+    assert -0.34 < float(hands @ up) < -0.08, ("clap is not at chest height", float(hands @ up))
+    for elbow, shoulder in ((18, 16), (19, 17)):
+        assert float((j[k, elbow] - j[k, shoulder]) @ up) < -0.15, "elbow winged after splicing"
+
+
+@needs_fk
 def test_the_overhead_clap_actually_clears_the_head():
     """Height is the only thing separating it from clap_single, and nothing pinned it."""
     from server.fk import compute_poses
