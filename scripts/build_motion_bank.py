@@ -158,6 +158,11 @@ def _solve_arm(aa, side: str, targets: np.ndarray):
         aa[frame, elbow] = _matrix_to_axis_angle(elbow_local)
 
 
+# Half the distance between the wrists when the palms are together. A hand is roughly 9cm
+# across, so the wrists finish about that far apart -- touching, not occupying the same point.
+_CLAP_HALF_GAP = 0.040
+
+
 def _arm_targets(side: str, signal: np.ndarray, target: np.ndarray) -> np.ndarray:
     rest = _stance_wrist(side)
     return rest[None, :] + signal[:, None] * (np.asarray(target) - rest)[None, :]
@@ -166,10 +171,15 @@ def _arm_targets(side: str, signal: np.ndarray, target: np.ndarray) -> np.ndarra
 def _clap_arms(aa, signal, *, overhead=False):
     # The overhead variant has to clear the head to read as overhead, and reaching forward
     # costs height, so it trades a little of the forward travel back for lift.
-    target = np.array([0.0, 0.62 if overhead else 0.04,
-                       0.18 if overhead else 0.24], dtype=np.float32)
-    _solve_arm(aa, "left", _arm_targets("left", signal, target))
-    _solve_arm(aa, "right", _arm_targets("right", signal, target))
+    #
+    # The palms meet at the midline, so each WRIST stops half a hand short of it. Aiming both
+    # hands at x=0 asks two wrists to occupy one point: the solver obliges, the forearms pass
+    # through each other, and the clap reads as folded, tangled arms rather than a clap.
+    half = _CLAP_HALF_GAP
+    y = 0.62 if overhead else 0.04
+    z = 0.18 if overhead else 0.24
+    _solve_arm(aa, "left", _arm_targets("left", signal, np.array([half, y, z], dtype=np.float32)))
+    _solve_arm(aa, "right", _arm_targets("right", signal, np.array([-half, y, z], dtype=np.float32)))
 
 
 def _legs(aa, phase, amount=0.45):

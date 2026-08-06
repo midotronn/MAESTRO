@@ -34,9 +34,15 @@ needs_fk = pytest.mark.skipif(not os.path.exists(_TMPL),
                               reason="SMPL-X joint template not present (fetched from the pod)")
 
 
-def _body_forward(joints):
-    """The direction the dancer faces, read off the feet rather than a world convention."""
-    toe = (joints[0, 10] - joints[0, 7]) + (joints[0, 11] - joints[0, 8])
+def _body_forward(joints, frame=0):
+    """The direction the dancer faces, read off the feet rather than a world convention.
+
+    The reference frame matters. A window is mostly the song's own choreography, so frame 0 is
+    whatever the dancer happened to be doing then -- mid-stride, feet splayed -- and its toes can
+    point 70 degrees away from where they face when the spliced action actually happens. Read the
+    facing at the frame you are measuring travel from.
+    """
+    toe = (joints[frame, 10] - joints[frame, 7]) + (joints[frame, 11] - joints[frame, 8])
     forward = np.array([toe[0], toe[1], 0.0])
     return forward / np.linalg.norm(forward)
 
@@ -218,13 +224,37 @@ def test_lateral_steps_spread_the_stance_instead_of_leaning_both_legs_one_way():
 @needs_fk
 @pytest.mark.parametrize("motion_id", ["clap_single", "clap_repeat", "clap_overhead"])
 def test_claps_bring_the_hands_together_on_the_beat(motion_id):
-    """The event frame is what the editor snaps to a beat, so that is where the hands must meet."""
+    """The event frame is what the editor snaps to a beat, so that is where the hands must meet.
+
+    The bound is two-sided, and the lower half is the one that was missing. `_clap_arms` aimed
+    both hands at x=0, so the solver drove the two wrists to the same point and the forearms
+    passed through each other -- rendered, it read as folded, tangled arms rather than a clap.
+    A one-sided "close enough" assertion cannot see that: the broken clips measured 0.016
+    (clap_single), 0.012 (clap_repeat) and 0.046 (clap_overhead) at the event frame and passed
+    cleanly. Palms in contact leave the wrists about a hand apart, so anything that collapses
+    below 0.06 is bodies interpenetrating, not hands meeting.
+    """
     from server.fk import compute_poses
     bank = default_motion_bank()
     spec = bank.resolve(motion_id)
     joints = compute_poses(bank.load_clip(motion_id))["fk_joints"]
     gap = float(np.linalg.norm(joints[spec.event_frame, 20] - joints[spec.event_frame, 21]))
-    assert gap < 0.12, (motion_id, gap)
+    assert 0.06 < gap < 0.12, (motion_id, gap)
+
+
+@needs_fk
+@pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
+def test_no_motion_drives_the_two_hands_through_each_other(motion_id):
+    """Whatever a motion is doing, the dancer has two separate hands for the whole of it.
+
+    Checked over every frame of every clip rather than only the claps, because nothing about
+    the defect was clap-specific: any two-armed recipe that shares one IK target reproduces it.
+    The claps were the only offenders (0.0001 to 0.044); every other motion clears 0.35.
+    """
+    from server.fk import compute_poses
+    joints = compute_poses(default_motion_bank().load_clip(motion_id))["fk_joints"]
+    gap = float(np.linalg.norm(joints[:, 20] - joints[:, 21], axis=-1).min())
+    assert gap > 0.06, (motion_id, gap)
 
 
 @needs_fk
@@ -467,9 +497,12 @@ def test_a_step_spliced_into_real_output_travels_the_way_it_is_named(motion_id, 
         start = min(start, len(dance) - n - 1)
         base = dance[start:start + n].copy()
         base[:, :2] = base[0, :2]
-        window, _ = bank.apply(base, motion_id, mode="replace", anchor="center")
-        forward = _body_forward(compute_poses(window)["fk_joints"])
-        travel = (window[:, :3] - window[0, :3]) @ forward
+        window, report = bank.apply(base, motion_id, mode="replace", anchor="center")
+        # Measure the step against the frame it starts from, facing the way the dancer faces
+        # there. The frames around it are the song's own dance and travel on their own account.
+        a, b = report["action_range"]
+        forward = _body_forward(compute_poses(window)["fk_joints"], a)
+        travel = (window[a:b, :3] - window[a, :3]) @ forward
         peak = float(travel.max() if sign > 0 else travel.min())
         assert sign * peak > 0.25, (motion_id, np.rad2deg(yaw[start]), peak)
 
@@ -541,6 +574,50 @@ def test_a_spliced_turn_does_not_whip_round_at_the_seam(motion_id):
         _song, _window, spliced, _report = _spliced(bank, motion_id, mode)
         rate = float(np.abs(np.diff(_root_yaw_series(spliced))).max() * 30)
         assert rate < 10.0, (motion_id, mode, rate)
+
+
+@pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
+def test_a_motion_keeps_its_authored_speed_however_wide_the_selection(motion_id):
+    """A gesture takes as long as it takes. It must not be stretched to fill the selection.
+
+    This is the defect a user reported as "extremely slow and off putting from the actual dance".
+    Duration used to come from the dragged window -- `_fit_event(raw, event, n, ...)` retimed the
+    clip to the full width -- so a 45-frame clap dropped on a 4-second selection played at 0.375x
+    and smeared one hand-meet across eight beats. Duration now comes from the music instead.
+    """
+    bank = default_motion_bank()
+    authored = bank.load_clip(motion_id).shape[0]
+    beats = np.arange(0, 480, 16)                    # a steady 112.5 BPM grid
+    for n in (authored * 2, 480):                    # selections far wider than the action
+        base = np.concatenate([_base(240)] * 2, axis=0)[:n]
+        _window, report = bank.apply(base, motion_id, mode="replace", anchor="center",
+                                     beats=beats[beats < n])
+        a, b = report["action_range"]
+        assert b - a < n, (motion_id, n, report["action_range"])
+        assert 0.6 * authored <= b - a <= 1.6 * authored, (motion_id, n, b - a, authored)
+
+
+@pytest.mark.parametrize("motion_id", ["clap_single", "wave", "chest_pop", "turn_quarter"])
+def test_the_dance_outside_a_spliced_gesture_is_left_alone(motion_id):
+    """Only the frames the action occupies are the bank's to touch.
+
+    Retiming the whole window replaced the song's own choreography either side of the gesture with
+    a slowed-down copy of the clip, which is why the edit read as a tempo change rather than as a
+    gesture. The pose either side has to still be the pose the dancer was already in.
+    """
+    bank = default_motion_bank()
+    n = 480
+    base = np.concatenate([_base(240)] * 2, axis=0)[:n]
+    window, report = bank.apply(base, motion_id, mode="replace", anchor="center",
+                                beats=np.arange(0, n, 16))
+    a, b = report["action_range"]
+    assert a > 8 and b < n - 8, (motion_id, report["action_range"])
+    # Body joints only. Translation and root orientation (channels 0:9) are legitimately
+    # re-anchored so the window still starts and ends where the song expects; the pose the
+    # dancer is holding either side of the gesture is what must survive untouched.
+    for lo, hi in ((0, a - 12), (b + 12, n)):
+        drift = float(np.abs(window[lo:hi, 9:135] - base[lo:hi, 9:135]).max())
+        assert drift < 1e-3, (motion_id, (lo, hi), drift)
 
 
 def test_asking_for_repetition_a_motion_cannot_do_still_edits_the_window():

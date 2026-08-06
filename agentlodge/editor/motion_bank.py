@@ -211,12 +211,19 @@ class MotionBank:
         n = int(base.shape[0])
         target_event = _target_event(n, beats, anchor)
         if mode == "replace":
-            fitted = _fit_event(raw, source_event, n, target_event)
-            fitted = _align_translation(fitted, base[0, :3])
-            action_range = [0, n]
+            action_len = _beat_locked_length(raw.shape[0], n, beats)
+            if action_len >= n:              # selection no wider than the action itself
+                fitted = _fit_event(raw, source_event, n, target_event)
+                fitted = _align_translation(fitted, base[0, :3])
+                action_range = [0, n]
+            else:
+                fitted, action_range = _replace_beat_locked(
+                    base, raw, source_event, target_event, action_len,
+                    blend_frames=blend_frames,
+                )
         elif mode == "insert":
             fitted, action_range = _insert_fixed_duration(
-                base, raw, source_event, target_event, blend_frames=blend_frames,
+                base, raw, source_event, target_event, beats=beats, blend_frames=blend_frames,
             )
         else:
             raise ValueError(f"unsupported motion-bank mode: {mode!r}")
@@ -366,6 +373,71 @@ def _target_event(n: int, beats: np.ndarray | None, anchor: str) -> int:
     return int(np.clip(target, 0, n - 1))
 
 
+def _beat_locked_length(natural: int, n: int, beats: np.ndarray | None) -> int:
+    """How many frames the action gets: its authored duration, snapped to a whole number of beats.
+
+    The window says *where* an action goes, not how fast it runs. Retiming the clip to the whole
+    selection makes its speed a function of how wide the user happened to drag: a 1.5s clap
+    dropped on a 4s selection plays at 0.4x, smeared across nearly eight beats, which reads as
+    slow motion fighting the song rather than dancing with it. The authored duration is the speed
+    the motion was designed at, so it is what gets used; snapping it to whole beats lands the
+    start and the finish on the groove instead of drifting against it.
+    """
+    natural = int(max(1, natural))
+    if beats is None:
+        return int(min(natural, n))
+    b = np.unique(np.asarray(beats, dtype=float))
+    if b.size < 2:
+        return int(min(natural, n))
+    period = float(np.median(np.diff(b)))
+    if not np.isfinite(period) or period < 1.0:
+        return int(min(natural, n))
+    whole = max(1, int(round(natural / period)))
+    return int(np.clip(int(round(whole * period)), 1, n))
+
+
+def _replace_beat_locked(
+    base: np.ndarray,
+    action: np.ndarray,
+    event: int,
+    target_event: int,
+    action_len: int,
+    *,
+    blend_frames: int,
+) -> tuple[np.ndarray, list[int]]:
+    """Place the action at its own speed and leave the rest of the window as the original dance.
+
+    Only the frames the action actually occupies are replaced. Everything around it is the song's
+    own choreography, unretimed, so the groove either side of the gesture is the one the dancer
+    was already in.
+
+    The root offset an action leaves behind is deliberately *not* settled here. Closing it inside
+    the action span means ramping the root back over the very frames the action is happening in,
+    and for a turn -- whose whole excursion sits at its final frame -- that cancels the thing
+    being spliced: a quarter turn arrives as a 68-degree lean. The dance after the action follows
+    the new heading instead, exactly as fixed-duration insertion already does, and the caller
+    settles the residual across the whole window, where there is room to give it back gently.
+    """
+    n = int(base.shape[0])
+    ratio = float(np.clip(event / max(1, action.shape[0] - 1), 0.0, 1.0))
+    start = int(np.clip(target_event - int(round(ratio * (action_len - 1))), 0, n - action_len))
+    end = start + action_len
+
+    anchor = max(0, start - 1)
+    fitted = _fit_event(action, event, action_len, target_event - start)
+    fitted = _align_translation(fitted, base[anchor, :3])
+    fitted = _align_yaw(fitted, _root_yaw_series(base[anchor:anchor + 1])[0])
+
+    combined = _ease_join(base[:start], fitted, min(blend_frames, max(1, action_len // 4)))
+    suffix = base[end:]
+    if suffix.shape[0]:
+        suffix = _align_yaw(suffix, _root_yaw_series(combined[-1:])[0])
+        combined = _ease_join(combined, suffix, min(blend_frames, max(1, suffix.shape[0] // 3)))
+    if combined.shape[0] != n:                       # defensive; the pieces already sum to n
+        combined = retime(combined, n)
+    return np.ascontiguousarray(combined, dtype=np.float32), [start, end]
+
+
 def _fit_event(clip: np.ndarray, event: int, n: int, target: int) -> np.ndarray:
     event = int(np.clip(event, 0, clip.shape[0] - 1))
     target = int(np.clip(target, 0, n - 1))
@@ -501,12 +573,15 @@ def _insert_fixed_duration(
     event: int,
     target_event: int,
     *,
+    beats: np.ndarray | None = None,
     blend_frames: int,
 ) -> tuple[np.ndarray, list[int]]:
     n = int(base.shape[0])
     if n < 24:
         raise ValueError("selected window is too short for insertion; use replace or select at least 0.8s")
-    action_len = int(np.clip(round(0.45 * n), 12, max(12, n - 12)))
+    # The action runs at its authored speed snapped to whole beats, not at a fixed fraction of
+    # however wide the selection happens to be, so the inserted gesture stays in time with the song.
+    action_len = int(np.clip(_beat_locked_length(action.shape[0], n, beats), 12, max(12, n - 12)))
     event_ratio = float(np.clip(event / max(1, action.shape[0] - 1), 0.15, 0.85))
     action_event = int(round(event_ratio * (action_len - 1)))
     start = int(np.clip(target_event - action_event, 4, n - action_len - 4))
