@@ -193,6 +193,27 @@ The generic version of this trap: an elbow at shoulder height is correct for an 
 (a punch, a side point, a reach) and wrong only for a *folded* one. A check that ignores the
 distinction flags eight of the twenty motions and buries the one real defect in false positives.
 
+**The clap was not the only one.** Reviewing all twenty the same way turned up a second motion
+doing the wrong action while passing everything: `chest_pop` never moved the chest. At its event
+frame spine3 sat at `+0.018 m` — its rest offset, unchanged to the millimetre — while the head
+speared `0.272 m` forward and dropped `0.134 m`. It read as a pigeon peck. The cause is a
+kinematic fact worth stating plainly:
+
+> **Only joints *below* a body part can move that part.** Rotating spine3 or the neck swings the
+> head; it cannot translate the chest. A chest pop has to be driven from the pelvis, spine1 and
+> spine2, with spine3 and the neck giving that rotation back so the head arrives level.
+
+Cancelling the rotation exactly is still not enough — the chain below has already carried the head
+forward, so the counter has to *over*-rotate to hold it in place. The fixed clip travels `0.066 m`
+at the chest against `0.021 m` at the head; the shipped one was `0.001 m` against `0.108 m`.
+
+Neither the `articulation_chain` validator nor `test_every_motion_animates_a_meaningful_share_of_the_body`
+could ever have caught this: both only ask whether the listed joints moved, and a nod moves them
+just as convincingly as a pop. **Every motion needs one assertion naming the thing its own name
+promises** — the chest leads for `chest_pop`, the wave travels up the spine in order for
+`body_roll`, the hands meet in front of the chest for a clap. Magnitude checks are necessary and
+never sufficient.
+
 Nothing in that failure was subtle at full size — it survived because the twenty-per-page contact
 sheet used to review the bank renders each action too small to see a hand at. `scripts/review_motion_visually.py`
 draws one motion per sheet from four angles, forces the closest-approach frame into the sample
@@ -230,8 +251,7 @@ A fourth trap is vertical: `_ground` re-solves root height from the leg pose on 
 frame, so an authored `trans[:, 2]` rise is silently cancelled whenever the feet stay planted. A
 bounce or a dip has to come from knee flexion, not from the root.
 
-A fifth is that the *validator* has a frame too, and it is not the same one the clip is in by the
-time it runs. `insert` yaw-aligns the action to whatever direction the dancer faces at the splice
+A fifth is that the *validator* has a frame too, and it is not the same one the clip is in by thetime it runs. `insert` yaw-aligns the action to whatever direction the dancer faces at the splice
 point, so a `root_displacement` contract read along a fixed world axis measures the travel only
 while the dancer happens to face down that axis. Every travelling motion failed validation at 45,
 90, 225 and 270 degrees of song rotation and passed at 0 and 180 — a user-visible edit that worked
@@ -239,6 +259,15 @@ or failed on nothing they could see. `root_displacement` is now projected onto t
 lateral and sagittal directions, derived from the clip's opening root yaw, so the check means the
 same thing wherever the dancer is pointing. A world axis is never the right frame for a claim about
 a body.
+
+A sixth bites when *measuring* rather than authoring, and it fails silently. `compute_poses`
+returns joints in the Z-up editing frame, so the dancer's forward is `-y` and `+z` is up. Building
+a body frame the usual way — `fwd = normalize(axis - up * (axis @ up))` — with `axis` mistakenly
+set to `+z` projects it onto the up vector and leaves *zero*, which normalizes into pure floating
+point noise. It does not raise; it yields a unit vector pointing somewhere arbitrary, and every
+"forward" number computed from it comes out as a small, stable, entirely plausible float. Derive
+forward from the skeleton, or check it against `step_forward` (pelvis travels `y=-0.460`) and
+`step_backward` (`y=+0.460`), before trusting a single measurement taken in that frame.
 
 ## Authoring style
 

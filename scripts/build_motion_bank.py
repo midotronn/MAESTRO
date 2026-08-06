@@ -325,11 +325,25 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         wind = _pulse(t, 0.33, 0.10)
         settle = _pulse(t, 0.74, 0.12)
         drive = hit - 0.35 * wind - 0.18 * settle            # wind up, snap, then release
-        aa[:, 3, 0] -= 0.62 * drive
-        aa[:, 6, 0] += 0.78 * drive
-        aa[:, 9, 0] += 0.66 * drive
-        aa[:, 12, 0] -= 0.34 * drive
-        aa[:, 0, 0] += 0.26 * drive                          # hips counter the chest
+        # A chest pop is an isolation: the ribcage shoots forward while the head stays level.
+        # Only joints BELOW the chest can move the chest -- rotating spine3 or the neck swings
+        # the head instead. The old recipe drove spine3 (+0.66) and leaned on the neck to
+        # counter it, so the chest sat at exactly its rest offset while the head speared 0.27 m
+        # forward and 0.13 m down: a pigeon peck, not a pop. The forward drive now lives at
+        # pelvis/spine1/spine2, and spine3 plus the neck give back that same total so the
+        # shoulders open and the head arrives level instead of leading.
+        base = 0.07 * drive                                  # hips stay under the ribcage
+        lower = 0.26 * drive
+        mid = 0.23 * drive                                   # the chest travels off these three
+        # Cancelling only the rotation is not enough to hold the head: the chain below has
+        # already carried it forward, so the counter has to over-rotate to bring it back. The
+        # extra 0.34 is the arcsin of that leftover head travel over the spine3->head length.
+        counter = base + lower + mid + 0.34 * drive
+        aa[:, 0, 0] += base
+        aa[:, 3, 0] += lower
+        aa[:, 6, 0] += mid
+        aa[:, 9, 0] -= 0.58 * counter                        # shoulders open rather than dive
+        aa[:, 12, 0] -= 0.42 * counter                       # head holds its place
         aa[:, 16, 2] -= 0.30 * hit
         aa[:, 17, 2] += 0.30 * hit
         aa[:, 4, 0] += 0.18 * hit

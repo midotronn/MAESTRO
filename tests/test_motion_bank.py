@@ -400,6 +400,37 @@ def test_pointing_to_the_side_reaches_sideways_rather_than_forward():
 
 
 @needs_fk
+def test_a_chest_pop_moves_the_chest_and_not_the_head():
+    """A chest pop is an isolation: the ribcage leads and the head stays where it is.
+
+    Only joints BELOW the chest can move the chest. The recipe drove spine3 (+0.66) and the
+    neck, which sit above it, so they swung the head instead -- the chest stayed at exactly its
+    rest offset, +0.018 m, unchanged to the millimetre, while the head speared 0.272 m forward
+    and dropped 0.134 m. Rendered, that is a pigeon peck, not a pop. Nothing caught it: the
+    articulation validator only asks whether those joints moved at all, and "a meaningful share
+    of the body animates" cannot tell a pop from a nod. This is the same failure as the clap
+    that read as a namaste, so pin the thing the name actually promises.
+    """
+    from server.fk import compute_poses
+    bank = default_motion_bank()
+    spec = bank.resolve("chest_pop")
+    joints = compute_poses(bank.load_clip("chest_pop"))["fk_joints"]
+    fwd = np.array([0.0, -1.0, 0.0])
+
+    def travel(joint):
+        """Displacement relative to the pelvis, so a step or lean cannot fake a pop."""
+        return ((joints[spec.event_frame, joint] - joints[spec.event_frame, 0])
+                - (joints[0, joint] - joints[0, 0]))
+
+    chest, head = travel(9), travel(15)
+    chest_fwd, head_fwd = float(chest @ fwd), float(head @ fwd)
+    assert chest_fwd > 0.04, ("the chest never actually pops forward", chest_fwd)
+    assert abs(head_fwd) < 0.6 * chest_fwd, (
+        "the head travels as far as the chest, so this reads as a nod", head_fwd, chest_fwd)
+    assert float(head[2]) > -0.06, ("the head dives instead of staying level", float(head[2]))
+
+
+@needs_fk
 @pytest.mark.parametrize("motion_id", ["jump_two_foot", "jump_arms_up"])
 def test_jumps_are_off_the_ground_at_their_accent(motion_id):
     """A jump whose accent lands while the feet are planted reads as a squat."""
