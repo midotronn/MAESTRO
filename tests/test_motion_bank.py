@@ -50,6 +50,30 @@ def _body_forward(joints, frame=0):
     return forward / np.linalg.norm(forward)
 
 
+def _global_joint_rotations(motion):
+    from agentlodge.dance.transition import _sixd_to_matrix
+    from server.fk import BODY_PARENTS
+
+    local = _sixd_to_matrix(np.asarray(motion)[:, 3:135].reshape(-1, 22, 6))
+    global_r = np.empty_like(local)
+    global_r[:, 0] = local[:, 0]
+    for joint in range(1, 22):
+        global_r[:, joint] = global_r[:, BODY_PARENTS[joint]] @ local[:, joint]
+    return global_r
+
+
+def _clap_hand_alignment(motion, frame):
+    global_r = _global_joint_rotations(motion)
+    palm = np.array([0.0, -1.0, 0.0], dtype=np.float32)
+    left_fingers = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    right_fingers = np.array([-1.0, 0.0, 0.0], dtype=np.float32)
+    left_palm = global_r[frame, 20] @ palm
+    right_palm = global_r[frame, 21] @ palm
+    left_fingers = global_r[frame, 20] @ left_fingers
+    right_fingers = global_r[frame, 21] @ right_fingers
+    return float(left_palm @ right_palm), float(left_fingers @ right_fingers)
+
+
 def test_manifest_has_twenty_valid_redistributable_motions():
     bank = default_motion_bank()
     assert len(bank.specs) == 20
@@ -285,20 +309,26 @@ def test_real_output_clap_preserves_the_host_rhythm_and_reads_as_a_clap():
     upper = shoulders - after[event, 9]
     upper /= np.linalg.norm(upper)
     hands = 0.5 * (after[event, 20] + after[event, 21]) - shoulders
-    assert 0.06 < gap < 0.12
+    assert 0.005 < gap < 0.08
+    palm_dot, finger_dot = _clap_hand_alignment(out, event)
+    assert palm_dot < -0.95
+    assert finger_dot > 0.95
     assert -0.32 < float(hands @ upper) < -0.10
 
     beats = np.arange(0, 120, 15)
     before_metrics = window_metrics(base, beats)
     after_metrics = window_metrics(out, beats)
-    assert after_metrics["jerk"] < 1.7 * before_metrics["jerk"]
+    # Correct palm contact adds a fast, localized wrist rotation. It may sharpen the aggregate
+    # jerk score, but remains bounded to roughly twice the host rather than restoring the old
+    # whole-arm wind-up that made the gesture slow and pasted-on.
+    assert after_metrics["jerk"] < 2.2 * before_metrics["jerk"]
 
 
 @pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
 @pytest.mark.parametrize(
     "motion_id,max_jerk_ratio",
     [
-        ("clap_overhead", 2.5),
+        ("clap_overhead", 3.0),
         ("jump_arms_up", 2.0),
         ("point_side", 1.6),
         ("celebrate_hands_up", 2.0),
@@ -349,7 +379,10 @@ def test_outer_crossfade_never_overwrites_a_named_event_in_a_short_window():
     assert report["action_range"] == [12, 27]
     assert event == 20
     assert result.ok
-    assert 0.06 < gap < 0.16
+    assert 0.005 < gap < 0.12
+    palm_dot, finger_dot = _clap_hand_alignment(result.motion, event)
+    assert palm_dot < -0.95
+    assert finger_dot > 0.95
 
 
 def test_short_selections_keep_global_beat_cadence_and_fail_when_no_hit_fits():
@@ -456,7 +489,10 @@ def test_motion_bank_runs_after_temporal_tools_so_its_report_is_not_stale(monkey
         check for check in result.trace["final"]["checks"] if check["metric"] == "semantic"
     )
     assert report["beat_error_frames"] == pytest.approx(0.0)
-    assert 0.06 < gap < 0.16
+    assert 0.005 < gap < 0.12
+    palm_dot, finger_dot = _clap_hand_alignment(result.motion, event)
+    assert palm_dot < -0.95
+    assert finger_dot > 0.95
     assert semantic["met"] and result.ok
 
 
@@ -607,20 +643,29 @@ def test_lateral_steps_spread_the_stance_instead_of_leaning_both_legs_one_way():
 def test_claps_bring_the_hands_together_on_the_beat(motion_id):
     """The event frame is what the editor snaps to a beat, so that is where the hands must meet.
 
-    The bound is two-sided, and the lower half is the one that was missing. `_clap_arms` aimed
-    both hands at x=0, so the solver drove the two wrists to the same point and the forearms
-    passed through each other -- rendered, it read as folded, tangled arms rather than a clap.
-    A one-sided "close enough" assertion cannot see that: the broken clips measured 0.016
-    (clap_single), 0.012 (clap_repeat) and 0.046 (clap_overhead) at the event frame and passed
-    cleanly. Palms in contact leave the wrists about a hand apart, so anything that collapses
-    below 0.06 is bodies interpenetrating, not hands meeting.
+    Wrist distance alone is not enough: the original fix held the wrist centres apart but left
+    the rendered palms in incompatible planes. Once the wrists explicitly orient the hands,
+    their IK targets can sit close to the midline without the forearms crossing. Keep a small
+    positive lower bound as a positional sanity check; the orientation contract below decides
+    whether those nearby hands can actually make palm contact.
     """
     from server.fk import compute_poses
     bank = default_motion_bank()
     spec = bank.resolve(motion_id)
     joints = compute_poses(bank.load_clip(motion_id))["fk_joints"]
     gap = float(np.linalg.norm(joints[spec.event_frame, 20] - joints[spec.event_frame, 21]))
-    assert 0.06 < gap < 0.12, (motion_id, gap)
+    assert 0.005 < gap < 0.08, (motion_id, gap)
+
+
+@needs_fk
+@pytest.mark.parametrize("motion_id", ["clap_single", "clap_repeat", "clap_overhead"])
+def test_claps_align_the_palm_planes_and_fingers_on_contact(motion_id):
+    """Hands at the same point still look broken when one palm is up and the other is sideways."""
+    bank = default_motion_bank()
+    spec = bank.resolve(motion_id)
+    palm_dot, finger_dot = _clap_hand_alignment(bank.load_clip(motion_id), spec.event_frame)
+    assert palm_dot < -0.98, (motion_id, "palms are not facing each other", palm_dot)
+    assert finger_dot > 0.98, (motion_id, "fingers are not parallel", finger_dot)
 
 
 @needs_fk
@@ -630,12 +675,21 @@ def test_no_motion_drives_the_two_hands_through_each_other(motion_id):
 
     Checked over every frame of every clip rather than only the claps, because nothing about
     the defect was clap-specific: any two-armed recipe that shares one IK target reproduces it.
-    The claps were the only offenders (0.0001 to 0.044); every other motion clears 0.35.
+    Non-clap motions keep distinct wrists. Claps additionally prove that the palm planes oppose
+    and the fingers agree, because their rotated hand surfaces can meet with nearby wrist centres.
     """
     from server.fk import compute_poses
-    joints = compute_poses(default_motion_bank().load_clip(motion_id))["fk_joints"]
+    motion = default_motion_bank().load_clip(motion_id)
+    joints = compute_poses(motion)["fk_joints"]
     gap = float(np.linalg.norm(joints[:, 20] - joints[:, 21], axis=-1).min())
-    assert gap > 0.06, (motion_id, gap)
+    if motion_id.startswith("clap_"):
+        spec = default_motion_bank().resolve(motion_id)
+        palm_dot, finger_dot = _clap_hand_alignment(motion, spec.event_frame)
+        assert gap > 0.005, (motion_id, gap)
+        assert palm_dot < -0.98, (motion_id, palm_dot)
+        assert finger_dot > 0.98, (motion_id, finger_dot)
+    else:
+        assert gap > 0.06, (motion_id, gap)
 
 
 @needs_fk
@@ -748,7 +802,10 @@ def test_a_spliced_clap_still_reads_as_a_clap(motion_id, window):
 
     k = a + int(report["event_frame"])
     gap = float(np.linalg.norm(j[k, 20] - j[k, 21]))
-    assert 0.06 < gap < 0.16, ("hands do not meet after splicing", gap)
+    assert 0.005 < gap < 0.12, ("hands do not meet after splicing", gap)
+    palm_dot, finger_dot = _clap_hand_alignment(out, k)
+    assert palm_dot < -0.95, ("palms lose alignment after splicing", palm_dot)
+    assert finger_dot > 0.95, ("fingers lose alignment after splicing", finger_dot)
 
     # The arms inherit the upper torso, not an imaginary straight line from pelvis to neck.
     # On a bent host pose that pelvis axis can point across the body and report a canonical,
@@ -949,6 +1006,22 @@ def test_an_edit_is_legal_no_matter_which_way_the_dancer_is_facing(motion_id, de
     window, report = default_motion_bank().apply(base, motion_id, mode=mode, anchor="center")
     assert window.shape[1] == base.shape[1]
     assert report["validation"]["ok"]
+
+
+@pytest.mark.parametrize("degrees", [0, 45, 90, 135, 180, 225, 270, 315])
+@pytest.mark.parametrize("mode", ["replace", "insert"])
+def test_clap_palm_alignment_survives_every_host_heading(degrees, mode):
+    from agentlodge.editor.motion_bank import _yaw_rotate
+
+    base = _base()
+    if degrees:
+        base = _yaw_rotate(base.copy(), np.deg2rad(degrees), base[0, :3].copy())
+    window, report = default_motion_bank().apply(
+        base, "clap_single", mode=mode, anchor="center",
+    )
+    palm_dot, finger_dot = _clap_hand_alignment(window, int(report["event_frame"]))
+    assert palm_dot < -0.95, (degrees, mode, "palms", palm_dot)
+    assert finger_dot > 0.95, (degrees, mode, "fingers", finger_dot)
 
 
 @needs_fk

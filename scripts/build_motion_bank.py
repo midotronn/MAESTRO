@@ -140,7 +140,29 @@ def _align_vector(source, target):
 _ELBOW_OUT = np.array([1.0, 0.15, 0.0], dtype=np.float32)
 
 
-def _solve_arm(aa, side: str, targets: np.ndarray, *, elbow_hint=_ELBOW_OUT):
+def _clap_wrist_rotation(side: str, forearm_global: np.ndarray) -> np.ndarray:
+    """Return a local wrist rotation with upright fingers and inward-facing palms."""
+    sign = 1.0 if side == "left" else -1.0
+    rest_finger = np.array([sign, 0.0, 0.0], dtype=np.float32)
+    rest_palm = np.array([0.0, -1.0, 0.0], dtype=np.float32)
+    rest_width = np.cross(rest_finger, rest_palm)
+    desired_finger = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    desired_palm = np.array([-sign, 0.0, 0.0], dtype=np.float32)
+    desired_width = np.cross(desired_finger, desired_palm)
+    rest_basis = np.stack([rest_finger, rest_palm, rest_width], axis=1)
+    desired_basis = np.stack([desired_finger, desired_palm, desired_width], axis=1)
+    hand_global = desired_basis @ rest_basis.T
+    return forearm_global.T @ hand_global
+
+
+def _solve_arm(
+    aa,
+    side: str,
+    targets: np.ndarray,
+    *,
+    elbow_hint=_ELBOW_OUT,
+    clap_orientation: np.ndarray | None = None,
+):
     joints = (16, 18, 20) if side == "left" else (17, 19, 21)
     shoulder, elbow, wrist = joints
     J = _template()
@@ -165,11 +187,16 @@ def _solve_arm(aa, side: str, targets: np.ndarray, *, elbow_hint=_ELBOW_OUT):
         elbow_local = upper_global.T @ fore_global
         aa[frame, shoulder] = _matrix_to_axis_angle(upper_global)
         aa[frame, elbow] = _matrix_to_axis_angle(elbow_local)
+        if clap_orientation is not None:
+            wrist_local = _clap_wrist_rotation(side, fore_global)
+            weight = float(np.clip(clap_orientation[frame], 0.0, 1.0))
+            aa[frame, wrist] = _matrix_to_axis_angle(wrist_local) * weight
 
 
-# Half the distance between the wrists when the palms are together. A hand is roughly 9cm
-# across, so the wrists finish about that far apart -- touching, not occupying the same point.
-_CLAP_HALF_GAP = 0.040
+# Half the IK target separation at contact. Wrist rotation moves the rendered hand surfaces
+# inward from those targets, so a small positive separation produces palm contact without asking
+# the forearms to cross the body's midline.
+_CLAP_HALF_GAP = 0.004
 
 # Where the palms meet. In the template frame the shoulders sit at y=+0.083 and the chest
 # (spine3) at y=-0.057, so a clap belongs a little BELOW the chest line. This was authored at
@@ -204,9 +231,9 @@ def _clap_arms(aa, signal, *, overhead=False):
     y, z = (0.62, 0.18) if overhead else _CLAP_POINT
     hint = _CLAP_ELBOW
     _solve_arm(aa, "left", _arm_targets("left", signal, np.array([half, y, z], dtype=np.float32)),
-               elbow_hint=hint)
+               elbow_hint=hint, clap_orientation=signal)
     _solve_arm(aa, "right", _arm_targets("right", signal, np.array([-half, y, z], dtype=np.float32)),
-               elbow_hint=hint)
+               elbow_hint=hint, clap_orientation=signal)
 
 
 def _legs(aa, phase, amount=0.45):

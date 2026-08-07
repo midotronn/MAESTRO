@@ -216,7 +216,16 @@ finished closer than 0.12 m, and two hands driven to a *single point* satisfy th
 hands meeting: `_clap_arms` gave the left and right IK solvers the same target, so every clap in
 the bank rendered as crossed, interpenetrating forearms with a measured gap of 0.0001 m while both
 the validator and the test passed. Clap targets are now mirrored either side of the midline like
-every other two-armed recipe, and the gap is asserted from both directions.
+every other two-armed recipe, and the gap has both a positive floor and a ceiling.
+
+Even that is not a complete hand-contact contract. The exact live Treasure edit later measured a
+valid `0.094 m` wrist gap while the Y-Bot showed one palm turned up and the other sideways. SMPL
+joint FK ends at the wrists, so every position-only test and skeleton sheet missed the visible
+misalignment. Clap authoring now drives the wrist rotations as well as the shoulder/elbow IK:
+palms face one another and the fingers run parallel at the event. Regression tests compose the
+global wrist frames and assert both directions across canonical clips, splice modes, and eight host
+headings; the final check remains a side-view Y-Bot render because only the skinned hands show the
+actual contact surfaces.
 
 **Hands meeting is not enough; *where* and *how* they meet is the action.** With the gap fixed,
 every clap still passed every check while rendering as a bow: the palms met above the chest at
@@ -270,10 +279,12 @@ promises** — the chest leads for `chest_pop`, the wave travels up the spine in
 never sufficient.
 
 Nothing in that failure was subtle at full size — it survived because the twenty-per-page contact
-sheet used to review the bank renders each action too small to see a hand at. `scripts/review_motion_visually.py`
-draws one motion per sheet from four angles, forces the closest-approach frame into the sample
-rather than sampling evenly past it, and keeps world height so a jump still looks like a jump.
-Review new clips with that, not with the reel.
+sheet used to review the bank renders each action too small to see a hand at.
+`scripts/review_motion_visually.py` draws one motion per sheet from four angles, forces the
+closest-approach frame into the sample rather than sampling evenly past it, and keeps world height
+so a jump still looks like a jump. Its skeleton still stops at the wrist, however, so hand-contact
+motions also require a close front/side Y-Bot render. Review new clips with both, not with the reel
+alone.
 
 Those tests ran only against `MockWindowGenerator` for most of the bank's life, which is a tidy
 base: it starts at yaw 0 and dances on the spot. `tests/data/lodge_sample_dance.npy` is 24 seconds
