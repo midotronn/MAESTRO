@@ -364,8 +364,13 @@ def _crossfade_toward(out: np.ndarray, orig: np.ndarray, frames, *, head: bool) 
         out[f, _ROT] = _matrix_to_sixd(R).reshape(NUM_JOINTS * 6)
 
 
-def crossfade_edit(motion139: np.ndarray, a: int, b: int, edited_window139: np.ndarray,
-                   blend_frames: int = 12) -> np.ndarray:
+def crossfade_edit(
+    motion139: np.ndarray,
+    a: int,
+    b: int,
+    edited_window139: np.ndarray,
+    blend_frames: int | tuple[int, int] = 12,
+) -> np.ndarray:
     """Splice an EDITED window back into ``motion`` for the interactive editor.
 
     Unlike :func:`splice_window` (which chains a *foreign* segment onto the neighbour frames -- needed
@@ -385,10 +390,15 @@ def crossfade_edit(motion139: np.ndarray, a: int, b: int, edited_window139: np.n
     ed = np.ascontiguousarray(edited_window139, dtype=np.float32)
     ed = retime(ed, n) if ed.shape[0] != n else ed.copy()
     orig = m[a:b]
-    bf = int(max(0, min(blend_frames, n // 2)))
-    if bf > 0:
-        _crossfade_toward(ed, orig, range(bf), head=True)            # fade original -> edit at the start
-        _crossfade_toward(ed, orig, range(n - bf, n), head=False)    # fade edit -> original at the end
+    if isinstance(blend_frames, tuple):
+        head = int(max(0, min(blend_frames[0], n)))
+        tail = int(max(0, min(blend_frames[1], n - head)))
+    else:
+        head = tail = int(max(0, min(blend_frames, n // 2)))
+    if head > 0:
+        _crossfade_toward(ed, orig, range(head), head=True)          # original -> edit
+    if tail > 0:
+        _crossfade_toward(ed, orig, range(n - tail, n), head=False)  # edit -> original
     return np.concatenate([m[:a], ed, m[b:]], axis=0).astype(np.float32)
 
 

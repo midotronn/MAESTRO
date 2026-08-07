@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 
+from agentlodge.dance.format import to_editor139
 from agentlodge.dance.transition import (
+    _axis_angle_to_matrix,
     _matrix_to_axis_angle,
     _matrix_to_sixd,
     _sixd_to_matrix,
@@ -42,6 +44,8 @@ _CLOSE_TRANS_RATE = 1.0    # m/s the root may travel while giving an offset back
 _CLOSE_LIFT_RATE = 0.6     # m/s for height, which reads as a bob rather than a step
 _SMOOTHSTEP_PEAK = 1.5     # a smoothstep ramp peaks at 1.5x its average rate
 _CLOSE_MAX_RATIO = 0.35    # never spend more than this share of the window closing
+_INSERT_HOST_RATE = 0.75   # host choreography keeps moving while time is made for an insertion
+_MIRROR_JOINTS = (0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12, 14, 13, 15, 17, 16, 19, 18, 21, 20)
 
 
 def normalize_name(value: str) -> str:
@@ -68,13 +72,19 @@ class MotionSpec:
     event_frame: int
     recommended_beats: float
     validator: dict
+    absolute_joints: tuple[int, ...]
+    additive_joints: tuple[int, ...]
+    translation_axes: tuple[int, ...]
+    replace_contacts: bool
+    carry_root_rotation: bool
+    event_pose_joints: tuple[int, ...]
 
     @classmethod
     def from_dict(cls, raw: dict) -> "MotionSpec":
         required = {
             "id", "name", "aliases", "category", "clip", "fps", "frames", "source", "license",
             "attribution", "stationary", "mirrorable", "repeatable", "event_frame",
-            "recommended_beats", "validator",
+            "recommended_beats", "validator", "composition",
         }
         missing = sorted(required - set(raw))
         if missing:
@@ -85,6 +95,27 @@ class MotionSpec:
         aliases = tuple(str(x).strip() for x in raw["aliases"] if str(x).strip())
         if not aliases:
             raise ValueError(f"{motion_id}: aliases cannot be empty")
+        composition = dict(raw["composition"])
+        absolute = tuple(int(x) for x in composition.get("absolute_joints", ()))
+        additive = tuple(int(x) for x in composition.get("additive_joints", ()))
+        if any(j < 0 or j >= 22 for j in (*absolute, *additive)):
+            raise ValueError(f"{motion_id}: composition joint lies outside the 22-joint body")
+        if set(absolute) & set(additive):
+            raise ValueError(f"{motion_id}: a joint cannot be both absolute and additive")
+        event_pose = tuple(int(x) for x in composition.get("event_pose_joints", ()))
+        if not set(event_pose).issubset(absolute):
+            raise ValueError(
+                f"{motion_id}: event-pose joints must also be declared as absolute joints"
+            )
+        axes = {"x": 0, "y": 1, "z": 2}
+        try:
+            translation_axes = tuple(axes[str(x).lower()] for x in composition.get(
+                "translation_axes", ()))
+        except KeyError as exc:
+            raise ValueError(f"{motion_id}: invalid translation axis {exc.args[0]!r}") from exc
+        carry_root_rotation = bool(composition.get("carry_root_rotation", False))
+        if carry_root_rotation and 0 not in additive:
+            raise ValueError(f"{motion_id}: carrying root rotation requires additive joint 0")
         return cls(
             id=motion_id,
             name=str(raw["name"]).strip(),
@@ -103,6 +134,12 @@ class MotionSpec:
             event_frame=int(raw["event_frame"]),
             recommended_beats=float(raw["recommended_beats"]),
             validator=dict(raw["validator"]),
+            absolute_joints=absolute,
+            additive_joints=additive,
+            translation_axes=translation_axes,
+            replace_contacts=bool(composition.get("replace_contacts", False)),
+            carry_root_rotation=carry_root_rotation,
+            event_pose_joints=event_pose,
         )
 
     def public_dict(self) -> dict:
@@ -116,6 +153,14 @@ class MotionSpec:
             "mirrorable": self.mirrorable,
             "repeatable": self.repeatable,
             "recommended_beats": self.recommended_beats,
+            "composition": {
+                "absolute_joints": list(self.absolute_joints),
+                "additive_joints": list(self.additive_joints),
+                "translation_axes": ["xyz"[x] for x in self.translation_axes],
+                "replace_contacts": self.replace_contacts,
+                "carry_root_rotation": self.carry_root_rotation,
+                "event_pose_joints": list(self.event_pose_joints),
+            },
             "source": self.source,
             "license": self.license,
             "attribution": self.attribution,
@@ -193,20 +238,29 @@ class MotionBank:
         blend_frames: int = 8,
     ) -> tuple[np.ndarray, dict]:
         """Fit a named motion into ``base_clip`` without changing its frame count."""
-        base = np.ascontiguousarray(base_clip, dtype=np.float32)
+        base = to_editor139(base_clip)
         if base.ndim != 2 or base.shape[1] != 139:
             raise ValueError(f"base clip must have shape (frames, 139), got {base.shape}")
         spec = self.resolve(motion_id)
         raw = self.load_clip(spec)
+        compose_spec = spec
         if mirror:
             if not spec.mirrorable:
                 raise ValueError(f"{spec.name} does not support mirroring")
             raw = mirror_motion(raw)
+            compose_spec = replace(
+                spec,
+                absolute_joints=tuple(_MIRROR_JOINTS[j] for j in spec.absolute_joints),
+                additive_joints=tuple(_MIRROR_JOINTS[j] for j in spec.additive_joints),
+                event_pose_joints=tuple(_MIRROR_JOINTS[j] for j in spec.event_pose_joints),
+            )
         count = int(np.clip(repeats, 1, 8))
         if count > 1:
             if not spec.repeatable:
                 raise ValueError(f"{spec.name} does not support repetition")
             raw = np.concatenate([raw] * count, axis=0)
+            if compose_spec.event_pose_joints:
+                compose_spec = replace(compose_spec, event_pose_joints=())
         source_event = (count // 2) * spec.frames + spec.event_frame
         gain = 0.7 + 0.6 * float(np.clip(intensity, 0.0, 1.0))
         if abs(gain - 1.0) > 1e-6:
@@ -216,28 +270,43 @@ class MotionBank:
             )
 
         n = int(base.shape[0])
-        target_event = _target_event(n, beats, anchor)
-        if mode == "replace":
-            action_len = _beat_locked_length(raw.shape[0], n, beats)
-            if action_len >= n:              # selection no wider than the action itself
-                fitted = _fit_event(raw, source_event, n, target_event)
-                fitted = _align_translation(fitted, base[0, :3])
-                action_range = [0, n]
-            else:
-                fitted, action_range = _replace_beat_locked(
-                    base, raw, source_event, target_event, action_len,
-                    blend_frames=blend_frames,
-                )
-        elif mode == "insert":
-            fitted, action_range = _insert_fixed_duration(
-                base, raw, source_event, target_event, beats=beats, blend_frames=blend_frames,
-            )
-        else:
+        if mode not in {"replace", "insert"}:
             raise ValueError(f"unsupported motion-bank mode: {mode!r}")
+        if mode == "insert" and n < 24:
+            raise ValueError("selected window is too short for insertion; use replace or select at least 0.8s")
+        action_len = _beat_locked_length(
+            raw.shape[0], n, beats, recommended_beats=spec.recommended_beats * count,
+        )
+        local_event = _action_local_event(raw.shape[0], source_event, action_len)
+        latest = max(0, n - action_len - _join_tail(n))
+        target_event = _target_event(
+            n,
+            beats,
+            anchor,
+            minimum=local_event,
+            maximum=latest + local_event,
+        )
+        start, end, actual_event, local_event = _action_placement(
+            n, action_len, local_event, target_event,
+        )
+        host = (
+            base
+            if mode == "replace"
+            else _insertion_host(base, start, end, actual_event, local_event)
+        )
+        fitted, action_range, actual_event = _compose_beat_locked(
+            host,
+            raw,
+            source_event,
+            actual_event,
+            action_len,
+            compose_spec,
+            blend_frames=blend_frames,
+        )
 
-        fitted = _close_root_residual(fitted, base)
+        fitted = _close_root_residual(fitted, base, earliest=action_range[1])
         action = fitted[action_range[0]:action_range[1]]
-        validation = validate_semantics(action, spec)
+        validation = validate_semantics(action, spec, reference=host[action_range[0]:action_range[1]])
         if not validation["ok"]:
             raise ValueError(f"{spec.name} failed semantic validation: {validation['detail']}")
         report = {
@@ -246,8 +315,11 @@ class MotionBank:
             "category": spec.category,
             "mode": mode,
             "anchor": anchor,
-            "event_frame": int(target_event),
+            "event_frame": int(actual_event),
             "action_range": action_range,
+            "action_frames": int(action_range[1] - action_range[0]),
+            "recommended_beats": float(spec.recommended_beats * count),
+            "beat_error_frames": _beat_error(actual_event, beats, n),
             "mirror": bool(mirror),
             "intensity": float(np.clip(intensity, 0.0, 1.0)),
             "repeats": count,
@@ -287,7 +359,12 @@ def validate_canonical_clip(clip: np.ndarray, spec: MotionSpec) -> None:
         raise ValueError(f"{spec.id}: canonical semantic validation failed: {result['detail']}")
 
 
-def validate_semantics(clip: np.ndarray, spec: MotionSpec) -> dict:
+def validate_semantics(
+    clip: np.ndarray,
+    spec: MotionSpec,
+    *,
+    reference: np.ndarray | None = None,
+) -> dict:
     """Run the declarative validator contract stored in the manifest.
 
     Root contracts measure the largest excursion from the opening pose rather than the
@@ -306,8 +383,22 @@ def validate_semantics(clip: np.ndarray, spec: MotionSpec) -> dict:
                 "detail": "clip is too short"}
     if kind == "joint_activity":
         joints = [int(j) for j in contract.get("joints", [])]
-        aa = _matrix_to_axis_angle(_sixd_to_matrix(clip[:, _ROT].reshape(-1, 22, 6)))
-        metric = float(np.max(np.linalg.norm(aa[:, joints], axis=-1))) if joints else 0.0
+        rotations = _sixd_to_matrix(clip[:, _ROT].reshape(-1, 22, 6))
+        aa = _matrix_to_axis_angle(rotations)
+        activity = float(np.max(np.linalg.norm(aa[:, joints], axis=-1))) if joints else 0.0
+        if reference is not None:
+            ref = np.asarray(reference, dtype=np.float32)
+            if ref.shape != clip.shape:
+                raise ValueError(
+                    f"semantic reference must match clip shape {clip.shape}, got {ref.shape}"
+                )
+            ref_r = _sixd_to_matrix(ref[:, _ROT].reshape(-1, 22, 6))
+            delta = _matrix_to_axis_angle(rotations @ np.swapaxes(ref_r, -1, -2))
+            activity = max(
+                activity,
+                float(np.max(np.linalg.norm(delta[:, joints], axis=-1))) if joints else 0.0,
+            )
+        metric = activity
         detail = f"joint activity {metric:.3f}"
     elif kind == "vertical_peak":
         z = clip[:, 2]
@@ -349,8 +440,22 @@ def validate_semantics(clip: np.ndarray, spec: MotionSpec) -> dict:
         detail = f"root displacement {metric:.3f}"
     elif kind == "articulation_chain":
         joints = [int(j) for j in contract.get("joints", [])]
-        aa = _matrix_to_axis_angle(_sixd_to_matrix(clip[:, _ROT].reshape(-1, 22, 6)))
+        rotations = _sixd_to_matrix(clip[:, _ROT].reshape(-1, 22, 6))
+        aa = _matrix_to_axis_angle(rotations)
         activity = np.max(np.linalg.norm(aa[:, joints], axis=-1), axis=0) if joints else np.array([0.0])
+        if reference is not None:
+            ref = np.asarray(reference, dtype=np.float32)
+            if ref.shape != clip.shape:
+                raise ValueError(
+                    f"semantic reference must match clip shape {clip.shape}, got {ref.shape}"
+                )
+            ref_r = _sixd_to_matrix(ref[:, _ROT].reshape(-1, 22, 6))
+            delta = _matrix_to_axis_angle(rotations @ np.swapaxes(ref_r, -1, -2))
+            relative = (
+                np.max(np.linalg.norm(delta[:, joints], axis=-1), axis=0)
+                if joints else np.array([0.0])
+            )
+            activity = np.maximum(activity, relative)
         metric = float(np.min(activity))
         detail = f"minimum chain activity {metric:.3f}"
     else:
@@ -360,24 +465,62 @@ def validate_semantics(clip: np.ndarray, spec: MotionSpec) -> dict:
             "detail": detail}
 
 
-def verify_applied_motion(window: np.ndarray, report: dict, bank: MotionBank | None = None) -> dict:
+def verify_applied_motion(
+    window: np.ndarray,
+    report: dict,
+    bank: MotionBank | None = None,
+    *,
+    reference: np.ndarray | None = None,
+) -> dict:
     bank = bank or default_motion_bank()
     spec = bank.resolve(report["id"])
     start, end = (int(x) for x in report["action_range"])
     start = max(0, min(start, window.shape[0] - 1))
     end = max(start + 1, min(end, window.shape[0]))
-    return validate_semantics(np.asarray(window[start:end], dtype=np.float32), spec)
+    ref = None
+    if reference is not None:
+        ref_window = np.asarray(reference, dtype=np.float32)
+        if ref_window.shape != window.shape:
+            raise ValueError(
+                f"verification reference must match window shape {window.shape}, got {ref_window.shape}"
+            )
+        ref = ref_window[start:end]
+    return validate_semantics(
+        np.asarray(window[start:end], dtype=np.float32),
+        spec,
+        reference=ref,
+    )
 
 
-def _target_event(n: int, beats: np.ndarray | None, anchor: str) -> int:
+def _target_event(
+    n: int,
+    beats: np.ndarray | None,
+    anchor: str,
+    *,
+    minimum: int = 0,
+    maximum: int | None = None,
+) -> int:
     ratios = {"start": 0.25, "early": 0.3, "center": 0.5, "beat": 0.5, "late": 0.7, "end": 0.75}
     target = int(round((n - 1) * ratios.get(str(anchor).lower(), 0.5)))
+    lo = int(np.clip(minimum, 0, max(0, n - 1)))
+    hi = int(np.clip(n - 1 if maximum is None else maximum, lo, max(lo, n - 1)))
     if beats is not None:
         valid = np.asarray(beats, dtype=float)
         valid = valid[(valid >= 0) & (valid < n)]
         if valid.size:
-            target = int(round(valid[np.argmin(np.abs(valid - target))]))
-    return int(np.clip(target, 0, n - 1))
+            feasible = valid[(valid >= lo) & (valid <= hi)]
+            candidates = feasible if feasible.size else valid
+            target = int(round(candidates[np.argmin(np.abs(candidates - target))]))
+    return int(np.clip(target, lo, hi))
+
+
+def _beat_error(target: int, beats: np.ndarray | None, n: int) -> float | None:
+    if beats is None:
+        return None
+    valid = np.asarray(beats, dtype=float)
+    if not valid.size:
+        return None
+    return float(np.min(np.abs(valid - int(target))))
 
 
 def _join_tail(n: int) -> int:
@@ -385,7 +528,79 @@ def _join_tail(n: int) -> int:
     return int(min(8, max(0, int(n) // 8)))
 
 
-def _beat_locked_length(natural: int, n: int, beats: np.ndarray | None) -> int:
+def _action_local_event(action_frames: int, event: int, action_len: int) -> int:
+    ratio = float(np.clip(event / max(1, action_frames - 1), 0.0, 1.0))
+    return int(round(ratio * max(0, action_len - 1)))
+
+
+def _action_placement(
+    n: int,
+    action_len: int,
+    local_event: int,
+    target_event: int,
+) -> tuple[int, int, int, int]:
+    action_len = int(np.clip(action_len, 1, n))
+    local_event = int(np.clip(local_event, 0, action_len - 1))
+    latest = max(0, n - action_len - _join_tail(n))
+    start = int(np.clip(target_event - local_event, 0, latest))
+    end = start + action_len
+    local_event = int(np.clip(target_event - start, 0, action_len - 1))
+    return start, end, start + local_event, local_event
+
+
+def _insertion_host(
+    base: np.ndarray,
+    start: int,
+    end: int,
+    target_event: int,
+    local_event: int,
+) -> np.ndarray:
+    """Time-warp the host around a fixed-duration insertion without freezing its other joints.
+
+    The total song length cannot grow, so insertion necessarily makes time somewhere. The host
+    keeps moving through the action at 75% speed while its prefix and suffix are compressed just
+    enough to keep both window endpoints unchanged. All source frames remain represented in order,
+    and the named action is then layered onto this continuous host rather than replacing it.
+    """
+    n = int(base.shape[0])
+    action_len = int(end - start)
+    source_intervals = int(np.clip(
+        round(max(1, action_len - 1) * _INSERT_HOST_RATE),
+        1,
+        max(1, n - 1),
+    ))
+    source_event = int(round(
+        local_event * source_intervals / max(1, action_len - 1),
+    ))
+    source_start = int(np.clip(
+        target_event - source_event,
+        0,
+        max(0, n - 1 - source_intervals),
+    ))
+    source_end = source_start + source_intervals
+    source_event = int(np.clip(target_event - source_start, 0, source_intervals))
+
+    prefix = retime(base[:source_start + 1], start + 1)
+    action_host = _fit_event(
+        base[source_start:source_end + 1],
+        source_event,
+        action_len,
+        local_event,
+    )
+    suffix = retime(base[source_end:], n - end + 1)
+    host = np.concatenate([prefix[:-1], action_host, suffix[1:]], axis=0)
+    if host.shape[0] != n:
+        raise RuntimeError(f"insertion host changed frame count: expected {n}, got {host.shape[0]}")
+    return np.ascontiguousarray(host, dtype=np.float32)
+
+
+def _beat_locked_length(
+    natural: int,
+    n: int,
+    beats: np.ndarray | None,
+    *,
+    recommended_beats: float | None = None,
+) -> int:
     """How many frames the action gets: its authored duration, snapped to a whole number of beats.
 
     The window says *where* an action goes, not how fast it runs. Retiming the clip to the whole
@@ -409,10 +624,188 @@ def _beat_locked_length(natural: int, n: int, beats: np.ndarray | None) -> int:
     period = float(np.median(np.diff(b)))
     if not np.isfinite(period) or period < 1.0:
         return int(min(natural, room))
-    whole = max(1, int(round(natural / period)))
-    while whole > 1 and int(round(whole * period)) > room:
-        whole -= 1
-    return int(np.clip(int(round(whole * period)), 1, room))
+    if recommended_beats is None:
+        beats_wide = max(1.0, float(round(natural / period)))
+    else:
+        beats_wide = max(0.25, float(recommended_beats))
+    fitted = int(round(beats_wide * period))
+    while beats_wide > 1.0 and fitted > room:
+        beats_wide -= 1.0
+        fitted = int(round(beats_wide * period))
+    return int(np.clip(fitted, 1, room))
+
+
+def _composition_envelope(n: int, event: int, blend_frames: int) -> np.ndarray:
+    """Weight of the named action inside its slot, pinned to the host dance at both ends."""
+    n = int(n)
+    if n <= 1:
+        return np.ones(n, dtype=np.float32)
+    event = int(np.clip(event, 0, n - 1))
+    width = int(max(1, min(blend_frames, event, n - 1 - event)))
+    weight = np.ones(n, dtype=np.float32)
+    ramp = np.linspace(0.0, 1.0, width + 1, dtype=np.float32)
+    ramp = 3.0 * ramp ** 2 - 2.0 * ramp ** 3
+    weight[:width + 1] = ramp
+    weight[n - 1 - width:] = np.minimum(weight[n - 1 - width:], ramp[::-1])
+    return weight
+
+
+def _fractional_rotation(delta: np.ndarray, weight: np.ndarray) -> np.ndarray:
+    aa = _matrix_to_axis_angle(delta)
+    return _axis_angle_to_matrix(aa * np.asarray(weight, dtype=np.float32)[..., None])
+
+
+def _rotate_translation_into_facing(
+    delta: np.ndarray,
+    action: np.ndarray,
+    base_frame: np.ndarray,
+) -> np.ndarray:
+    """Rotate canonical X/Y travel into the direction the host dancer currently faces."""
+    action_yaw = float(_root_yaw_series(action[:1])[0])
+    base_yaw = float(_root_yaw_series(base_frame[None, :])[0])
+    angle = base_yaw - action_yaw
+    c, s = float(np.cos(angle)), float(np.sin(angle))
+    out = np.asarray(delta, dtype=np.float32).copy()
+    x, y = out[:, 0].copy(), out[:, 1].copy()
+    out[:, 0] = c * x - s * y
+    out[:, 1] = s * x + c * y
+    return out
+
+
+def _yaw_rotation(angle: np.ndarray | float) -> np.ndarray:
+    """Rotation matrix for a world-up yaw, preserving any leading angle dimensions."""
+    angle = np.asarray(angle, dtype=np.float32)
+    flat = angle.reshape(-1)
+    cos, sin = np.cos(flat), np.sin(flat)
+    spin = np.zeros((flat.size, 3, 3), dtype=np.float32)
+    spin[:, 0, 0], spin[:, 0, 1] = cos, -sin
+    spin[:, 1, 0], spin[:, 1, 1] = sin, cos
+    spin[:, 2, 2] = 1.0
+    return spin.reshape(angle.shape + (3, 3))
+
+
+def _compose_beat_locked(
+    base: np.ndarray,
+    action: np.ndarray,
+    event: int,
+    target_event: int,
+    action_len: int,
+    spec: MotionSpec,
+    *,
+    blend_frames: int,
+) -> tuple[np.ndarray, list[int], int]:
+    """Layer the named action onto the host instead of replacing its entire choreography.
+
+    Canonical clips share one ready stance. Replacing all 22 joints with that stance erased the
+    song's groove, footwork, contacts, and body style for the duration of every named action. A
+    clap changed 152 foot-contact bits and made non-arm velocity correlation fall to 0.09 even
+    though no leg or root motion was requested. Composition metadata now states exactly which
+    joints and root channels each action owns; everything else remains bit-identical to the host.
+    """
+    n = int(base.shape[0])
+    action_len = int(np.clip(action_len, 1, n))
+    local_event = _action_local_event(action.shape[0], event, action_len)
+    start, end, actual_event, local_event = _action_placement(
+        n, action_len, local_event, target_event,
+    )
+
+    fitted = _fit_event(action, event, action_len, local_event)
+    host = base[start:end]
+    out = base.copy()
+    weight = _composition_envelope(action_len, local_event, blend_frames)
+    base_r = _sixd_to_matrix(host[:, _ROT].reshape(action_len, 22, 6))
+    action_r = _sixd_to_matrix(fitted[:, _ROT].reshape(action_len, 22, 6))
+    composed = base_r.copy()
+
+    if spec.absolute_joints:
+        joints = np.asarray(spec.absolute_joints, dtype=np.int64)
+        absolute_r = action_r
+        if spec.event_pose_joints:
+            absolute_r = action_r.copy()
+            event_pose = action_r[local_event]
+            for joint in spec.event_pose_joints:
+                absolute_r[:, joint] = event_pose[joint]
+        offset = absolute_r[:, joints] @ np.swapaxes(base_r[:, joints], -1, -2)
+        composed[:, joints] = _fractional_rotation(
+            offset, weight[:, None],
+        ) @ base_r[:, joints]
+
+    if spec.additive_joints:
+        reference = action_r[:1]
+        for joint in spec.additive_joints:
+            if joint == 0:
+                root_weight = weight
+                if spec.carry_root_rotation:
+                    width = int(max(1, min(blend_frames, local_event)))
+                    root_weight = np.ones(action_len, dtype=np.float32)
+                    ramp = np.linspace(0.0, 1.0, width + 1, dtype=np.float32)
+                    root_weight[:width + 1] = 3.0 * ramp ** 2 - 2.0 * ramp ** 3
+                    # A named turn owns yaw. Adding its yaw to every host frame lets an
+                    # opposite host turn cancel it, so the requested quarter turn can arrive as
+                    # only 62 degrees. Preserve the host's tilt, but drive its world yaw from the
+                    # heading at which the action began.
+                    action_yaw = _root_yaw_series(fitted)
+                    host_yaw = _root_yaw_series(host)
+                    yaw_delta = action_yaw - action_yaw[0]
+                    desired = host_yaw[0] + root_weight * yaw_delta
+                    composed[:, 0] = _yaw_rotation(desired - host_yaw) @ base_r[:, 0]
+                    if end < n:
+                        suffix = _sixd_to_matrix(out[end:, _ROOT].reshape(-1, 6))
+                        carry_yaw = float(desired[-1] - host_yaw[-1])
+                        out[end:, _ROOT] = _matrix_to_sixd(
+                            _yaw_rotation(carry_yaw) @ suffix
+                        ).reshape(-1, 6)
+                else:
+                    delta = action_r[:, 0] @ np.swapaxes(reference[:, 0], -1, -2)
+                    composed[:, 0] = _fractional_rotation(delta, root_weight) @ base_r[:, 0]
+            else:
+                delta = np.swapaxes(reference[:, joint], -1, -2) @ action_r[:, joint]
+                composed[:, joint] = base_r[:, joint] @ _fractional_rotation(delta, weight)
+
+    composed_6d = _matrix_to_sixd(composed)
+    owned_joints = sorted(set(spec.absolute_joints) | set(spec.additive_joints))
+    for joint in owned_joints:
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        out[start:end, channels] = composed_6d[:, joint]
+
+    if spec.translation_axes:
+        canonical = fitted[:, :3] - fitted[:1, :3]
+        selected = np.zeros_like(canonical)
+        selected[:, list(spec.translation_axes)] = canonical[:, list(spec.translation_axes)]
+        selected = _rotate_translation_into_facing(selected, fitted, host[0])
+        translated = host[:, :3].copy()
+
+        planar = [axis for axis in spec.translation_axes if axis < 2]
+        if len(planar) == 2:
+            translated[:, :2] = host[0, :2] + selected[:, :2]
+        elif len(planar) == 1:
+            action_yaw = float(_root_yaw_series(fitted[:1])[0])
+            base_yaw = float(_root_yaw_series(host[:1])[0])
+            angle = base_yaw - action_yaw
+            canonical_axis = np.zeros(2, dtype=np.float32)
+            canonical_axis[planar[0]] = 1.0
+            c, s = float(np.cos(angle)), float(np.sin(angle))
+            basis = np.array(
+                [c * canonical_axis[0] - s * canonical_axis[1],
+                 s * canonical_axis[0] + c * canonical_axis[1]],
+                dtype=np.float32,
+            )
+            host_delta = host[:, :2] - host[:1, :2]
+            host_owned = (host_delta @ basis)[:, None] * basis[None, :]
+            translated[:, :2] = host[:, :2] - host_owned + selected[:, :2]
+        if 2 in spec.translation_axes:
+            translated[:, 2] = host[0, 2] + selected[:, 2]
+
+        out[start:end, :3] = translated
+        if end < n:
+            residual = translated[-1] - host[-1, :3]
+            if float(np.linalg.norm(residual)) > 1e-6:
+                out[end:, :3] = base[end:, :3] + residual
+
+    if spec.replace_contacts:
+        out[start:end, _CONTACT] = fitted[:, _CONTACT]
+
+    return np.ascontiguousarray(out, dtype=np.float32), [start, end], actual_event
 
 
 def _replace_beat_locked(
@@ -492,10 +885,7 @@ def _yaw_rotate(clip: np.ndarray, angle: np.ndarray | float, pivot: np.ndarray) 
     ang = np.broadcast_to(np.asarray(angle, dtype=np.float32), (n,))
     cos, sin = np.cos(ang), np.sin(ang)
     out = clip.copy()
-    spin = np.zeros((n, 3, 3), dtype=np.float32)
-    spin[:, 0, 0], spin[:, 0, 1] = cos, -sin
-    spin[:, 1, 0], spin[:, 1, 1] = sin, cos
-    spin[:, 2, 2] = 1.0
+    spin = _yaw_rotation(ang)
     root = _sixd_to_matrix(np.asarray(out[:, _ROOT], dtype=np.float32).reshape(-1, 6))
     out[:, _ROOT] = _matrix_to_sixd(spin @ root).reshape(n, 6)
     rel = out[:, :3] - np.asarray(pivot, dtype=np.float32)
@@ -530,7 +920,12 @@ def _closing_ramp(n: int, tail: int) -> np.ndarray:
     return ramp
 
 
-def _close_root_residual(clip: np.ndarray, base: np.ndarray) -> np.ndarray:
+def _close_root_residual(
+    clip: np.ndarray,
+    base: np.ndarray,
+    *,
+    earliest: int = 0,
+) -> np.ndarray:
     """Land the root where the surrounding dance expects it, using the window's own tail.
 
     The splice pins the window's edges back to the song, so a motion that ends somewhere
@@ -553,18 +948,17 @@ def _close_root_residual(clip: np.ndarray, base: np.ndarray) -> np.ndarray:
         key=lambda d: abs(d) * (0.6 if turning and (d > 0) == (turning > 0) else 1.0),
     )
 
-    tail = _closing_frames(yaw_gap, trans_gap, n)
+    available = max(0, n - 1 - int(np.clip(earliest, 0, n - 1)))
+    tail = min(_closing_frames(yaw_gap, trans_gap, n), available)
     if tail < 2:
         return clip
-    # Turning the root moves it, so the distance still owed is only known after the spin.
-    for _ in range(3):
-        ramp = _closing_ramp(n, tail)
-        out = _yaw_rotate(clip, ramp * yaw_gap, clip[n - 1 - tail, :3].copy())
-        trans_gap = np.asarray(base[-1, :3], dtype=np.float32) - out[-1, :3]
-        need = _closing_frames(yaw_gap, trans_gap, n)
-        if need <= tail:
-            break
-        tail = need
+    ramp = _closing_ramp(n, tail)
+    out = clip.copy()
+    if abs(yaw_gap) > 1e-4:
+        root = _sixd_to_matrix(np.asarray(out[:, _ROOT], dtype=np.float32).reshape(-1, 6))
+        out[:, _ROOT] = _matrix_to_sixd(
+            _yaw_rotation(ramp * yaw_gap) @ root
+        ).reshape(n, 6)
     out[:, :3] += ramp[:, None] * trans_gap[None, :]
     return np.ascontiguousarray(out, dtype=np.float32)
 

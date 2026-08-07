@@ -41,6 +41,15 @@ def _rotation_layout_score(values: np.ndarray) -> float:
     return float(np.mean(np.abs(na - 1.0) + np.abs(nb - 1.0) + np.abs(dot)))
 
 
+def _is_native_finedance139(motion: np.ndarray) -> bool:
+    """Whether a 139-channel array uses LODGE/FineDance's contact-first, Y-up layout."""
+    start_contact = _looks_like_contact(motion[:, :4])
+    end_contact = _looks_like_contact(motion[:, 135:139])
+    native_score = _rotation_layout_score(motion[:, 7:139])
+    agent_score = _rotation_layout_score(motion[:, 3:135])
+    return bool(start_contact and (not end_contact or native_score + 1e-4 < agent_score))
+
+
 def to_agentlodge139(motion: np.ndarray) -> np.ndarray:
     """Normalize a 139-dim motion to AgentLODGE layout ``[trans(3) | rot(132) | contact(4)]``.
 
@@ -52,16 +61,32 @@ def to_agentlodge139(motion: np.ndarray) -> np.ndarray:
     if motion.shape[-1] != 139:
         raise ValueError(f"Expected motion with 139 dims, got {motion.shape[-1]}")
     motion = motion.astype(np.float32)
-    start_contact = _looks_like_contact(motion[:, :4])
-    end_contact = _looks_like_contact(motion[:, 135:139])
-    native_score = _rotation_layout_score(motion[:, 7:139])
-    agent_score = _rotation_layout_score(motion[:, 3:135])
-    if start_contact and (not end_contact or native_score + 1e-4 < agent_score):
+    if _is_native_finedance139(motion):
         # native [contact(4) | trans(3) | rot(132)] -> [trans(3) | rot(132) | contact(4)]
         return np.concatenate(
             [motion[:, 4:7], motion[:, 7:139], motion[:, 0:4]], axis=1
         ).astype(np.float32)
     return motion
+
+
+def to_editor139(motion: np.ndarray) -> np.ndarray:
+    """Normalize EDGE or LODGE output to the editor's contact-last, Z-up 139 layout.
+
+    ``ensure_lodge139`` only normalizes channel count. Raw LODGE output is still contact-first
+    and Y-up after that call, which is renderable because the renderer auto-detects its layout but
+    is not editable: the editor interprets four contacts as root translation and shifts every
+    rotation by four channels. That stayed hidden until a Z-up canonical motion was mixed into a
+    LODGE window. Normalize both the channel order and frame convention at the system boundary.
+    """
+    m = ensure_lodge139(np.asarray(motion))
+    native = _is_native_finedance139(m)
+    out = to_agentlodge139(m)
+    if native:
+        # Lazy import avoids making the lightweight format module own transition dependencies.
+        from agentlodge.dance.transition import to_zup
+
+        out = to_zup(out)
+    return np.ascontiguousarray(out, dtype=np.float32)
 
 
 def to_native_finedance139(motion: np.ndarray) -> np.ndarray:
@@ -73,11 +98,7 @@ def to_native_finedance139(motion: np.ndarray) -> np.ndarray:
     if motion.shape[-1] != 139:
         raise ValueError(f"Expected motion with 139 dims, got {motion.shape[-1]}")
     motion = motion.astype(np.float32)
-    start_contact = _looks_like_contact(motion[:, :4])
-    end_contact = _looks_like_contact(motion[:, 135:139])
-    native_score = _rotation_layout_score(motion[:, 7:139])
-    agent_score = _rotation_layout_score(motion[:, 3:135])
-    if end_contact and (not start_contact or agent_score <= native_score + 1e-4):
+    if not _is_native_finedance139(motion):
         return np.concatenate(
             [motion[:, 135:139], motion[:, :3], motion[:, 3:135]],
             axis=1,

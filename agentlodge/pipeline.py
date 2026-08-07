@@ -17,7 +17,7 @@ from agentlodge.agent.costume_describer import describe_costume
 from agentlodge.agent.selector import SelectionResult, select_dance
 from agentlodge.audio.preprocess import PreprocessedAudio, preprocess_audio, release_torch_memory
 from agentlodge.config import FPS, Settings
-from agentlodge.dance.format import ensure_lodge139
+from agentlodge.dance.format import to_editor139
 from agentlodge.dance.best_of_k import best_of_k_job as _best_of_k_job
 from agentlodge.dance.hybrid import build_hybrid, _merge_runs
 from agentlodge.audio.structure import analyze_structure
@@ -497,7 +497,9 @@ def run_pipeline(
             selected_motion = edge_out.motion if lodge_out.motion is None else lodge_out.motion
             selected_model = "edge" if lodge_out.motion is None else "lodge"
 
-    selected_139 = ensure_lodge139(selected_motion)
+    # Persist one canonical format no matter which backbone won. The renderer can auto-detect raw
+    # LODGE contact-first/Y-up arrays, but the editor cannot compose a Z-up named motion into them.
+    selected_139 = to_editor139(selected_motion)
     motion_path = out_dir / "selected_dance.npy"
     np.save(motion_path, selected_139)
 

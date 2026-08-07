@@ -22,6 +22,11 @@ backward steps, quarter and half turns, body roll, crouch or drop, and rise or r
 - clip path, frame rate, frame count, and semantic event frame;
 - mirror and repeat capabilities;
 - stationary or traveling behavior;
+- a declared musical duration (`recommended_beats`);
+- composition ownership: absolute and additive joints, translation axes, contacts, and whether a
+  turn carries its root heading into the suffix;
+- optional event-pose joints that take the shortest path to the beat pose instead of replaying a
+  long authored wind-up after beat compression;
 - source, license, and attribution;
 - a declarative semantic validator contract.
 
@@ -31,23 +36,35 @@ The offline planner resolves aliases from the manifest, and the LLM receives the
 ## Timing semantics
 
 Replacement is the default interpretation for ordinary wording such as "add a clap here". The
-action plays at *its own authored speed*, snapped to a whole number of beats, and only the frames
-it actually occupies are replaced — everything else in the window stays the song's own
-choreography. Its semantic event is aligned to a nearby music beat, and the foreign clip is joined
-with two-sided seam handling.
+action plays for its declared `recommended_beats`, and only the joints and root channels listed in
+its composition metadata are layered onto the host — everything else stays the song's own
+choreography. The authored clip's frame count defines the *shape* of the action; its recommended
+beats define playback duration. Its semantic event is aligned to a nearby music beat.
 
 The action's duration is deliberately not a function of the selection. Retiming the clip to fill
 whatever interval the user happened to drag makes its speed an accident of the gesture that
 selected it: a 1.5 s clap dropped on a 4 s selection played at 0.4x, smeared across nearly eight
-beats, and read as slow motion fighting the song rather than as dancing with it. Measured against
-the song's own beat alignment across eight window positions and all twenty motions, playing each
-clip at its authored length left only 2/20 motions below the groove the song was already in,
-against 5/20 when the clip was stretched to the window.
+beats, and read as slow motion fighting the song rather than as dancing with it. At a 15-frame
+beat, a one-beat clap is therefore 15 frames even though its canonical source contains 45 frames.
+This is intentional retiming to the music contract, not truncation.
+
+Retiming every authored in-between pose is still wrong for a one-beat pose accent. The source clips
+begin from a shared ready stance, so compressing a full overhead-clap, punch, or arm-raise wind-up
+into 15 frames makes the host visit poses that belong to the source actor, not to the dance being
+edited. `event_pose_joints` identifies joints whose only contract is the pose on the beat. They
+travel directly from the host pose to that event pose and back under the composition envelope.
+Joints with meaningful internal timing retain the clip trajectory: the hand oscillation of a wave,
+the three contacts of a repeated clap, and the root and leg phases of jumps and level changes.
 
 Beat-locking never fills the window to its last frame. A few frames of real dance are always kept
 after the action for the hand-back to fade into; when an action finished two frames from the edge
 the whole pose difference had to be closed inside those two frames and the dancer was flung at
 nearly six times any speed in the song. Dropping a beat from the gesture is far cheaper than that.
+The bank receives the complete beat grid re-expressed relative to the selection, not only beats
+inside it. A short selection with one visible beat therefore still knows the song's period, while
+a selection with no feasible beat reports a nonzero event error instead of claiming alignment.
+An absent or empty beat grid means the song has no usable timing map and does not fail an otherwise
+valid action; only a nonempty grid with no reachable beat is an alignment failure.
 
 Explicit wording such as "insert", "before", "after", or "between" selects fixed-duration
 in-window insertion. MAESTRO allocates part of the selected interval to the named action and fits
@@ -61,6 +78,32 @@ the original in-window prefix and suffix around it. This preserves:
 MAESTRO does not lengthen the global timeline for named-motion insertion because that would
 desynchronize the source audio, beat map, cached previews, and comparison renders.
 
+### Channel ownership
+
+Canonical clips all begin from one generic ready stance. Replacing the whole skeleton with that
+clip made a valid clap look wrong in the editor: for roughly three beats it erased the host's
+footwork, root path, contacts, torso rhythm, and style before returning to the song. The hands did
+meet, but the dancer abandoned the choreography to do it. On the exact rejected TRS edit, non-arm
+velocity correlation fell to `0.09`, the root moved `0.169 m`, and 152 contact bits changed.
+
+Composition metadata makes the ownership explicit:
+
+- arm gestures own only their relevant collar, shoulder, elbow, and wrist chains, with limited
+  additive torso response where needed;
+- jumps own the whole-body jump delta, vertical translation, and contacts;
+- steps own the leg chains, their declared travel axis, contacts, and selected counter-motion;
+- turns own root yaw, leg chains, selected counter-motion, and carry the heading into the suffix;
+- undeclared joints remain byte-identical, contacts change only when declared, and root
+  translation changes only on declared axes.
+
+The bank composes once. `run_agent_edit` must not treat the result as foreign generated motion and
+send it through `splice_window` again; that second splice was changing the already-composed root
+and contacts a second time. Temporal transforms run before the bank so its action range and event
+metadata describe the final window. The remaining outer boundary crossfade is capped separately on
+each side at the action range: it may blend the host into the surrounding song, but it may never
+overlap and dilute the semantic pose. This matters on a 30-frame selection, where a symmetric
+15-frame crossfade otherwise covers every frame and can open a valid clap back to `0.47 m`.
+
 ### Closing the window
 
 Whatever the dancer does inside the window, the next window begins where the song left off: the
@@ -69,7 +112,8 @@ motion still owes at the last frame — a facing, a position, a height — is th
 the crossfade over a handful of blend frames. A half turn used to unwind 180 degrees in a quarter
 of a second, peaking at 55 rad/s against the song's own 8.9.
 
-`apply()` closes that debt itself, easing the root back over a tail inside the window sized to the
+`apply()` closes that debt itself, easing the root back *after the action* over a tail inside the
+window sized to the
 offset and to rates a dancer could actually hold (2.5 rad/s turning, 1.0 m/s travelling, 0.6 m/s
 lifting, allowing for a smoothstep peaking at 1.5x its average). A turn is *continued* into a full
 revolution whenever that is no further than reversing it, because a dancer finishes a spin rather
@@ -128,13 +172,23 @@ the root closes back. `vertical_peak` already worked this way for jumps, which l
 off. Reading a turn out of a spliced window as `yaw change 0.000` is what made the agent tell users
 it "couldn't fully satisfy" a spin it had placed perfectly.
 
-The final spliced result is checked again after temporal fitting and seam handling. Unknown or
+The final spliced result is checked again after temporal fitting and seam handling. A beat-anchored
+named action is graded by its event-to-nearest-beat error (at most half a frame), not by whole-window
+BAS: one correctly timed clap can change unrelated velocity peaks and lower an aggregate score even
+though the clap itself landed exactly on the beat. Unknown or
 unsupported actions fail visibly. They never silently select another motion or report success while
 keeping the original. Capabilities are the one exception: a request to repeat or mirror an action
 whose manifest entry does not allow it is dropped, the action plays once as authored, and the step
 note says so — failing the whole edit would hand back an unchanged window, which serves the user
 worse than the nearest valid edit. The planner is told which motions accept `repeats` and `mirror`
 so it can choose a better one, but the degradation is what makes it safe when it does not.
+
+That BAS exception applies only when "on the beat" anchors the named event. An explicit compound
+request such as "add a clap, then make the rest of the window more on beat" retains its whole-window
+BAS goal and is verified separately. Likewise, composed `joint_activity` and
+`articulation_chain` validators consider rotation relative to the host as well as absolute rotation.
+An arbitrary host pose can cancel an absolute joint angle even when the final FK geometry clearly
+depicts the requested point or punch; validation must not reject the visible action for that.
 
 Three posture invariants are enforced for every canonical clip, independently of the per-action
 validators:
@@ -184,10 +238,11 @@ magnitude check:
   finishes on the stance the splice hands over on.
 
 Judge posture in the **dancer's own frame**, never world Z. The host dance leans and twists the
-torso, so reading "hands above the shoulders" off the world vertical charges that lean to the
-clip: the same bit-identical spliced arm pose measured anywhere from -0.14 to +0.26 m depending
-only on what the song was doing, which looks exactly like the splice having broken the clap. This
-is the same error as grading a spliced clip's speed against the song's own.
+torso, so reading "hands above the shoulders" off world vertical charges that lean to the clip.
+The relevant upright for an inherited arm pose is the upper-torso frame from chest to shoulder
+girdle, not a pelvis-to-neck axis that can point diagonally across a crouched host. The same
+bit-identical spliced arm pose otherwise measured as though it changed height from window to
+window. This is the same error as grading a spliced clip's speed against the song's own.
 
 The generic version of this trap: an elbow at shoulder height is correct for an *extended* arm
 (a punch, a side point, a reach) and wrong only for a *folded* one. A check that ignores the
@@ -227,6 +282,19 @@ and travelling a metre each way — so the bank is also exercised against what t
 generates. Regenerate it with `scripts/make_lodge_test_fixture.py`, which synthesises the click track,
 extracts librosa features and runs `run_lodge_inference.py` against the FineDance checkpoints on
 the pod. The track is synthesised rather than sampled so the fixture carries no licence.
+
+The fixture is raw LODGE data: `[contacts(4) | translation(3) | rotations(132)]`, Y-up. The editor
+uses `[translation(3) | rotations(132) | contacts(4)]`, Z-up. The renderer auto-detected both,
+which masked the boundary bug; the editor did not, so it interpreted contacts as root translation
+and shifted every rotation channel. `to_editor139` is now the canonical boundary for persisted
+generation output, session loading, direct editor calls, and tests.
+
+For visual review of the composed path, `scripts/scratch/review_composed_bank.py` produces one
+before/after sheet per action on the exact live TRS dance, while
+`scripts/scratch/render_composed_bank_video.py` renders all twenty at real 30 FPS in front and side
+views. Static sheets establish posture and channel ownership; the playback reel establishes timing
+and continuity. Both use one camera anchored at the action start rather than recentering every
+frame, so jumps, drops, and locomotion remain visible instead of being erased by the audit view.
 
 ## Frame conventions
 

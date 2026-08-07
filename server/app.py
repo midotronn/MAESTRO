@@ -189,7 +189,9 @@ def _load_session(sid: str) -> EditSession:
     motion_p, beats_p = d / "base_motion.npy", d / "beats.npy"
     if not motion_p.exists():
         raise HTTPException(404, f"song {sid!r} has no base_motion.npy")
-    motion = np.load(motion_p).astype(np.float32)
+    from agentlodge.dance.format import to_editor139
+
+    motion = to_editor139(np.load(motion_p))
     beats = np.load(beats_p).astype(np.float32) if beats_p.exists() else None
     generator, gkind = _make_generator(sid, d)
     assets = SongAssets(sid=sid, beats=beats, fps=FPS)

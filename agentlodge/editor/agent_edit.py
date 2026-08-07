@@ -169,13 +169,18 @@ def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
         mirror = False
         dropped.append("mirroring")
     out, report = bank.apply(
-        clip, motion_id, beats=ctx.get("wbeats"), mode=mode, anchor=anchor,
+        clip, motion_id, beats=ctx.get("bank_beats", ctx.get("wbeats")),
+        mode=mode, anchor=anchor,
         mirror=bool(mirror), intensity=float(intensity), repeats=int(repeats),
         blend_frames=int(ctx.get("blend_frames", 8)),
     )
     report["dropped"] = dropped
     ctx["_motion_bank_report"] = report
-    ctx["_foreign_motion"] = True
+    # The bank now layers only the channels the named action owns onto this exact host window.
+    # It is therefore an edit of the original choreography, not a foreign generated segment that
+    # needs to be chained a second time through ``splice_window``. The old double-splice changed
+    # root motion and contacts again after composition and was the path the static bank tests missed.
+    ctx["_foreign_motion"] = False
     note = (
         f"placed {report['name']} as a {report['mode']} edit, aligned at frame "
         f"{report['event_frame']} ({report['source']}, {report['license']})"
@@ -313,6 +318,37 @@ def _requested_metrics(instruction: str) -> list[tuple[str, str, str]]:
     return [(m, d, lbl) for m, (d, lbl) in hits.items() if m not in conflict]
 
 
+def _explicit_window_beat_request(instruction: str) -> bool:
+    """Distinguish a whole-window timing request from merely placing an action on a beat."""
+    s = " " + normalize_name(instruction) + " "
+    if not any(word in s for word in (" beat ", " timing ", " rhythm ", " sync ")):
+        return False
+    scoped = (
+        " rest ",
+        " everything ",
+        " whole window ",
+        " entire window ",
+        " whole dance ",
+        " entire dance ",
+        " overall ",
+        " all the motion ",
+        " all of it ",
+    )
+    timing_action = (
+        " tighten ",
+        " tighter ",
+        " align ",
+        " lock ",
+        " sync ",
+        " put everything ",
+    )
+    compound = any(joiner in s for joiner in (" and ", " then ", " also "))
+    return any(phrase in s for phrase in scoped) or (
+        (compound or " window " in s)
+        and any(phrase in s for phrase in timing_action)
+    )
+
+
 def _verify_goals(goals, before: dict, after: dict) -> tuple[bool, list, str]:
     """Check every requested metric. ok only if NONE regressed and each improved-or-acceptably-held.
 
@@ -429,7 +465,39 @@ def _merge_goals(primary: list, secondary: list) -> list:
     return out
 
 
-def _smoothness_polish(win_cur, motion, a, b, goals, before, wbeats, blend_frames):
+def _bank_blend_frames(blend_frames: int, n: int, report: dict | None):
+    """Keep the outer editor crossfade outside the named action's semantic range."""
+    if report is None:
+        return int(blend_frames)
+    start, end = (int(x) for x in report.get("action_range", (0, n)))
+    start = int(np.clip(start, 0, n))
+    end = int(np.clip(end, start, n))
+    requested = int(max(0, blend_frames))
+    return min(requested, start), min(requested, n - end)
+
+
+def _crossfade_result(motion, a, b, window, blend_frames, bank_report=None):
+    return crossfade_edit(
+        motion,
+        a,
+        b,
+        window,
+        blend_frames=_bank_blend_frames(blend_frames, b - a, bank_report),
+    )
+
+
+def _smoothness_polish(
+    win_cur,
+    motion,
+    a,
+    b,
+    goals,
+    before,
+    wbeats,
+    blend_frames,
+    *,
+    bank_report=None,
+):
     """Quality guard: keep the edit from making the dance JITTERY without smoothing away the effect
     the user asked for. The beat time-warp and (for non-energy edits) the accentuate lever raise jerk
     as a side effect, so -- UNLESS the user asked for sharper (jerk up) -- apply the smallest light
@@ -438,9 +506,14 @@ def _smoothness_polish(win_cur, motion, a, b, goals, before, wbeats, blend_frame
     that ceiling is generous (bigger moves are legitimately jerkier), so the energy survives; when they
     did not, it is near baseline, so incidental jitter is removed. Returns (spliced, after, checks,
     note) or None when no polish is needed or none preserves the goals."""
+    # Named actions carry an exact event pose. Generic whole-window smoothing can open a clap or
+    # lower a jump while still satisfying an unrelated metric goal, so leave their quality warning
+    # visible rather than silently smoothing away the requested action.
+    if bank_report is not None:
+        return None
     if any(m == "jerk" and d == "up" for m, d, _lbl in goals):
         return None
-    spliced0 = crossfade_edit(motion, a, b, win_cur, blend_frames=blend_frames)
+    spliced0 = _crossfade_result(motion, a, b, win_cur, blend_frames)
     m0 = window_metrics(spliced0[a:b], wbeats)
     j0 = m0["jerk"]
     base_j = float(before.get("jerk", 0.0))
@@ -450,7 +523,7 @@ def _smoothness_polish(win_cur, motion, a, b, goals, before, wbeats, blend_frame
     chosen = None
     for amt in (0.06, 0.14, 0.24, 0.34):
         cand = temporal_smooth(win_cur, amt)
-        spl = crossfade_edit(motion, a, b, cand, blend_frames=blend_frames)
+        spl = _crossfade_result(motion, a, b, cand, blend_frames)
         m = window_metrics(spl[a:b], wbeats)
         ok, checks, _ = _verify_goals(goals, before, m) if goals else (True, [], "")
         if not ok:
@@ -556,10 +629,24 @@ def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
             "motion_id": bank_spec.id, "mode": mode, "anchor": anchor,
             "mirror": mirror_requested, "intensity": intensity, "repeats": repeats,
         }
+        steps = []
+        goals = []
+        if _explicit_window_beat_request(instruction):
+            steps.append(PlanStep(
+                "beat_align",
+                {"strength": 1.0},
+                "tighten the rest of the selected window onto the beats",
+            ))
+            goals.append(("bas", "up", METRIC_LABEL["bas"]))
+        steps.append(PlanStep(
+            "motion_bank",
+            params,
+            f"retrieve the named {bank_spec.name} action",
+        ))
         return AgentPlan(
             summary=f"{mode} {bank_spec.name.lower()} in the selected window",
-            steps=[PlanStep("motion_bank", params, f"retrieve the named {bank_spec.name} action")],
-            goals=[],
+            steps=steps,
+            goals=goals,
         )
 
     reqs = _requested_metrics(instruction)
@@ -789,11 +876,25 @@ def _plan_for_regen(plan: AgentPlan) -> AgentPlan:
     post-regenerate guarantee (:func:`_reach_goals_after_regen`) dials every declared metric onto the
     target from the FRESH clip, so an LLM-added lever step would only double-amplify. Non-lever steps
     (mirror/reverse) are kept. Plans without a regenerate are returned unchanged."""
-    if not any(s.tool == "regenerate" for s in plan.steps):
+    if (
+        not any(s.tool == "regenerate" for s in plan.steps)
+        or any(s.tool == "motion_bank" for s in plan.steps)
+    ):
         return plan
     kept = [s for s in plan.steps if s.tool not in _LEVER_TOOLS]
     if kept != plan.steps:
         plan.steps = kept
+    return plan
+
+
+def _normalize_plan(plan: AgentPlan) -> AgentPlan:
+    """Keep the named action last so its event metadata describes the final edited window."""
+    plan = _plan_for_regen(plan)
+    if any(step.tool == "motion_bank" for step in plan.steps):
+        plan.steps = (
+            [step for step in plan.steps if step.tool != "motion_bank"]
+            + [step for step in plan.steps if step.tool == "motion_bank"]
+        )
     return plan
 
 
@@ -917,24 +1018,41 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
             except Exception:  # noqa: BLE001
                 pass
 
-    motion = np.ascontiguousarray(motion, dtype=np.float32)
+    from agentlodge.dance.format import to_editor139
+
+    motion = to_editor139(motion)
     L = int(motion.shape[0])
     a, b = int(a), int(b)
     if not (0 <= a < b <= L):
         raise ValueError(f"invalid window [{a}, {b}) for motion of length {L}")
     wbeats = _window_beats(beats, a, b)
+    beat_grid = None if beats is None else np.asarray(beats, dtype=float)
+    bank_beats = None if beat_grid is None or beat_grid.size == 0 else beat_grid - a
     base_clip = np.ascontiguousarray(motion[a:b], dtype=np.float32)
     before = window_metrics(base_clip, wbeats)
     a_sec, b_sec = a / 30.0, b / 30.0
-    ctx = {"wbeats": wbeats, "a": a, "b": b, "generator": generator, "context": context,
+    ctx = {"wbeats": wbeats, "bank_beats": bank_beats,
+           "a": a, "b": b, "generator": generator, "context": context,
            "blend_frames": blend_frames, "k": k, "base_metrics": before}
 
     # The planning agent DECLARES the goals it will be graded on (semantic reasoning over the request).
     # The deterministic keyword matcher is only a safety net: it contributes any obvious metric the
     # agent dropped, and is the sole source offline (no api key). Neither has to be exhaustive alone.
     plan = plan_edit(instruction, before, a_sec, b_sec, api_key=api_key)
-    goals = _merge_goals(list(plan.goals), _requested_metrics(instruction))
-    plan = _plan_for_regen(plan)                       # regenerate -> the guarantee dials the metrics
+    planner_goals = list(plan.goals)
+    goals = _merge_goals(planner_goals, _requested_metrics(instruction))
+    # A named action with anchor=beat has one explicit semantic hit to grade. Whole-window BAS asks
+    # whether *all* velocity accents in the selection resemble the beat grid; adding one correctly
+    # timed clap can lower that aggregate score by changing unrelated peaks, which made a valid clap
+    # report failure (0.528 -> 0.449). The bank report carries the actual event-to-beat error instead.
+    planner_declared_bas = any(goal[0] == "bas" for goal in planner_goals)
+    if (
+        any(s.tool == "motion_bank" and s.params.get("anchor") == "beat" for s in plan.steps)
+        and not planner_declared_bas
+        and not _explicit_window_beat_request(instruction)
+    ):
+        goals = [g for g in goals if g[0] != "bas"]
+    plan = _normalize_plan(plan)
     ctx["goals"] = goals                               # let regenerate rank seeds by the declared goals
     goals_json = [{"metric": m, "dir": d, "label": lbl} for m, d, lbl in goals]
 
@@ -957,7 +1075,9 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
     wants_new = any(s.tool in ("regenerate", "motion_bank") for s in plan.steps)
     if goals and not wants_new:
         ok0, checks0, _ = _verify_goals(goals, before, before)
-        best = (0.0, motion, before, ok0, True, True, checks0, 0, base_clip)   # (reward, spliced, after, ok, guard_ok, no_reg, checks, cycle, win_cur)
+        best = (
+            0.0, motion, before, ok0, True, True, checks0, 0, base_clip, None,
+        )  # reward, spliced, after, ok, guard_ok, no_reg, checks, cycle, win_cur, bank report
     else:
         best = None
 
@@ -968,7 +1088,14 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
         cur, step_log = _execute_plan(base_clip, plan, ctx, wbeats, cycle=cycle + 1, emit=_emit)
         # Post-regenerate guarantee: dial each goal metric onto the target on the SPLICED window so a
         # fresh take that merely held the metric is put on the user's target instead of being rejected.
-        if goals and any(s.get("tool") == "regenerate" and s.get("status") == "applied" for s in step_log):
+        if (
+            goals
+            and ctx.get("_motion_bank_report") is None
+            and any(
+                s.get("tool") == "regenerate" and s.get("status") == "applied"
+                for s in step_log
+            )
+        ):
             cur, reach_steps = _reach_goals_after_regen(cur, motion, a, b, goals, before, wbeats,
                                                         blend_frames, ctx)
             for rs in reach_steps:
@@ -981,10 +1108,18 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
         # not the raw edited clip. crossfade_edit blends the window's edges back toward its OWN original
         # boundary, so an unchanged edit is a true no-op (no phantom energy/BAS loss) and a real edit's
         # effect survives the splice -- unlike neighbour-snap splicing, which hid the earlier regression.
+        bank_report = ctx.get("_motion_bank_report")
         spliced_try = (
             splice_window(motion, a, b, cur, blend_frames=blend_frames)
             if ctx.get("_foreign_motion")
-            else crossfade_edit(motion, a, b, cur, blend_frames=blend_frames)
+            else _crossfade_result(
+                motion,
+                a,
+                b,
+                cur,
+                blend_frames,
+                bank_report=bank_report,
+            )
         )
         after = window_metrics(spliced_try[a:b], wbeats)
         if goals:
@@ -993,7 +1128,6 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
             no_reg = not any(c.get("status") == "regressed" for c in checks)
         else:
             ok, checks, verdict, reward, no_reg = True, [], "applied the planned edit", 0.0, True
-        bank_report = ctx.get("_motion_bank_report")
         bank_steps = [s for s in step_log if s.get("tool") == "motion_bank"]
         if bank_steps and bank_report is None:
             failure = bank_steps[-1].get("note", "named motion was not applied")
@@ -1005,24 +1139,34 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
             ok, no_reg = False, False
             verdict = failure
         elif bank_report is not None:
-            semantic = verify_applied_motion(spliced_try[a:b], bank_report)
+            semantic = verify_applied_motion(
+                spliced_try[a:b],
+                bank_report,
+                reference=base_clip,
+            )
+            beat_error = bank_report.get("beat_error_frames")
+            beat_ok = beat_error is None or float(beat_error) <= 0.51
+            semantic_ok = bool(semantic["ok"] and beat_ok)
+            detail = semantic["detail"]
+            if beat_error is not None:
+                detail += f", event {float(beat_error):.2f} frames from beat"
             semantic_check = {
                 "metric": "semantic",
                 "label": bank_report["name"],
                 "dir": "match",
                 "before": 0.0,
-                "after": 1.0 if semantic["ok"] else 0.0,
-                "status": "improved" if semantic["ok"] else "regressed",
-                "met": bool(semantic["ok"]),
-                "detail": semantic["detail"],
+                "after": 1.0 if semantic_ok else 0.0,
+                "status": "improved" if semantic_ok else "regressed",
+                "met": semantic_ok,
+                "detail": detail,
             }
             checks.append(semantic_check)
-            ok = ok and semantic["ok"]
-            no_reg = no_reg and semantic["ok"]
+            ok = ok and semantic_ok
+            no_reg = no_reg and semantic_ok
             verdict = (
-                f"verified {bank_report['name']}: {semantic['detail']}"
-                if semantic["ok"] else
-                f"{bank_report['name']} failed verification: {semantic['detail']}"
+                f"verified {bank_report['name']}: {detail}"
+                if semantic_ok else
+                f"{bank_report['name']} failed verification: {detail}"
             )
         # artifact guardrail: never make the window jittery / foot-skating, even off-goal. A
         # violation penalises the reward, keeps the loop refining toward a clean solution, and is
@@ -1039,10 +1183,21 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
                      "planner_note": plan.planner_note,
                      "steps": [{"tool": s.tool, "params": s.params, "why": s.why} for s in plan.steps]},
             "steps": step_log,
-            "verify": {"ok": ok, "checks": all_checks, "verdict": verdict},
+            "verify": {"ok": ok_full, "checks": all_checks, "verdict": verdict},
         })
         if best is None or _prefer(ok, guard_ok, no_reg, reward, best[3], best[4], best[5], best[0]):
-            best = (reward, spliced_try, after, ok, guard_ok, no_reg, all_checks, cycle + 1, cur)
+            best = (
+                reward,
+                spliced_try,
+                after,
+                ok,
+                guard_ok,
+                no_reg,
+                all_checks,
+                cycle + 1,
+                cur,
+                dict(bank_report) if bank_report is not None else None,
+            )
         if ok_full or cycle + 1 >= total_attempts:
             break
         # ---- refine: feed EVERY unmet metric back to the planner ----
@@ -1051,19 +1206,41 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
               "prev_steps": [{"tool": s.tool, "params": s.params} for s in plan.steps],
               "misses": misses, "cycle": cycle + 1}
         plan = plan_edit(instruction, after, a_sec, b_sec, api_key=api_key, feedback=fb, goals=goals)
-        plan = _plan_for_regen(plan)
+        plan = _normalize_plan(plan)
         _emit({"phase": "refine", "cycle": cycle + 2, "summary": plan.summary,
                "planner": plan.planner, "planner_note": plan.planner_note,
                "steps": [{"tool": s.tool, "why": s.why} for s in plan.steps]})
 
-    reward, spliced, after, ok, guard_ok, no_reg, checks, win_cycle, win_cur = best
+    (
+        reward,
+        spliced,
+        after,
+        semantic_ok,
+        guard_ok,
+        no_reg,
+        checks,
+        win_cycle,
+        win_cur,
+        best_bank_report,
+    ) = best
+    ok = semantic_ok
     n_attempts = len(trace["attempts"])
     kept_original = win_cycle == 0
 
     # Quality guard: unless the user asked for sharper, don't ship a jitterier dance than we started
     # with. Amplitude/beat-align edits raise jerk; pull it back toward baseline with a light smooth
     # that keeps every declared goal met. (No-op edits and goalless ops are skipped.)
-    polished = _smoothness_polish(win_cur, motion, a, b, goals, before, wbeats, blend_frames) \
+    polished = _smoothness_polish(
+        win_cur,
+        motion,
+        a,
+        b,
+        goals,
+        before,
+        wbeats,
+        blend_frames,
+        bank_report=best_bank_report,
+    ) \
         if (goals and not kept_original) else None
     if polished is not None:
         spliced, after, checks, pol_note = polished

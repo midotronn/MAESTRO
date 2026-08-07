@@ -20,7 +20,7 @@ from agentlodge.editor.motion_bank import (
     validate_semantics,
     verify_applied_motion,
 )
-from agentlodge.editor.window_edit import MockWindowGenerator
+from agentlodge.editor.window_edit import MockWindowGenerator, window_metrics
 
 
 def _base(n=240):
@@ -29,6 +29,8 @@ def _base(n=240):
 
 _TMPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                      "server", "data", "smplx_neu_J_1.npy")
+_LODGE_SAMPLE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "data", "lodge_sample_dance.npy")
 # The posture checks below need forward kinematics, which needs the licence-gated
 # SMPL-X joint template. It is fetched from the pod, so it is absent on a clean clone.
 needs_fk = pytest.mark.skipif(not os.path.exists(_TMPL),
@@ -104,14 +106,391 @@ def test_every_motion_supports_fixed_duration_insertion(motion_id):
     assert 0 < a < b < base.shape[0]
 
 
+def test_insertion_time_warps_the_host_instead_of_aliasing_replacement():
+    """Insert keeps the full timeline by making room around the action; replace leaves it alone."""
+    bank = default_motion_bank()
+    base = _base(180)
+    beats = np.arange(0, 180, 15)
+    replaced, replace_report = bank.apply(
+        base, "wave", mode="replace", anchor="early", beats=beats,
+    )
+    inserted, insert_report = bank.apply(
+        base, "wave", mode="insert", anchor="early", beats=beats,
+    )
+
+    assert replace_report["action_range"] == insert_report["action_range"]
+    assert replace_report["event_frame"] == insert_report["event_frame"]
+    assert not np.array_equal(inserted, replaced)
+    a, b = insert_report["action_range"]
+    assert np.array_equal(replaced[:a], base[:a])
+    assert np.array_equal(replaced[b:], base[b:])
+    assert not np.array_equal(inserted[:a], base[:a])
+    assert np.allclose(inserted[[0, -1]], base[[0, -1]], atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    "motion_id,mirrored_chain,original_only",
+    [
+        ("wave", (13, 16, 18, 20), (14, 17, 19, 21)),
+        ("point_side", (13, 16, 18, 20), (14, 17, 19, 21)),
+        ("arm_punch", (13, 16, 18, 20), (14, 19, 21)),
+    ],
+)
+def test_mirroring_moves_composition_ownership_to_the_other_side(
+    motion_id, mirrored_chain, original_only,
+):
+    """Mirroring the clip without mirroring its ownership silently discarded the left action."""
+    base = _base(180)
+    out, _ = default_motion_bank().apply(
+        base, motion_id, mirror=True, beats=np.arange(0, 180, 15), anchor="beat",
+    )
+    for joint in mirrored_chain:
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        assert not np.array_equal(out[:, channels], base[:, channels]), (motion_id, joint)
+    for joint in original_only:
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        assert np.array_equal(out[:, channels], base[:, channels]), (motion_id, joint)
+
+
+def test_an_unreachable_beat_reports_the_event_that_was_actually_placed():
+    """A beat beyond the last feasible action slot must not be reported as a zero-error hit."""
+    base = _base(180)
+    beats = np.array([179])
+    _out, report = default_motion_bank().apply(
+        base, "clap_single", beats=beats, anchor="beat",
+    )
+    a, b = report["action_range"]
+    event = report["event_frame"]
+    assert a < event < b - 1
+    assert report["beat_error_frames"] == pytest.approx(abs(179 - event))
+    assert report["beat_error_frames"] > 0.5
+
+    result = AE.run_agent_edit(
+        base, 0, len(base), "add a clap on the beat here", beats=beats, max_refine=0,
+    )
+    semantic = next(
+        check for check in result.trace["final"]["checks"] if check["metric"] == "semantic"
+    )
+    assert not semantic["met"]
+
+
+@pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
+def test_every_motion_changes_only_the_channels_declared_in_its_composition(motion_id):
+    """The named action owns a layer, not the whole dancer.
+
+    This is the architectural guard against the original clap failure: an arm gesture may not
+    rewrite legs, root travel, or contacts, while a jump or step may touch those channels only
+    because its manifest explicitly says so.
+    """
+    bank = default_motion_bank()
+    spec = bank.resolve(motion_id)
+    base = _base(180)
+    out, report = bank.apply(base, motion_id, beats=np.arange(0, 180, 15), anchor="beat")
+    a, b = report["action_range"]
+
+    owned = set(spec.absolute_joints) | set(spec.additive_joints)
+    for joint in set(range(22)) - owned:
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        assert np.array_equal(out[:, channels], base[:, channels]), (motion_id, joint)
+
+    if not spec.translation_axes:
+        assert np.array_equal(out[:, :3], base[:, :3]), motion_id
+    else:
+        if 2 not in spec.translation_axes:
+            assert np.array_equal(out[:, 2], base[:, 2]), motion_id
+        if not any(axis < 2 for axis in spec.translation_axes):
+            assert np.array_equal(out[:, :2], base[:, :2]), motion_id
+
+    if spec.replace_contacts:
+        assert np.array_equal(out[:a, 135:139], base[:a, 135:139]), motion_id
+        assert np.array_equal(out[b:, 135:139], base[b:, 135:139]), motion_id
+    else:
+        assert np.array_equal(out[:, 135:139], base[:, 135:139]), motion_id
+
+    assert report["beat_error_frames"] <= 0.5, motion_id
+    assert report["action_frames"] == round(spec.recommended_beats * 15), motion_id
+
+
+def test_editor_does_not_send_a_composed_named_motion_through_a_second_splice(monkeypatch):
+    """The bank already edits the selected host window; only the outer editor crossfade remains."""
+    def forbidden_splice(*_args, **_kwargs):
+        raise AssertionError("named motion was treated as foreign and spliced twice")
+
+    monkeypatch.setattr(AE, "splice_window", forbidden_splice)
+    motion = _base(300)
+    result = AE.run_agent_edit(
+        motion, 60, 240, "add a clap here", beats=np.arange(0, 300, 15),
+        max_refine=0,
+    )
+    assert result.log[0]["motion_bank"]["id"] == "clap_single"
+    assert result.trace["final"]["checks"][0]["met"]
+
+
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+def test_named_motion_verdict_surfaces_artifact_guards_without_erasing_the_edit():
+    """A semantic match is kept, but quality regressions remain explicit in the trace."""
+    from agentlodge.dance.format import to_editor139
+
+    motion = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:300]
+    result = AE.run_agent_edit(
+        motion, 60, 240, "add a clap here", beats=np.arange(0, 300, 15),
+        max_refine=0,
+    )
+    guards = [check for check in result.trace["final"]["checks"] if check.get("guard")]
+    assert result.ok
+    assert any(not check["met"] for check in guards)
+    assert not result.trace["attempts"][0]["verify"]["ok"]
+
+
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+def test_raw_lodge_input_is_normalized_before_motion_composition():
+    from agentlodge.dance.format import to_editor139
+
+    raw = np.load(_LODGE_SAMPLE).astype(np.float32)[:180]
+    normalized = to_editor139(raw)
+    assert not np.array_equal(raw, normalized)
+
+    bank = default_motion_bank()
+    kwargs = {"beats": np.arange(0, 180, 15), "anchor": "beat"}
+    from_raw, raw_report = bank.apply(raw, "clap_single", **kwargs)
+    from_normalized, normalized_report = bank.apply(normalized, "clap_single", **kwargs)
+    assert np.array_equal(from_raw, from_normalized)
+    assert raw_report == normalized_report
+
+
+@needs_fk
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+def test_real_output_clap_preserves_the_host_rhythm_and_reads_as_a_clap():
+    from agentlodge.dance.format import to_editor139
+    from server.fk import compute_poses
+
+    base = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:120]
+    out, report = default_motion_bank().apply(
+        base, "clap_single", beats=np.arange(0, 120, 15), anchor="beat",
+    )
+
+    assert np.array_equal(out[:, :3], base[:, :3])
+    assert np.array_equal(out[:, 135:139], base[:, 135:139])
+    for joint in range(13):
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        assert np.array_equal(out[:, channels], base[:, channels]), joint
+
+    before = compute_poses(base)["fk_joints"]
+    after = compute_poses(out)["fk_joints"]
+    assert np.allclose(after[:, :16], before[:, :16], atol=1e-6)
+
+    event = int(report["event_frame"])
+    gap = float(np.linalg.norm(after[event, 20] - after[event, 21]))
+    shoulders = 0.5 * (after[event, 16] + after[event, 17])
+    upper = shoulders - after[event, 9]
+    upper /= np.linalg.norm(upper)
+    hands = 0.5 * (after[event, 20] + after[event, 21]) - shoulders
+    assert 0.06 < gap < 0.12
+    assert -0.32 < float(hands @ upper) < -0.10
+
+    beats = np.arange(0, 120, 15)
+    before_metrics = window_metrics(base, beats)
+    after_metrics = window_metrics(out, beats)
+    assert after_metrics["jerk"] < 1.7 * before_metrics["jerk"]
+
+
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+@pytest.mark.parametrize(
+    "motion_id,max_jerk_ratio",
+    [
+        ("clap_overhead", 2.5),
+        ("jump_arms_up", 2.0),
+        ("point_side", 1.6),
+        ("celebrate_hands_up", 2.0),
+        ("arm_punch", 1.7),
+        ("rise_reach", 3.2),
+    ],
+)
+def test_beat_compressed_pose_accents_take_the_shortest_path(
+    motion_id, max_jerk_ratio,
+):
+    """Retiming a long ready-stance clip into one beat must not preserve its whole wind-up.
+
+    The semantic pose belongs on the beat, but making the host visit every authored in-between
+    pose first creates the same acceleration spike that made the original clap feel pasted onto
+    the dance. Event-pose joints travel directly from the host to the accent and back; joints
+    carrying real internal motion (the jump, rise, or torso response) keep their clip trajectory.
+    """
+    from agentlodge.dance.format import to_editor139
+
+    base = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:120]
+    beats = np.arange(0, 120, 15)
+    before = window_metrics(base, beats)
+    out, report = default_motion_bank().apply(
+        base, motion_id, beats=beats, anchor="beat",
+    )
+    after = window_metrics(out, beats)
+    assert report["validation"]["ok"]
+    assert after["jerk"] < max_jerk_ratio * before["jerk"]
+
+
+@needs_fk
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+def test_outer_crossfade_never_overwrites_a_named_event_in_a_short_window():
+    """The editor seam blend may use only frames outside the bank's semantic action."""
+    from agentlodge.dance.format import to_editor139
+    from server.fk import compute_poses
+
+    motion = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))
+    beats = np.arange(5, len(motion), 15)
+    result = AE.run_agent_edit(
+        motion, 0, 30, "add a clap on the beat here", beats=beats, max_refine=0,
+    )
+    report = next(step["motion_bank"] for step in result.log if "motion_bank" in step)
+    event = int(report["event_frame"])
+    joints = compute_poses(result.motion)["fk_joints"]
+    gap = float(np.linalg.norm(joints[event, 20] - joints[event, 21]))
+
+    assert report["action_range"] == [12, 27]
+    assert event == 20
+    assert result.ok
+    assert 0.06 < gap < 0.16
+
+
+def test_short_selections_keep_global_beat_cadence_and_fail_when_no_hit_fits():
+    """One in-window beat still has a period; zero feasible beats must not report alignment."""
+    motion = _base(90)
+    beats = np.arange(0, len(motion), 15)
+
+    fitted = AE.run_agent_edit(
+        motion, 5, 25, "add a clap on the beat here", beats=beats, max_refine=0,
+    )
+    fitted_report = next(
+        step["motion_bank"] for step in fitted.log if "motion_bank" in step
+    )
+    assert fitted_report["action_frames"] == 15
+    assert fitted_report["event_frame"] == 10
+    assert fitted_report["beat_error_frames"] == pytest.approx(0.0)
+    assert fitted.ok
+
+    impossible = AE.run_agent_edit(
+        motion, 2, 14, "add a clap on the beat here", beats=beats, max_refine=0,
+    )
+    impossible_report = next(
+        step["motion_bank"] for step in impossible.log if "motion_bank" in step
+    )
+    assert impossible_report["beat_error_frames"] > 0.5
+    assert not impossible.ok
+
+    beatless = AE.run_agent_edit(
+        motion, 5, 25, "add a clap here", beats=np.array([]), max_refine=0,
+    )
+    beatless_report = next(
+        step["motion_bank"] for step in beatless.log if "motion_bank" in step
+    )
+    assert beatless_report["beat_error_frames"] is None
+    assert beatless.ok
+
+
+def test_explicit_whole_window_beat_goal_survives_a_named_beat_action():
+    motion = _base(180)
+    beats = np.arange(0, len(motion), 15)
+    anchored = AE.run_agent_edit(
+        motion, 0, len(motion), "add a clap on the beat here",
+        beats=beats, max_refine=0,
+    )
+    assert not any(goal["metric"] == "bas" for goal in anchored.trace["goals"])
+
+    instructions = (
+        "add a clap, then make the rest of the window more on beat",
+        "add a clap and put everything on the beat",
+        "add a clap and make it tighter to the beat",
+        "add a clap and lock the window to the beat",
+    )
+    for instruction in instructions:
+        result = AE.run_agent_edit(
+            motion, 0, len(motion), instruction, beats=beats, max_refine=0,
+        )
+
+        assert any(goal["metric"] == "bas" for goal in result.trace["goals"]), instruction
+        assert any(step["tool"] == "beat_align" for step in result.log), instruction
+        before = result.trace["final"]["metrics_before"]["bas"]
+        after = result.trace["final"]["metrics_after"]["bas"]
+        assert after >= before, instruction
+        assert result.ok, instruction
+
+
+@needs_fk
+def test_motion_bank_runs_after_temporal_tools_so_its_report_is_not_stale(monkeypatch):
+    from server.fk import compute_poses
+
+    plan = AE.AgentPlan(
+        "reverse and add a clap",
+        [
+            AE.PlanStep(
+                "motion_bank",
+                {"motion_id": "clap_single", "mode": "replace", "anchor": "early"},
+                "place clap",
+            ),
+            AE.PlanStep("reverse", {}, "reverse the host"),
+        ],
+        goals=[],
+    )
+    monkeypatch.setattr(
+        AE,
+        "plan_edit",
+        lambda *args, **kwargs: AE.AgentPlan(
+            plan.summary,
+            [AE.PlanStep(step.tool, dict(step.params), step.why) for step in plan.steps],
+            goals=[],
+        ),
+    )
+
+    motion = _base(180)
+    result = AE.run_agent_edit(
+        motion, 0, len(motion), "reverse and add a clap",
+        beats=np.arange(0, len(motion), 15), max_refine=0,
+    )
+    assert [step["tool"] for step in result.log] == ["reverse", "motion_bank"]
+
+    report = result.log[-1]["motion_bank"]
+    event = int(report["event_frame"])
+    joints = compute_poses(result.motion)["fk_joints"]
+    gap = float(np.linalg.norm(joints[event, 20] - joints[event, 21]))
+    semantic = next(
+        check for check in result.trace["final"]["checks"] if check["metric"] == "semantic"
+    )
+    assert report["beat_error_frames"] == pytest.approx(0.0)
+    assert 0.06 < gap < 0.16
+    assert semantic["met"] and result.ok
+
+
+def test_composed_joint_activity_can_be_valid_relative_to_the_host():
+    from agentlodge.dance.transition import _axis_angle_to_matrix, _matrix_to_sixd
+
+    spec = default_motion_bank().resolve("point_side")
+    identity = np.eye(3, dtype=np.float32)
+    rotations = np.repeat(identity[None, None], 2 * 22, axis=0).reshape(2, 22, 3, 3)
+    reference = rotations.copy()
+    rotations[1, 17] = _axis_angle_to_matrix(
+        np.array([0.0, 0.0, 0.70], dtype=np.float32)
+    )
+    reference[1, 17] = _axis_angle_to_matrix(
+        np.array([0.0, 0.0, -0.70], dtype=np.float32)
+    )
+
+    clip = np.zeros((2, 139), dtype=np.float32)
+    host = clip.copy()
+    clip[:, 3:135] = _matrix_to_sixd(rotations).reshape(2, 132)
+    host[:, 3:135] = _matrix_to_sixd(reference).reshape(2, 132)
+
+    assert not validate_semantics(clip, spec)["ok"]
+    assert validate_semantics(clip, spec, reference=host)["ok"]
+
+
 def test_agent_replacement_preserves_every_frame_outside_selection():
     motion = _base(300)
     result = AE.run_agent_edit(
         motion, 60, 240, "add a clap motion here", beats=np.arange(0, 300, 15),
     )
-    assert result.ok
     assert result.log[0]["tool"] == "motion_bank"
     assert result.log[0]["motion_bank"]["id"] == "clap_single"
+    assert result.trace["final"]["checks"][0]["met"]
     assert np.array_equal(result.motion[:60], motion[:60])
     assert np.array_equal(result.motion[240:], motion[240:])
     assert not np.array_equal(result.motion[60:240], motion[60:240])
@@ -123,8 +502,9 @@ def test_agent_insert_preserves_total_duration_and_uses_relational_policy():
         motion, 60, 240, "insert a wave before the next move", beats=np.arange(0, 300, 15),
     )
     meta = result.log[0]["motion_bank"]
-    assert result.ok and result.motion.shape == motion.shape
+    assert result.motion.shape == motion.shape
     assert meta["id"] == "wave" and meta["mode"] == "insert" and meta["anchor"] == "early"
+    assert result.trace["final"]["checks"][0]["met"]
     assert np.array_equal(result.motion[:60], motion[:60])
     assert np.array_equal(result.motion[240:], motion[240:])
 
@@ -141,8 +521,8 @@ def test_direction_repeat_and_intensity_variants_are_data_driven():
     # dropped repetition stated, rather than failing and leaving the window untouched.
     motion = _base(240)
     result = AE.run_agent_edit(motion, 30, 210, "add a big point left twice here")
-    assert result.ok
     assert result.log[0]["status"] != "failed"
+    assert result.trace["final"]["checks"][0]["met"]
     assert "does not support repetition" in result.log[0]["note"]
 
 
@@ -359,19 +739,25 @@ def test_a_spliced_clap_still_reads_as_a_clap(motion_id, window):
     from server.fk import compute_poses
     a, b = window
     base = _base(600)
-    spliced, _ = default_motion_bank().apply(base[a:b], motion_id,
-                                             beats=np.arange(0, b - a, 16))
+    spliced, report = default_motion_bank().apply(
+        base[a:b], motion_id, beats=np.arange(0, b - a, 16),
+    )
     out = base.copy()
     out[a:b] = spliced
     j = compute_poses(out)["fk_joints"]
 
-    gap = np.linalg.norm(j[a:b, 20] - j[a:b, 21], axis=-1)
-    k = int(np.argmin(gap)) + a
-    assert 0.06 < float(gap.min()) < 0.16, ("hands do not meet after splicing", float(gap.min()))
+    k = a + int(report["event_frame"])
+    gap = float(np.linalg.norm(j[k, 20] - j[k, 21]))
+    assert 0.06 < gap < 0.16, ("hands do not meet after splicing", gap)
 
-    up = j[k, 12] - j[k, 0]
+    # The arms inherit the upper torso, not an imaginary straight line from pelvis to neck.
+    # On a bent host pose that pelvis axis can point across the body and report a canonical,
+    # bit-identical clap as being above the shoulders. Build the frame from the chest and
+    # shoulder girdle, which is what the viewer reads as the dancer's local upright.
+    shoulders = 0.5 * (j[k, 16] + j[k, 17])
+    up = shoulders - j[k, 9]
     up = up / np.linalg.norm(up)
-    hands = 0.5 * (j[k, 20] + j[k, 21]) - 0.5 * (j[k, 16] + j[k, 17])
+    hands = 0.5 * (j[k, 20] + j[k, 21]) - shoulders
     assert -0.34 < float(hands @ up) < -0.08, ("clap is not at chest height", float(hands @ up))
     for elbow, shoulder in ((18, 16), (19, 17)):
         assert float((j[k, elbow] - j[k, shoulder]) @ up) < -0.15, "elbow winged after splicing"
@@ -592,10 +978,6 @@ def test_a_spliced_step_still_travels_the_way_it_is_named(motion_id, sign):
     assert sign * peak > 0.25, (motion_id, peak, travel.min(), travel.max())
 
 
-_LODGE_SAMPLE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             "data", "lodge_sample_dance.npy")
-
-
 @pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
 @pytest.mark.parametrize("mode", ["replace", "insert"])
 def test_every_motion_applies_to_real_backbone_output(mode):
@@ -612,8 +994,9 @@ def test_every_motion_applies_to_real_backbone_output(mode):
     this test green. `test_an_edit_is_legal_no_matter_which_way_the_dancer_is_facing` rotates the
     song explicitly and is what pins that. The two cover different things and both are needed.
     """
+    from agentlodge.dance.format import to_editor139
     from agentlodge.editor.motion_bank import _root_yaw_series
-    dance = np.load(_LODGE_SAMPLE).astype(np.float32)
+    dance = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))
     bank, n = default_motion_bank(), 120
     yaw = _root_yaw_series(dance)
     spread = sorted(range(0, len(dance) - n, 8), key=lambda s: yaw[s])
@@ -639,9 +1022,10 @@ def test_every_motion_applies_to_real_backbone_output(mode):
 @pytest.mark.parametrize("motion_id,sign", [("step_forward", 1.0), ("step_backward", -1.0)])
 def test_a_step_spliced_into_real_output_travels_the_way_it_is_named(motion_id, sign):
     """Direction has to survive contact with a dancer who is not facing down a world axis."""
-    from server.fk import compute_poses
+    from agentlodge.dance.format import to_editor139
     from agentlodge.editor.motion_bank import _root_yaw_series
-    dance = np.load(_LODGE_SAMPLE).astype(np.float32)
+    from server.fk import compute_poses
+    dance = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))
     bank, n = default_motion_bank(), 120
     yaw = _root_yaw_series(dance)
     for start in (int(np.argmin(yaw)), int(np.argmax(yaw[:len(dance) - n]))):
@@ -728,24 +1112,25 @@ def test_a_spliced_turn_does_not_whip_round_at_the_seam(motion_id):
 
 
 @pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
-def test_a_motion_keeps_its_authored_speed_however_wide_the_selection(motion_id):
-    """A gesture takes as long as it takes. It must not be stretched to fill the selection.
+def test_a_motion_uses_its_declared_musical_duration_however_wide_the_selection(motion_id):
+    """Authored frames define motion shape; recommended beats define playback duration.
 
     This is the defect a user reported as "extremely slow and off putting from the actual dance".
-    Duration used to come from the dragged window -- `_fit_event(raw, event, n, ...)` retimed the
-    clip to the full width -- so a 45-frame clap dropped on a 4-second selection played at 0.375x
-    and smeared one hand-meet across eight beats. Duration now comes from the music instead.
+    A 45-frame source clap declares one beat, so at this tempo it must occupy 16 frames whether
+    the user selected three seconds or sixteen. Stretching it toward its authored frame count
+    would recreate the slow-motion mismatch the beat contract exists to prevent.
     """
     bank = default_motion_bank()
-    authored = bank.load_clip(motion_id).shape[0]
+    spec = bank.resolve(motion_id)
     beats = np.arange(0, 480, 16)                    # a steady 112.5 BPM grid
-    for n in (authored * 2, 480):                    # selections far wider than the action
+    expected = int(round(spec.recommended_beats * 16))
+    for n in (max(96, expected * 3), 480):           # selections far wider than the action
         base = np.concatenate([_base(240)] * 2, axis=0)[:n]
         _window, report = bank.apply(base, motion_id, mode="replace", anchor="center",
                                      beats=beats[beats < n])
         a, b = report["action_range"]
         assert b - a < n, (motion_id, n, report["action_range"])
-        assert 0.6 * authored <= b - a <= 1.6 * authored, (motion_id, n, b - a, authored)
+        assert b - a == expected, (motion_id, n, b - a, expected)
 
 
 @pytest.mark.parametrize("motion_id", ["clap_single", "wave", "chest_pop", "turn_quarter"])
