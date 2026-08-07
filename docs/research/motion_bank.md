@@ -343,8 +343,15 @@ For visual review of the composed path, `scripts/scratch/review_composed_bank.py
 before/after sheet per action on the exact live TRS dance, while
 `scripts/scratch/render_composed_bank_video.py` renders all twenty at real 30 FPS in front and side
 views. Static sheets establish posture and channel ownership; the playback reel establishes timing
-and continuity. Both use one camera anchored at the action start rather than recentering every
-frame, so jumps, drops, and locomotion remain visible instead of being erased by the audit view.
+and continuity.
+
+The production Y-Bot renderer once invalidated that review by recentering the pelvis horizontally
+and grounding the lowest mesh vertex on every frame. That removed root travel and cancelled most
+of a jump's vertical trajectory, so a numerically airborne take rendered with planted feet. The
+renderer now places the armature on the FK root path, applies one constant mesh-to-floor correction,
+and follows a smoothed horizontal path with the camera and key light. The path begins at the studio
+origin on every warm-daemon request, so one travelling render cannot shift the next. `--lock-root`
+retains the old pinned view only as an explicit diagnostic comparison.
 
 ## Frame conventions
 

@@ -12,8 +12,8 @@ Run inside Blender::
         --width 720 --height 720 --samples 32 [--color 0.5,0.5,0.5] [--align-x -90]
 
 ``poses.npz`` holds ``poses`` (L, J, 3) SMPL axis-angle (J>=22; hand joints may be zero)
-and optional ``trans`` (L, 3). The dancer is centred on the studio floor each frame
-(root locked horizontally, feet grounded), lit by the shared EDGE studio.
+and optional ``fk_joints`` (L, 22, 3). When FK is available, its root trajectory is preserved
+and the camera follows it; ``--lock-root`` retains the legacy centred preview.
 """
 
 import argparse
@@ -28,6 +28,7 @@ from mathutils import Matrix, Quaternion, Vector  # type: ignore
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import blender_studio as studio  # noqa: E402
+from render_root_motion import centered_follow_locations, prepare_root_motion  # noqa: E402
 
 # SMPL joint order (matches EDGE SMPL-to-FBX/SmplObject.py and ax_from_6v output).
 JOINT_NAMES = [
@@ -72,7 +73,10 @@ def parse_args():
                         "global orientation via Kabsch; else read 'fk_joints' from --poses")
     p.add_argument("--fast", action="store_true",
                    help="Fast preview: ground on the cached foot meshes only + one fewer depsgraph "
-                        "update per frame (used by the warm compare daemon). Visually identical.")
+                        "update per frame (used by the warm compare daemon).")
+    p.add_argument("--lock-root", action="store_true",
+                   help="Legacy preview mode: pin the pelvis horizontally and ground the feet "
+                        "every frame instead of preserving the FK root trajectory.")
     return p.parse_args(argv)
 
 
@@ -295,8 +299,15 @@ def render_take(args, color):
         fk = np.load(args.fk_npz)["joints"].astype(np.float64)
     elif "fk_joints" in data.files:
         fk = data["fk_joints"].astype(np.float64)
-    if fk is not None and float(np.abs(fk).max()) < 1e-6:
-        fk = None  # all-zero FK (smplx_neu_J absent) -> use import rotation for Z-up motion
+    if fk is not None:
+        if fk.ndim != 3 or fk.shape[0] != L or fk.shape[1] < n_body or fk.shape[2] != 3:
+            raise ValueError(
+                f"FK joints must have shape ({L}, >={n_body}, 3), got {fk.shape}"
+            )
+        if not np.isfinite(fk).all():
+            raise ValueError("FK joints contain non-finite values")
+        if float(np.abs(fk).max()) < 1e-6:
+            fk = None  # all-zero FK (smplx_neu_J absent) -> keep the legacy locked preview
 
     if fk is not None:
         sample = list(range(0, L, max(1, L // 12)))[:12]
@@ -351,6 +362,52 @@ def render_take(args, color):
     # grounding into a single location set (2 depsgraph updates/frame instead of 3). The horizontal
     # shift does not change z, so the grounded result is identical to the full-scan path.
     ground_meshes = foot_meshes(arm, robot_meshes, poses, L, n_body, apply_pose) if fast else robot_meshes
+    preserve_root = fk is not None and not bool(getattr(args, "lock_root", False))
+    root_path = None
+    follow_xy = None
+    root_ground_offset = 0.0
+    cam = bpy.data.objects.get("Cam")
+    target = bpy.data.objects.get("Target")
+    spot = bpy.data.objects.get("Spot")
+    cam_offset = spot_offset = None
+    if cam is not None and target is not None:
+        cam_home, target_home, spot_home = centered_follow_locations(
+            np.array(cam.location),
+            np.array(target.location),
+            None if spot is None else np.array(spot.location),
+        )
+        target.location = tuple(target_home)
+        cam.location = tuple(cam_home)
+        if spot is not None and spot_home is not None:
+            spot.location = tuple(spot_home)
+        cam_offset = cam.location.copy() - target.location
+        if spot is not None:
+            spot_offset = spot.location.copy() - target.location
+
+    if preserve_root:
+        root_plan = prepare_root_motion(fk, yaw_degrees=float(args.yaw))
+        root_path = root_plan.root_path
+        follow_xy = root_plan.follow_xy
+        mesh_floor = float("inf")
+        for frame in root_plan.calibration_frames:
+            apply_pose(int(frame))
+            arm.location = (0.0, 0.0, 0.0)
+            bpy.context.view_layer.update()
+            pelvis = whead("m_avg_Pelvis")
+            target_root = root_path[int(frame)]
+            arm.location = (
+                float(target_root[0] - pelvis.x),
+                float(target_root[1] - pelvis.y),
+                float(target_root[2] - pelvis.z),
+            )
+            bpy.context.view_layer.update()
+            mesh_floor = min(
+                mesh_floor,
+                lowest_mesh_z(bpy.context.evaluated_depsgraph_get(), ground_meshes),
+            )
+        if mesh_floor != float("inf"):
+            root_ground_offset = -mesh_floor
+
     # Rate-limit the floor offset so per-frame foot-height jitter (the lowest vertex hopping between
     # feet/segments) does not bob the WHOLE body up and down. Real height changes are gradual and
     # still track; only single-frame pops are clamped. Tunable via YBOT_GROUND_MAX_DZ (metres/frame).
@@ -358,30 +415,56 @@ def render_take(args, color):
     prev_gz = None
     for i in range(0, L, stride):
         pose_frame(i)
-        # Centre the dancer horizontally on the pelvis...
         arm.location = (0.0, 0.0, 0.0)
         bpy.context.view_layer.update()
         pelvis = whead("m_avg_Pelvis")
-        # ...then ground the lowest posed *mesh* vertex (foot sole) at z=0 so the robot
-        # rests on the floor instead of sinking its feet through it.
-        depsgraph = bpy.context.evaluated_depsgraph_get()
-        mz = lowest_mesh_z(depsgraph, ground_meshes)
-        if fast:
-            raw_gz = 0.0 if mz == float("inf") else -mz
-            gz = raw_gz if prev_gz is None else min(prev_gz + ground_max_dz, max(prev_gz - ground_max_dz, raw_gz))
-            prev_gz = gz
-            arm.location = (-pelvis.x, -pelvis.y, gz)
+        if preserve_root:
+            target_root = root_path[i]
+            arm.location = (
+                float(target_root[0] - pelvis.x),
+                float(target_root[1] - pelvis.y),
+                float(target_root[2] - pelvis.z + root_ground_offset),
+            )
             bpy.context.view_layer.update()
+            if target is not None and cam is not None and cam_offset is not None:
+                tx, ty = map(float, follow_xy[i])
+                target.location = (tx, ty, target.location.z)
+                cam.location = (
+                    tx + cam_offset.x,
+                    ty + cam_offset.y,
+                    target.location.z + cam_offset.z,
+                )
+                if spot is not None and spot_offset is not None:
+                    spot.location = (
+                        tx + spot_offset.x,
+                        ty + spot_offset.y,
+                        target.location.z + spot_offset.z,
+                    )
         else:
-            arm.location = (-pelvis.x, -pelvis.y, 0.0)
-            bpy.context.view_layer.update()
             depsgraph = bpy.context.evaluated_depsgraph_get()
-            mz = lowest_mesh_z(depsgraph, robot_meshes)
-            raw_gz = 0.0 if mz == float("inf") else -mz
-            gz = raw_gz if prev_gz is None else min(prev_gz + ground_max_dz, max(prev_gz - ground_max_dz, raw_gz))
-            prev_gz = gz
-            arm.location = (arm.location.x, arm.location.y, gz)
-            bpy.context.view_layer.update()
+            mz = lowest_mesh_z(depsgraph, ground_meshes)
+            if fast:
+                raw_gz = 0.0 if mz == float("inf") else -mz
+                gz = raw_gz if prev_gz is None else min(
+                    prev_gz + ground_max_dz,
+                    max(prev_gz - ground_max_dz, raw_gz),
+                )
+                prev_gz = gz
+                arm.location = (-pelvis.x, -pelvis.y, gz)
+                bpy.context.view_layer.update()
+            else:
+                arm.location = (-pelvis.x, -pelvis.y, 0.0)
+                bpy.context.view_layer.update()
+                depsgraph = bpy.context.evaluated_depsgraph_get()
+                mz = lowest_mesh_z(depsgraph, robot_meshes)
+                raw_gz = 0.0 if mz == float("inf") else -mz
+                gz = raw_gz if prev_gz is None else min(
+                    prev_gz + ground_max_dz,
+                    max(prev_gz - ground_max_dz, raw_gz),
+                )
+                prev_gz = gz
+                arm.location = (arm.location.x, arm.location.y, gz)
+                bpy.context.view_layer.update()
         scene.render.filepath = f"{frames_dir}/frame_{i:05d}.png"
         bpy.ops.render.render(write_still=True)
     print(f"BLENDER_RENDERED {L} frames -> {frames_dir}")

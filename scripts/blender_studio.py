@@ -15,6 +15,8 @@ import math
 import bpy  # type: ignore
 import numpy as np
 
+from render_root_motion import smooth_path
+
 
 def make_material(name, texture_path, color, metallic=0.9, roughness=0.35):
     """Metallic Principled-BSDF body material (EDGE-style). ``color`` is an (r,g,b)."""
@@ -107,19 +109,6 @@ def setup_lights(cx, cy, top_z):
     return spot
 
 
-def _smooth(xy, k=11):
-    """Moving-average smooth an (L, 2) path so the follow camera glides, not jitters."""
-    xy = np.asarray(xy)
-    if xy.shape[0] < 3:
-        return xy
-    k = min(k, xy.shape[0] | 1)
-    pad = k // 2
-    padded = np.pad(xy, ((pad, pad), (0, 0)), mode="edge")
-    kernel = np.ones(k) / k
-    out = np.stack([np.convolve(padded[:, d], kernel, mode="valid") for d in range(2)], axis=1)
-    return out[: xy.shape[0]]
-
-
 def setup_follow_camera(centroids, body_size, floor_z):
     """Camera that follows the dancer, keeping them large and centered.
 
@@ -144,7 +133,7 @@ def setup_follow_camera(centroids, body_size, floor_z):
     con.up_axis = "UP_Y"
     bpy.context.scene.camera = cam
 
-    follow_xy = _smooth(np.asarray(centroids)[:, :2])
+    follow_xy = smooth_path(np.asarray(centroids)[:, :2])
     return cam, target, offset, target_z, follow_xy
 
 

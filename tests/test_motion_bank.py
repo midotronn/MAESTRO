@@ -15,6 +15,7 @@ from agentlodge.editor import agent_edit as AE
 from agentlodge.editor.motion_bank import (
     MotionBank,
     _JOIN_MAX_FRAMES,
+    _fit_event_frame,
     _root_yaw_series,
     default_motion_bank,
     validate_semantics,
@@ -424,6 +425,46 @@ def test_an_unreachable_beat_reports_the_event_that_was_actually_placed():
         check for check in result.trace["final"]["checks"] if check["metric"] == "semantic"
     )
     assert not semantic["met"]
+
+
+@needs_fk
+@pytest.mark.parametrize("motion_id", _CLAP_HAND_CONTRACTS)
+def test_every_declared_clap_contact_survives_default_splicing(motion_id):
+    """A repeated clap must keep every contact, not merely the first beat-anchored one."""
+    from server.fk import compute_poses
+
+    bank = default_motion_bank()
+    spec = bank.resolve(motion_id)
+    out, report = bank.apply(_base(180), motion_id, beats=np.arange(0, 180, 15))
+    joints = compute_poses(out)["fk_joints"]
+    gaps = np.linalg.norm(joints[:, 20] - joints[:, 21], axis=-1)
+    start, end = report["action_range"]
+    local_event = int(report["event_frame"]) - start
+
+    runs: list[list[int]] = []
+    for frame in spec.intensity_lock_frames:
+        if not runs or frame != runs[-1][-1] + 1:
+            runs.append([frame])
+        else:
+            runs[-1].append(frame)
+
+    assert runs
+    for run in runs:
+        mapped = {
+            start + _fit_event_frame(
+                frame,
+                spec.frames,
+                spec.event_frame,
+                end - start,
+                local_event,
+            )
+            for frame in run
+        }
+        contact = min(mapped, key=lambda frame: float(gaps[frame]))
+        assert float(gaps[contact]) < 0.08, (motion_id, run, contact, float(gaps[contact]))
+        palm_dot, finger_dot = _clap_hand_alignment(out, contact)
+        assert palm_dot < -0.95, (motion_id, run, "palms", palm_dot)
+        assert finger_dot > 0.95, (motion_id, run, "fingers", finger_dot)
 
 
 @pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
