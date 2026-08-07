@@ -15,7 +15,7 @@ RAW="${OUT%.mp4}.raw.mp4"
 # The reel is derived, not committed, so build it here rather than relying on a stale copy.
 "$PY" "$A/scripts/build_motion_bank_reel.py" --out "$REEL"
 
-RENDER_W="${RENDER_W:-1080}" RENDER_H="${RENDER_H:-1080}" \
+AL_PY="$PY" RENDER_W="${RENDER_W:-1080}" RENDER_H="${RENDER_H:-1080}" \
   bash "$A/scripts/render_one_ybot.sh" "$REEL" "$RAW"
 
 "$PY" "$A/scripts/label_reel_video.py" \

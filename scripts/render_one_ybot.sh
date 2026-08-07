@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # Render ONE motion npy as the canonical gray Y-Bot (same look as the demos). Audio optional.
 # Usage: ./render_one_ybot.sh <motion_npy> <out_mp4> <sid_for_audio>
-set -uo pipefail
+set -euo pipefail
 WORKSPACE="${WORKSPACE:-/workspace}"
 A="$WORKSPACE/AgentLODGE"
-PY="${AL_PY:-/root/al_venv/bin/python}"
+if [ -n "${AL_PY:-}" ]; then
+  PY="$AL_PY"
+elif [ -x "$A/.venv/bin/python" ]; then
+  PY="$A/.venv/bin/python"
+else
+  PY="/root/al_venv/bin/python"
+fi
+[ -x "$PY" ] || { echo "Python environment not found: $PY" >&2; exit 1; }
 EGL=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
 BB="$WORKSPACE/blender/blender"
 BS="$A/scripts/blender_render_ybot.py"
