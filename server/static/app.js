@@ -236,7 +236,7 @@ const TOUR_STEPS = [
   { el: "instruction", title: "2 · Say what you want",
     text: "Describe the change in plain English, for example \u201cmake it more energetic\u201d, \u201ctighten to the beat\u201d, \u201cadd a clap here\u201d, or \u201cinsert a wave before the next move\u201d. The agent chooses the right edit." },
   { el: "motionPicker", title: "3 · Browse 20 supported motions",
-    text: "Open this catalog to see every common motion MAESTRO supports. Click one to add it to your prompt. Claps and other beat-hit motions land on the nearest beat by default." },
+    text: "Open this catalog to see every common motion MAESTRO supports. Click one to add it to your prompt. Claps and other beat-hit motions land on the strongest beat in the selected window by default." },
   { el: "apply", title: "4 · Apply the edit",
     text: "The agent plans the right tools, applies them, and verifies the result actually hit your goal. If needed, it refines the edit." },
   { el: "compareBtn", title: "5 · Review the result",
@@ -304,7 +304,7 @@ async function loadMotionBank() {
       button.className = "chip";
       button.textContent = motion.name;
       const timing = motion.default_anchor === "beat"
-        ? "lands on the nearest beat by default"
+        ? "lands on the strongest beat in the selected window by default"
         : "centered in the selected window by default";
       button.title = `${motion.category} · ${timing}`;
       button.onclick = () => {

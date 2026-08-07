@@ -121,7 +121,8 @@ def _session(tmp_path=None, n=180):
     gen = MockWindowGenerator()
     base = gen.generate("edge", 0, n, 0, energy=0.5, beats=None)
     beats = np.arange(0, n, 15).astype(float)
-    assets = SongAssets(sid="unit", beats=beats, fps=30)
+    strengths = np.linspace(0.1, 1.0, len(beats), dtype=np.float32)
+    assets = SongAssets(sid="unit", beats=beats, fps=30, beat_strengths=strengths)
     return EditSession(assets, base, gen, directory=str(tmp_path) if tmp_path else None,
                        k=5, max_cycles=2), base
 
@@ -167,6 +168,7 @@ def test_session_persistence_roundtrip(tmp_path):
     assert np.array_equal(sess2.current_motion(), head_motion)
     assert sess2.assets.sid == "unit"
     assert sess2.assets.beats is not None and len(sess2.assets.beats) > 0
+    assert np.array_equal(sess2.assets.beat_strengths, sess.assets.beat_strengths)
     # the reloaded session is still editable
     r = sess2.edit(30, 90, "make this calmer")
     assert r.motion.shape == head_motion.shape

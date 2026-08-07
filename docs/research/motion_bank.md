@@ -185,10 +185,12 @@ so it can choose a better one, but the degradation is what makes it safe when it
 
 Each manifest entry also declares a `default_anchor`. Discrete hits and arrivals, including claps,
 jumps, points, celebrations, chest pops, punches, drops, and rises, default to `beat`; their semantic
-event is placed on the nearest feasible musical beat. Grooves and multi-beat phrases default to
-`center`. This is enforced after either planner runs, so an LLM cannot move a clap off beat merely by
-returning an arbitrary `center` anchor. An explicit user placement such as before, after, start,
-center, or end still overrides the motion default.
+event is placed on the strongest feasible musical beat in the selected window. Strength is the
+normalized onset salience sampled at each tracked beat. Songs processed before salience was added
+fall back to the nearest feasible beat until their `beat_strengths.npy` is generated. Grooves and
+multi-beat phrases default to `center`. This is enforced after either planner runs, so an LLM cannot
+move a clap off beat merely by returning an arbitrary `center` anchor. An explicit user placement
+such as before, after, start, center, or end still overrides the motion default.
 
 That BAS exception applies only when "on the beat" anchors the named event. An explicit compound
 request such as "add a clap, then make the rest of the window more on beat" retains its whole-window

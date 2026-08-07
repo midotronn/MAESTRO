@@ -200,6 +200,46 @@ def test_beat_hit_motion_defaults_land_on_a_musical_beat(motion_id):
     assert report["beat_error_frames"] <= 0.5
 
 
+def test_beat_anchor_prefers_the_strongest_feasible_beat():
+    base = _base(180)
+    beats = np.array([30.0, 75.0, 120.0, 165.0])
+    strengths = np.array([1.0, 0.3, 0.7, 0.1])
+
+    _out, strongest = default_motion_bank().apply(
+        base, "clap_single", beats=beats, beat_strengths=strengths,
+    )
+    _out, nearest = default_motion_bank().apply(
+        base, "clap_single", beats=beats,
+    )
+
+    assert strongest["event_frame"] == 30
+    assert nearest["event_frame"] == 75
+
+
+def test_agent_threads_beat_strengths_to_named_motion_placement():
+    base = _base(180)
+    beats = np.array([30.0, 75.0, 120.0, 165.0])
+    strengths = np.array([1.0, 0.3, 0.7, 0.1])
+    result = AE.run_agent_edit(
+        base, 0, 180, "add a clap here",
+        beats=beats, beat_strengths=strengths, max_refine=0,
+    )
+    report = next(step["motion_bank"] for step in result.log if "motion_bank" in step)
+    assert report["anchor"] == "beat"
+    assert report["event_frame"] == 30
+    assert result.ok
+
+
+def test_beat_strengths_must_align_one_to_one_with_beats():
+    with pytest.raises(ValueError, match="one value for every beat"):
+        default_motion_bank().apply(
+            _base(180),
+            "clap_single",
+            beats=np.array([30.0, 75.0]),
+            beat_strengths=np.array([1.0]),
+        )
+
+
 @pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
 def test_every_motion_fits_replacement_and_preserves_contract(motion_id):
     bank = default_motion_bank()

@@ -43,6 +43,7 @@ class SongAssets:
     sid: str
     beats: np.ndarray | None = None
     fps: int = 30
+    beat_strengths: np.ndarray | None = None
     wav_path: str | None = None
     metadata: dict = field(default_factory=dict)
     # optional material for real windowed regeneration (Phase 2 pod worker)
@@ -58,9 +59,17 @@ class SongAssets:
         directory.mkdir(parents=True, exist_ok=True)
         if self.beats is not None:
             np.save(directory / "beats.npy", np.asarray(self.beats, dtype=np.float32))
+        if self.beat_strengths is not None:
+            if self.beats is None or len(self.beat_strengths) != len(self.beats):
+                raise ValueError("beat_strengths must contain one value for every beat")
+            np.save(
+                directory / "beat_strengths.npy",
+                np.asarray(self.beat_strengths, dtype=np.float32),
+            )
         (directory / _ASSETS).write_text(json.dumps({
             "sid": self.sid, "fps": self.fps, "wav_path": self.wav_path,
             "metadata": self.metadata, "has_beats": self.beats is not None,
+            "has_beat_strengths": self.beat_strengths is not None,
         }, indent=2))
 
     @classmethod
@@ -71,7 +80,12 @@ class SongAssets:
         bp = directory / "beats.npy"
         if d.get("has_beats") and bp.exists():
             beats = np.load(bp).astype(np.float32)
+        beat_strengths = None
+        sp = directory / "beat_strengths.npy"
+        if d.get("has_beat_strengths") and sp.exists():
+            beat_strengths = np.load(sp).astype(np.float32)
         return cls(sid=d["sid"], beats=beats, fps=int(d.get("fps", 30)),
+                   beat_strengths=beat_strengths,
                    wav_path=d.get("wav_path"), metadata=dict(d.get("metadata") or {}))
 
 
@@ -124,7 +138,8 @@ class EditSession:
         """Apply an NL window edit to the current dance and commit it as a new checkpoint."""
         res = run_agent_edit(
             self.current_motion(), a, b, instruction, self.generator,
-            beats=self.assets.beats, api_key=self.api_key,
+            beats=self.assets.beats, beat_strengths=self.assets.beat_strengths,
+            api_key=self.api_key,
             k=k or self.k, max_cycles=max_cycles or self.max_cycles,
             blend_frames=self.blend_frames, progress_cb=progress_cb,
         )
@@ -140,7 +155,8 @@ class EditSession:
         base = self.store.motion(from_id)
         res = run_agent_edit(
             base, a, b, instruction, self.generator, beats=self.assets.beats,
-            api_key=self.api_key, k=k or self.k, max_cycles=max_cycles or self.max_cycles,
+            beat_strengths=self.assets.beat_strengths, api_key=self.api_key,
+            k=k or self.k, max_cycles=max_cycles or self.max_cycles,
             blend_frames=self.blend_frames, progress_cb=progress_cb,
         )
         metrics = dict(self._whole_metrics(res.motion))

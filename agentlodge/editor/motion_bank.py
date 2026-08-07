@@ -239,6 +239,7 @@ class MotionBank:
         motion_id: str,
         *,
         beats: np.ndarray | None = None,
+        beat_strengths: np.ndarray | None = None,
         mode: str = "replace",
         anchor: str | None = None,
         mirror: bool = False,
@@ -295,6 +296,7 @@ class MotionBank:
             n,
             beats,
             resolved_anchor,
+            beat_strengths=beat_strengths,
             minimum=local_event,
             maximum=latest + local_event,
         )
@@ -509,6 +511,7 @@ def _target_event(
     beats: np.ndarray | None,
     anchor: str,
     *,
+    beat_strengths: np.ndarray | None = None,
     minimum: int = 0,
     maximum: int | None = None,
 ) -> int:
@@ -517,11 +520,34 @@ def _target_event(
     lo = int(np.clip(minimum, 0, max(0, n - 1)))
     hi = int(np.clip(n - 1 if maximum is None else maximum, lo, max(lo, n - 1)))
     if beats is not None:
-        valid = np.asarray(beats, dtype=float)
-        valid = valid[(valid >= 0) & (valid < n)]
+        all_beats = np.asarray(beats, dtype=float).reshape(-1)
+        strengths = None
+        if beat_strengths is not None:
+            strengths = np.asarray(beat_strengths, dtype=float).reshape(-1)
+            if strengths.size != all_beats.size:
+                raise ValueError(
+                    "beat_strengths must contain one value for every beat "
+                    f"({strengths.size} != {all_beats.size})"
+                )
+        valid_mask = (all_beats >= 0) & (all_beats < n)
+        valid = all_beats[valid_mask]
+        valid_strengths = strengths[valid_mask] if strengths is not None else None
         if valid.size:
-            feasible = valid[(valid >= lo) & (valid <= hi)]
-            candidates = feasible if feasible.size else valid
+            feasible_mask = (valid >= lo) & (valid <= hi)
+            if np.any(feasible_mask):
+                candidates = valid[feasible_mask]
+                candidate_strengths = (
+                    valid_strengths[feasible_mask] if valid_strengths is not None else None
+                )
+            else:
+                candidates = valid
+                candidate_strengths = valid_strengths
+            if str(anchor).lower() == "beat" and candidate_strengths is not None:
+                finite = np.isfinite(candidate_strengths)
+                if np.any(finite):
+                    strongest = float(np.max(candidate_strengths[finite]))
+                    strongest_mask = finite & np.isclose(candidate_strengths, strongest)
+                    candidates = candidates[strongest_mask]
             target = int(round(candidates[np.argmin(np.abs(candidates - target))]))
     return int(np.clip(target, lo, hi))
 

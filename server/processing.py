@@ -255,6 +255,7 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
         out = f"{ws}/upload_{sid}"
         for name, dst in [("base_motion.npy", media_dir / "base_motion.npy"),
                           ("beats.npy", media_dir / "beats.npy"),
+                          ("beat_strengths.npy", media_dir / "beat_strengths.npy"),
                           ("preview.mp4", media_dir / "preview.mp4")]:
             g = _scp_from(cfg, f"{out}/{name}", str(dst))
             if g.returncode != 0:

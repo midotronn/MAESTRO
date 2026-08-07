@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Full pipeline for an UPLOADED song: audio -> AgentLODGE dance + candidate bank + preview render.
 # Stages results into $WORKSPACE/upload_<sid>/ for the server to pull:
-#     base_motion.npy · beats.npy · preview.mp4 · bank_<sid>_*.npy
+#     base_motion.npy · beats.npy · beat_strengths.npy · preview.mp4 · bank_<sid>_*.npy
 #
 # Usage (on the pod):  WORKSPACE=/workspace AGENTLODGE_BANK_K=4 bash scripts/process_song.sh <sid>
 # Prereqs: a provisioned pod (scripts/setup_pod.sh) with the demo pipeline scripts present on
@@ -57,9 +57,21 @@ echo "### [4/6] beats"
 import sys, numpy as np, librosa
 sid = sys.argv[1]
 y, sr = librosa.load(f"/workspace/LODGE/data/finedance/music_wav/{sid}.wav", sr=22050, mono=True)
-_, bt = librosa.beat.beat_track(y=y, sr=sr, units="time")
-np.save(f"/workspace/beats_{sid}.npy", (np.asarray(bt, dtype=np.float32) * 30.0))
-print("beats", len(bt))
+_, beat_frames = librosa.beat.beat_track(y=y, sr=sr, hop_length=512, units="frames")
+beat_frames = np.asarray(beat_frames, dtype=np.int64).reshape(-1)
+beat_times = librosa.frames_to_time(beat_frames, sr=sr, hop_length=512) * 30.0
+onset = librosa.onset.onset_strength(y=y, sr=sr, hop_length=512)
+strengths = np.asarray([
+    np.max(onset[max(0, frame - 1):min(len(onset), frame + 2)])
+    if len(onset) else 0.0
+    for frame in beat_frames
+], dtype=np.float32)
+strengths = np.nan_to_num(strengths, nan=0.0, posinf=0.0, neginf=0.0)
+if strengths.size and float(strengths.max()) > 0.0:
+    strengths /= float(strengths.max())
+np.save(f"/workspace/beats_{sid}.npy", np.asarray(beat_times, dtype=np.float32))
+np.save(f"/workspace/beat_strengths_{sid}.npy", strengths)
+print("beats", len(beat_frames), "strongest", float(strengths.max()) if strengths.size else 0.0)
 PY
 
 echo "### [5/6] render gray Y-Bot preview"
@@ -69,6 +81,7 @@ echo "### [6/6] stage outputs"
 OUT="$WORKSPACE/upload_${SID}"; mkdir -p "$OUT"
 cp "fd_${SID}_STORY_bestofk.npy" "$OUT/base_motion.npy"
 cp "beats_${SID}.npy"            "$OUT/beats.npy"
+cp "beat_strengths_${SID}.npy"   "$OUT/beat_strengths.npy"
 cp "v_${SID}_preview.mp4"        "$OUT/preview.mp4"
 cp bank_${SID}_*.npy             "$OUT/" 2>/dev/null || true
 echo "PROCESS_${SID}_DONE"

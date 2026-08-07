@@ -25,7 +25,11 @@ def client(tmp_path, monkeypatch):
     media.mkdir(parents=True)
     motion = MockWindowGenerator().generate("edge", 0, 300, 0, energy=0.5, beats=None)
     np.save(media / "base_motion.npy", motion)
-    np.save(media / "beats.npy", np.arange(0, 300, 15).astype(np.float32))
+    beats = np.arange(0, 300, 15).astype(np.float32)
+    strengths = np.full(len(beats), 0.1, dtype=np.float32)
+    strengths[8] = 1.0
+    np.save(media / "beats.npy", beats)
+    np.save(media / "beat_strengths.npy", strengths)
     (media / "preview.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")  # tiny stub
     monkeypatch.setattr(A, "MEDIA", tmp_path / "media")
     monkeypatch.setattr(A, "SESSIONS", tmp_path / "sessions")
@@ -50,6 +54,18 @@ def test_lists_named_motions_from_the_shared_manifest(client):
     assert "clap" in clap["aliases"]
     assert clap["default_anchor"] == "beat"
     assert clap["source"] and clap["license"] and clap["attribution"]
+
+
+def test_named_beat_action_uses_the_strongest_window_beat(client):
+    client.post("/api/session/sng")
+    result = client.post(
+        "/api/session/sng/edit",
+        json={"a_sec": 0, "b_sec": 6, "instruction": "add a clap here"},
+    ).json()["result"]
+    report = next(step["motion_bank"] for step in result["log"] if "motion_bank" in step)
+    assert report["anchor"] == "beat"
+    assert report["event_frame"] == 120
+    assert result["ok"]
 
 
 def test_edit_commits_and_moves_metrics(client):
@@ -128,7 +144,7 @@ def test_editor_review_actions_explain_the_user_flow():
     tour = js[js.index("const TOUR_STEPS"):js.index("let tourIdx")]
     assert "\\u2014" not in tour and "—" not in tour
     assert 'el: "motionPicker"' in tour
-    assert "nearest beat by default" in tour
+    assert "strongest beat in the selected window by default" in tour
 
 
 def test_basic_auth_middleware_guards_when_env_set():

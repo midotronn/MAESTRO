@@ -170,6 +170,7 @@ def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
         dropped.append("mirroring")
     out, report = bank.apply(
         clip, motion_id, beats=ctx.get("bank_beats", ctx.get("wbeats")),
+        beat_strengths=ctx.get("bank_beat_strengths"),
         mode=mode, anchor=anchor,
         mirror=bool(mirror), intensity=float(intensity), repeats=int(repeats),
         blend_frames=int(ctx.get("blend_frames", 8)),
@@ -771,7 +772,7 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         "Asking for either outside those lists is dropped and the action simply plays once, so "
         "prefer a motion that supports repetition when the user asks for something twice.\n"
         f"These named actions are beat-hit motions and default to anchor=beat: {beat_default}. "
-        "Their clap, impact, accent, or arrival pose must land on the nearest feasible musical beat "
+        "Their clap, impact, accent, or arrival pose must land on the strongest feasible musical beat "
         "unless the user explicitly asks for early, late, before, after, start, center, or end. "
         "For every named action, omit anchor when the user gives no placement; MAESTRO applies the "
         "motion's manifest default deterministically.\n\n"
@@ -1043,7 +1044,7 @@ def _execute_plan(base_clip: np.ndarray, plan: AgentPlan, ctx: dict, wbeats, *,
 
 
 def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
-                   generator=None, *, beats=None, api_key: str | None = None,
+                   generator=None, *, beats=None, beat_strengths=None, api_key: str | None = None,
                    blend_frames: int = 15, k: int = 3, max_cycles: int = 1, max_refine: int = 2,
                    progress_cb=None, context=None) -> WindowEditResult:
     """Plan → execute (with per-step guardrail) → verify EVERY requested metric → **refine**.
@@ -1072,11 +1073,24 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
         raise ValueError(f"invalid window [{a}, {b}) for motion of length {L}")
     wbeats = _window_beats(beats, a, b)
     beat_grid = None if beats is None else np.asarray(beats, dtype=float)
+    strength_grid = (
+        None if beat_strengths is None else np.asarray(beat_strengths, dtype=float).reshape(-1)
+    )
+    if strength_grid is not None:
+        if beat_grid is None or strength_grid.size != beat_grid.size:
+            raise ValueError(
+                "beat_strengths must contain one value for every beat "
+                f"({strength_grid.size} != {0 if beat_grid is None else beat_grid.size})"
+            )
     bank_beats = None if beat_grid is None or beat_grid.size == 0 else beat_grid - a
+    bank_beat_strengths = (
+        None if bank_beats is None or strength_grid is None else strength_grid
+    )
     base_clip = np.ascontiguousarray(motion[a:b], dtype=np.float32)
     before = window_metrics(base_clip, wbeats)
     a_sec, b_sec = a / 30.0, b / 30.0
     ctx = {"wbeats": wbeats, "bank_beats": bank_beats,
+           "bank_beat_strengths": bank_beat_strengths,
            "a": a, "b": b, "generator": generator, "context": context,
            "blend_frames": blend_frames, "k": k, "base_metrics": before}
 

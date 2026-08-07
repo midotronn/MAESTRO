@@ -14,9 +14,10 @@ Serves the web editor and exposes the edit session over REST + WebSocket:
 * ``GET  /api/session/{sid}/timeline``     -> checkpoint tree
 
 A song folder ``server/media/<sid>/`` holds ``base_motion.npy`` (Z-up 139), ``beats.npy`` (30 FPS
-frame indices) and ``preview.mp4``. If a ``bank/`` subfolder with ``bank_<sid>_<bb>_seed<n>.npy``
-exists the real backbone candidate bank is used (wrapped in a resilient fallback); otherwise the
-offline :class:`MockWindowGenerator` drives edits so the UI is fully usable without a GPU.
+frame indices), optional ``beat_strengths.npy`` (one onset-salience value per beat), and
+``preview.mp4``. If a ``bank/`` subfolder with ``bank_<sid>_<bb>_seed<n>.npy`` exists the real
+backbone candidate bank is used (wrapped in a resilient fallback); otherwise the offline
+:class:`MockWindowGenerator` drives edits so the UI is fully usable without a GPU.
 
 Run:  uvicorn server.app:app --host 127.0.0.1 --port 8000
 """
@@ -186,19 +187,37 @@ def _load_session(sid: str) -> EditSession:
     if sid in _sessions:
         return _sessions[sid]
     d = _song_dir(sid)
-    motion_p, beats_p = d / "base_motion.npy", d / "beats.npy"
+    motion_p = d / "base_motion.npy"
+    beats_p = d / "beats.npy"
+    strengths_p = d / "beat_strengths.npy"
     if not motion_p.exists():
         raise HTTPException(404, f"song {sid!r} has no base_motion.npy")
     from agentlodge.dance.format import to_editor139
 
     motion = to_editor139(np.load(motion_p))
     beats = np.load(beats_p).astype(np.float32) if beats_p.exists() else None
+    beat_strengths = (
+        np.load(strengths_p).astype(np.float32) if strengths_p.exists() else None
+    )
+    if beat_strengths is not None and (
+        beats is None or beat_strengths.size != beats.size
+    ):
+        raise HTTPException(
+            500,
+            f"song {sid!r} has {beat_strengths.size} beat strengths for "
+            f"{0 if beats is None else beats.size} beats",
+        )
     generator, gkind = _make_generator(sid, d)
-    assets = SongAssets(sid=sid, beats=beats, fps=FPS)
+    assets = SongAssets(
+        sid=sid, beats=beats, fps=FPS, beat_strengths=beat_strengths,
+    )
     api_key = os.environ.get("OPENAI_API_KEY") or None    # enables the LLM edit agent when present
     sess_dir = SESSIONS / sid
     if (sess_dir / "checkpoints" / "manifest.json").exists():
         sess = EditSession.load(sess_dir, generator, api_key=api_key)
+        if beat_strengths is not None:
+            sess.assets.beat_strengths = beat_strengths
+            sess.assets.save(sess_dir)
     else:
         sess = EditSession(assets, motion, generator, directory=str(sess_dir), api_key=api_key)
     sess.generator_kind = gkind          # type: ignore[attr-defined]
