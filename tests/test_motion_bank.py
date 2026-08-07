@@ -36,6 +36,29 @@ _LODGE_SAMPLE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 needs_fk = pytest.mark.skipif(not os.path.exists(_TMPL),
                               reason="SMPL-X joint template not present (fetched from the pod)")
 
+_CLAP_HAND_CONTRACTS = ("clap_single", "clap_repeat", "clap_overhead")
+_HOST_WRIST_CONTRACTS = ("jump_two_foot",)
+_FOREARM_HAND_CONTRACTS = (
+    "jump_arms_up",
+    "wave",
+    "point_side",
+    "celebrate_hands_up",
+    "arm_punch",
+    "rise_reach",
+)
+_WRIST_STEP_LIMITS = {
+    "clap_single": 0.70,
+    "clap_repeat": 0.95,
+    "clap_overhead": 0.80,
+    "jump_two_foot": 0.22,
+    "jump_arms_up": 0.25,
+    "wave": 0.60,
+    "point_side": 0.25,
+    "celebrate_hands_up": 0.28,
+    "arm_punch": 0.25,
+    "rise_reach": 0.38,
+}
+
 
 def _body_forward(joints, frame=0):
     """The direction the dancer faces, read off the feet rather than a world convention.
@@ -50,16 +73,31 @@ def _body_forward(joints, frame=0):
     return forward / np.linalg.norm(forward)
 
 
-def _global_joint_rotations(motion):
+def _local_joint_rotations(motion):
     from agentlodge.dance.transition import _sixd_to_matrix
+
+    return _sixd_to_matrix(np.asarray(motion)[:, 3:135].reshape(-1, 22, 6))
+
+
+def _global_joint_rotations(motion):
     from server.fk import BODY_PARENTS
 
-    local = _sixd_to_matrix(np.asarray(motion)[:, 3:135].reshape(-1, 22, 6))
+    local = _local_joint_rotations(motion)
     global_r = np.empty_like(local)
     global_r[:, 0] = local[:, 0]
     for joint in range(1, 22):
         global_r[:, joint] = global_r[:, BODY_PARENTS[joint]] @ local[:, joint]
     return global_r
+
+
+def _hand_forearm_alignment(motion, wrist):
+    """Finger/forearm alignment in one local frame, independent of torso and world heading."""
+    elbow = 18 if wrist == 20 else 19
+    finger = np.array([1.0 if wrist == 20 else -1.0, 0.0, 0.0], dtype=np.float32)
+    template = np.load(_TMPL)[:22]
+    forearm = template[wrist] - template[elbow]
+    forearm /= np.linalg.norm(forearm)
+    return (_local_joint_rotations(motion)[:, wrist] @ finger) @ forearm
 
 
 def _clap_hand_alignment(motion, frame):
@@ -83,6 +121,37 @@ def test_manifest_has_twenty_valid_redistributable_motions():
         assert clip.shape == (spec.frames, 139)
         assert spec.source and spec.license and spec.attribution
         assert validate_semantics(clip, spec)["ok"]
+
+
+def test_every_wrist_owning_motion_has_an_explicit_hand_contract():
+    wrist_owners = {
+        spec.id
+        for spec in default_motion_bank().specs
+        if (set(spec.absolute_joints) | set(spec.additive_joints)).intersection({20, 21})
+    }
+    assert wrist_owners == (
+        set(_CLAP_HAND_CONTRACTS)
+        | set(_HOST_WRIST_CONTRACTS)
+        | set(_FOREARM_HAND_CONTRACTS)
+    )
+
+
+@pytest.mark.parametrize(
+    "motion_id",
+    [
+        spec.id
+        for spec in default_motion_bank().specs
+        if not (set(spec.absolute_joints) | set(spec.additive_joints)).intersection({20, 21})
+    ],
+)
+def test_motions_without_wrist_ownership_preserve_both_host_hands(motion_id):
+    base = _base(180)
+    out, _ = default_motion_bank().apply(
+        base, motion_id, beats=np.arange(0, 180, 15), anchor="beat",
+    )
+    for wrist in (20, 21):
+        channels = slice(3 + 6 * wrist, 3 + 6 * (wrist + 1))
+        assert np.array_equal(out[:, channels], base[:, channels]), (motion_id, wrist)
 
 
 def test_stationary_clips_render_in_agentlodge_layout_despite_zero_translation():
@@ -669,6 +738,113 @@ def test_claps_align_the_palm_planes_and_fingers_on_contact(motion_id):
 
 
 @needs_fk
+@pytest.mark.parametrize("motion_id", _HOST_WRIST_CONTRACTS + _FOREARM_HAND_CONTRACTS)
+def test_authored_non_contact_hands_continue_the_forearm(motion_id):
+    """Open hands may twist around the arm, but may not bend into a detached hand plane."""
+    motion = default_motion_bank().load_clip(motion_id)
+    spec = default_motion_bank().resolve(motion_id)
+    owned = set(spec.absolute_joints) | set(spec.additive_joints)
+    for wrist in (20, 21):
+        if wrist not in owned:
+            continue
+        alignment = _hand_forearm_alignment(motion, wrist)
+        assert float(alignment.min()) > 0.99, (motion_id, wrist, float(alignment.min()))
+
+
+@pytest.mark.parametrize("motion_id", _HOST_WRIST_CONTRACTS + _FOREARM_HAND_CONTRACTS)
+def test_authored_non_contact_wrists_do_not_flip_or_hyperextend(motion_id):
+    from agentlodge.dance.transition import _matrix_to_axis_angle, _sixd_to_matrix
+
+    spec = default_motion_bank().resolve(motion_id)
+    clip = default_motion_bank().load_clip(spec)
+    local = _sixd_to_matrix(clip[:, 3:135].reshape(-1, 22, 6))
+    owned = (set(spec.absolute_joints) | set(spec.additive_joints)).intersection({20, 21})
+    for wrist in owned:
+        angle = np.linalg.norm(_matrix_to_axis_angle(local[:, wrist]), axis=-1)
+        limit = 0.70 if motion_id == "wave" else 0.05
+        assert float(angle.max()) < limit, (motion_id, wrist, float(angle.max()))
+        step = local[1:, wrist] @ np.swapaxes(local[:-1, wrist], -1, -2)
+        step_angle = np.linalg.norm(_matrix_to_axis_angle(step), axis=-1)
+        assert float(step_angle.max()) < 0.35, (
+            motion_id, wrist, "abrupt wrist flip", float(step_angle.max()),
+        )
+
+
+@pytest.mark.parametrize("degrees", [0, 45, 90, 135, 180, 225, 270, 315])
+def test_host_relative_hand_motion_does_not_repose_wrists(degrees):
+    from agentlodge.editor.motion_bank import _yaw_rotate
+
+    base = _base()
+    if degrees:
+        base = _yaw_rotate(base.copy(), np.deg2rad(degrees), base[0, :3].copy())
+    out, _ = default_motion_bank().apply(base, "jump_two_foot", mode="replace")
+    for wrist in (20, 21):
+        channels = slice(3 + 6 * wrist, 3 + 6 * (wrist + 1))
+        assert np.allclose(out[:, channels], base[:, channels], atol=1e-6), (
+            degrees, wrist,
+        )
+
+
+@needs_fk
+@pytest.mark.parametrize("motion_id", _FOREARM_HAND_CONTRACTS)
+@pytest.mark.parametrize("mode", ["replace", "insert"])
+def test_authored_hand_plane_survives_composition_at_every_host_heading(motion_id, mode):
+    from agentlodge.editor.motion_bank import _yaw_rotate
+
+    bank = default_motion_bank()
+    spec = bank.resolve(motion_id)
+    original_wrists = (set(spec.absolute_joints) | set(spec.additive_joints)).intersection({20, 21})
+    mirrors = (False, True) if spec.mirrorable else (False,)
+    for mirror in mirrors:
+        wrists = {21 if wrist == 20 else 20 for wrist in original_wrists} if mirror else original_wrists
+        for degrees in range(0, 360, 45):
+            base = _base()
+            if degrees:
+                base = _yaw_rotate(base, np.deg2rad(degrees), base[0, :3].copy())
+            out, report = bank.apply(
+                base, motion_id, mode=mode, mirror=mirror, anchor="center",
+            )
+            event = int(report["event_frame"])
+            for wrist in wrists:
+                alignment = float(_hand_forearm_alignment(out, wrist)[event])
+                assert alignment > 0.99, (
+                    motion_id, mode, mirror, degrees, wrist, alignment,
+                )
+
+
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+@pytest.mark.parametrize("motion_id", tuple(_WRIST_STEP_LIMITS))
+@pytest.mark.parametrize("mode", ["replace", "insert"])
+def test_composed_wrists_do_not_flip_on_real_dance_phases(motion_id, mode):
+    from agentlodge.dance.format import to_editor139
+    from agentlodge.dance.transition import _matrix_to_axis_angle
+
+    dance = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))
+    bank = default_motion_bank()
+    spec = bank.resolve(motion_id)
+    wrists = sorted(
+        (set(spec.absolute_joints) | set(spec.additive_joints)).intersection({20, 21})
+    )
+    for start in (0, 160, 320):
+        base = dance[start:start + 120].copy()
+        out, report = bank.apply(
+            base, motion_id, mode=mode, anchor="center", beats=np.arange(0, 120, 16),
+        )
+        local = _local_joint_rotations(out)
+        action_start, action_end = map(int, report["action_range"])
+        for wrist in wrists:
+            step = (
+                local[action_start + 1:action_end, wrist]
+                @ np.swapaxes(local[action_start:action_end - 1, wrist], -1, -2)
+            )
+            step_angle = np.linalg.norm(_matrix_to_axis_angle(step), axis=-1)
+            maximum = float(step_angle.max())
+            assert maximum < _WRIST_STEP_LIMITS[motion_id], (
+                motion_id, mode, start, wrist, maximum,
+            )
+
+
+@needs_fk
 @pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
 def test_no_motion_drives_the_two_hands_through_each_other(motion_id):
     """Whatever a motion is doing, the dancer has two separate hands for the whole of it.
@@ -1010,18 +1186,19 @@ def test_an_edit_is_legal_no_matter_which_way_the_dancer_is_facing(motion_id, de
 
 @pytest.mark.parametrize("degrees", [0, 45, 90, 135, 180, 225, 270, 315])
 @pytest.mark.parametrize("mode", ["replace", "insert"])
-def test_clap_palm_alignment_survives_every_host_heading(degrees, mode):
+@pytest.mark.parametrize("motion_id", _CLAP_HAND_CONTRACTS)
+def test_clap_palm_alignment_survives_every_host_heading(motion_id, degrees, mode):
     from agentlodge.editor.motion_bank import _yaw_rotate
 
     base = _base()
     if degrees:
         base = _yaw_rotate(base.copy(), np.deg2rad(degrees), base[0, :3].copy())
     window, report = default_motion_bank().apply(
-        base, "clap_single", mode=mode, anchor="center",
+        base, motion_id, mode=mode, anchor="center",
     )
     palm_dot, finger_dot = _clap_hand_alignment(window, int(report["event_frame"]))
-    assert palm_dot < -0.95, (degrees, mode, "palms", palm_dot)
-    assert finger_dot > 0.95, (degrees, mode, "fingers", finger_dot)
+    assert palm_dot < -0.95, (motion_id, degrees, mode, "palms", palm_dot)
+    assert finger_dot > 0.95, (motion_id, degrees, mode, "fingers", finger_dot)
 
 
 @needs_fk

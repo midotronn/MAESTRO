@@ -227,6 +227,26 @@ global wrist frames and assert both directions across canonical clips, splice mo
 headings; the final check remains a side-view Y-Bot render because only the skinned hands show the
 actual contact surfaces.
 
+The same review now covers every motion that can affect a hand. Ten motions do not own either
+wrist channel (`bounce_in_place`, `chest_pop`, `side_step`, `step_touch`, `step_forward`,
+`step_backward`, `turn_quarter`, `turn_half`, `body_roll`, and `crouch_drop`), so composition tests
+require their wrist data to remain host-identical. The other ten have explicit contracts:
+
+- claps require opposing palm normals and parallel fingers at contact;
+- `jump_two_foot` inherits the host wrist pose rather than introducing a new one;
+- `wave`, `point_side`, `arm_punch`, `jump_arms_up`, `celebrate_hands_up`, and `rise_reach`
+  keep the rigid open hand anatomically continuous with the forearm, with wave as the only
+  deliberate local wrist oscillation;
+- all ten are checked for abrupt local wrist steps on several phases of real LODGE output in both
+  replacement and insertion modes, while authored hand planes are checked across eight headings
+  and mirrored variants.
+
+These tests intentionally measure local wrist rotation. A global wrist-frame delta also contains
+the shoulder and elbow motion that carried the hand through space, so treating it as wrist bend
+produces false failures on reaches, celebrations, and arm raises. Close front/side Y-Bot temporal
+sheets remain the visual authority for palm shape and continuity because the 22-joint skeleton
+still ends at the wrist.
+
 **Hands meeting is not enough; *where* and *how* they meet is the action.** With the gap fixed,
 every clap still passed every check while rendering as a bow: the palms met above the chest at
 collarbone height with the elbows winged out level with the shoulders. The user rejected it on
