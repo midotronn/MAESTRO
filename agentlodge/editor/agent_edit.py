@@ -32,7 +32,12 @@ from agentlodge.dance.transition import (
     splice_window,
     temporal_smooth,
 )
-from agentlodge.editor.motion_bank import default_motion_bank, normalize_name, verify_applied_motion
+from agentlodge.editor.motion_bank import (
+    DEFAULT_MOTION_INTENSITY,
+    default_motion_bank,
+    normalize_name,
+    verify_applied_motion,
+)
 from agentlodge.editor.window_edit import (
     EditGoal,
     WindowEditResult,
@@ -156,7 +161,7 @@ def _tool_regenerate(clip, ctx, *, backbone: str = "auto", energy: float = 0.5, 
 
 def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
                       anchor: str | None = None, mirror: bool = False,
-                      intensity: float = 0.5, repeats: int = 1):
+                      intensity: float | None = None, repeats: int = 1):
     bank = default_motion_bank()
     spec = bank.resolve(motion_id)
     dropped = []
@@ -172,7 +177,7 @@ def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
         clip, motion_id, beats=ctx.get("bank_beats", ctx.get("wbeats")),
         beat_strengths=ctx.get("bank_beat_strengths"),
         mode=mode, anchor=anchor,
-        mirror=bool(mirror), intensity=float(intensity), repeats=int(repeats),
+        mirror=bool(mirror), intensity=intensity, repeats=int(repeats),
         blend_frames=int(ctx.get("blend_frames", 8)),
     )
     report["dropped"] = dropped
@@ -229,7 +234,7 @@ TOOLS: dict[str, ToolSpec] = {
         "turns, body roll, crouch, rise, and other listed named actions",
         'params: {"motion_id": "<bank id>", "mode": "replace"|"insert", '
         '"anchor": optional "early"|"center"|"late"|"beat" (omit for the motion default), "mirror": bool, '
-        '"intensity": 0..1, "repeats": 1..8}'),
+        '"intensity": optional 0..1 (omit for the slightly exaggerated default), "repeats": 1..8}'),
 }
 
 
@@ -621,9 +626,48 @@ def _requested_motion_anchor(instruction: str) -> str | None:
     return None
 
 
-def _apply_motion_anchor_defaults(plan: AgentPlan, instruction: str) -> AgentPlan:
-    """Make named-action timing deterministic instead of accepting an LLM's arbitrary anchor."""
+def _requested_motion_intensity(instruction: str) -> float | None:
+    """Return an intensity only when the user explicitly requested one."""
+    raw = str(instruction).lower()
+    numeric = re.search(
+        r"\bintensity\s*(?:of|at|to|=|:)?\s*"
+        r"(0(?:\.\d+)?|1(?:\.0+)?)\b",
+        raw,
+    )
+    if numeric:
+        return float(np.clip(float(numeric.group(1)), 0.0, 1.0))
+    percent = (
+        re.search(r"\bintensity\s*(?:of|at|to|=|:)?\s*(\d{1,3}(?:\.\d+)?)\s*%", raw)
+        or re.search(r"\b(\d{1,3}(?:\.\d+)?)\s*%\s+intensity\b", raw)
+    )
+    if percent:
+        return float(np.clip(float(percent.group(1)) / 100.0, 0.0, 1.0))
+
+    text = f" {normalize_name(instruction)} "
+    if any(phrase in text for phrase in (
+        " huge ", " extreme ", " over the top ", " maximum ", " as big as possible ",
+    )):
+        return 0.95
+    if any(phrase in text for phrase in (
+        " neutral ", " normal sized ", " normal size ", " not exaggerated ",
+    )):
+        return 0.5
+    if any(phrase in text for phrase in (
+        " subtle ", " understated ", " less pronounced ",
+    )):
+        return 0.35
+    if any(phrase in text for phrase in (
+        " big ", " strong ", " explosive ", " dramatic ", " high ", " deep ",
+        " exaggerated ", " exaggerate ",
+    )):
+        return 0.8
+    return None
+
+
+def _apply_motion_defaults(plan: AgentPlan, instruction: str) -> AgentPlan:
+    """Make named-action timing and intensity deterministic across planners."""
     requested = _requested_motion_anchor(instruction)
+    requested_intensity = _requested_motion_intensity(instruction)
     bank = default_motion_bank()
     for step in plan.steps:
         if step.tool != "motion_bank":
@@ -635,6 +679,11 @@ def _apply_motion_anchor_defaults(plan: AgentPlan, instruction: str) -> AgentPla
             continue
         step.params = dict(step.params)
         step.params["anchor"] = requested or spec.default_anchor
+        step.params["intensity"] = (
+            DEFAULT_MOTION_INTENSITY
+            if requested_intensity is None
+            else requested_intensity
+        )
     return plan
 
 
@@ -659,9 +708,9 @@ def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
             bank_spec.mirrorable
             and any(x in text for x in (" left ", " left side ", " left hand ", " to the left "))
         )
-        intensity = 0.8 if any(x in text for x in (
-            " big ", " strong ", " explosive ", " dramatic ", " high ", " deep ",
-        )) else 0.5
+        intensity = _requested_motion_intensity(instruction)
+        if intensity is None:
+            intensity = DEFAULT_MOTION_INTENSITY
         mode = "insert" if explicit_insert else "replace"
         params = {
             "motion_id": bank_spec.id, "mode": mode, "anchor": anchor,
@@ -775,7 +824,10 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         "Their clap, impact, accent, or arrival pose must land on the strongest feasible musical beat "
         "unless the user explicitly asks for early, late, before, after, start, center, or end. "
         "For every named action, omit anchor when the user gives no placement; MAESTRO applies the "
-        "motion's manifest default deterministically.\n\n"
+        "motion's manifest default deterministically. Named motions are slightly exaggerated by "
+        f"default (intensity {DEFAULT_MOTION_INTENSITY:.2f}); omit intensity unless the user asks "
+        "for a different size. Use about 0.8 for big/strong/exaggerated, 0.95 for extreme, 0.5 for "
+        "neutral, and 0.35 for subtle.\n\n"
         "Return JSON ONLY:\n"
         '{"summary": "<one plain-English line describing your plan>",\n'
         ' "steps": [{"tool": "<name>", "params": {...}, "why": "<short reason>"}],\n'
@@ -899,17 +951,17 @@ def plan_edit(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         try:
             p = _llm_plan(instruction, ctx_metrics, a_sec, b_sec, api_key,
                           feedback=feedback, goals=goals)
-            p = _apply_motion_anchor_defaults(p, instruction)
+            p = _apply_motion_defaults(p, instruction)
             p.planner, p.planner_note = "llm", "AI agent (LLM reasoning)"
             return p
         except Exception as exc:  # noqa: BLE001 - robust offline fallback
             logger.warning("agent plan via LLM failed (%s); using keyword plan", exc)
             p = _keyword_plan(instruction, feedback=feedback)
-            p = _apply_motion_anchor_defaults(p, instruction)
+            p = _apply_motion_defaults(p, instruction)
             p.planner = "keyword_fallback"
             p.planner_note = f"offline keyword planner (LLM call failed: {str(exc)[:120]})"
             return p
-    p = _apply_motion_anchor_defaults(_keyword_plan(instruction, feedback=feedback), instruction)
+    p = _apply_motion_defaults(_keyword_plan(instruction, feedback=feedback), instruction)
     p.planner, p.planner_note = "keyword", "offline keyword planner (no API key configured)"
     return p
 

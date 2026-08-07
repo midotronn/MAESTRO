@@ -192,6 +192,16 @@ multi-beat phrases default to `center`. This is enforced after either planner ru
 move a clap off beat merely by returning an arbitrary `center` anchor. An explicit user placement
 such as before, after, start, center, or end still overrides the motion default.
 
+Named motions also default to intensity `0.65`, rather than the old neutral `0.50`. The authored
+clip dynamics are accented first, then the composed pose and root-travel delta owned by the motion
+is amplified modestly relative to the host dance. The amplification tapers to neutral at action
+edges so it does not sharpen the splice. Root yaw keeps its separately bounded close-out, and wrist
+rotations keep their authored hand planes instead of being rescaled. Each clap declares every
+authored contact phase in `intensity_lock_frames`; those poses are restored after raw accentuation
+and skipped by post-composition amplification. Wind-up and release become clearer without moving,
+crossing, or misaligning the hands at any contact. Explicit requests still override the default:
+neutral is `0.50`, big or exaggerated is about `0.80`, and subtle is about `0.35`.
+
 That BAS exception applies only when "on the beat" anchors the named event. An explicit compound
 request such as "add a clap, then make the rest of the window more on beat" retains its whole-window
 BAS goal and is verified separately. Likewise, composed `joint_activity` and

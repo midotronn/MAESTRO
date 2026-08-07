@@ -106,6 +106,7 @@ def test_llm_cannot_move_a_default_beat_hit_off_the_beat(monkeypatch):
     )
     plan = AE.plan_edit("add a clap here", {}, 1.0, 6.0, api_key="sk-x")
     assert plan.steps[0].params["anchor"] == "beat"
+    assert plan.steps[0].params["intensity"] == AE.DEFAULT_MOTION_INTENSITY
 
 
 def test_explicit_named_motion_placement_overrides_its_default(monkeypatch):
@@ -118,6 +119,30 @@ def test_explicit_named_motion_placement_overrides_its_default(monkeypatch):
     )
     plan = AE.plan_edit("add a clap after the next move", {}, 1.0, 6.0, api_key="sk-x")
     assert plan.steps[0].params["anchor"] == "late"
+
+
+def test_explicit_named_motion_intensity_overrides_the_default(monkeypatch):
+    captured: dict = {}
+    _fake_openai(
+        monkeypatch,
+        '{"summary":"neutral clap","steps":[{"tool":"motion_bank","params":'
+        '{"motion_id":"clap_single","intensity":0.9},"why":"add clap"}],"goals":[]}',
+        captured,
+    )
+    plan = AE.plan_edit("add a neutral clap here", {}, 1.0, 6.0, api_key="sk-x")
+    assert plan.steps[0].params["intensity"] == 0.5
+
+
+@pytest.mark.parametrize(
+    "instruction,expected",
+    [
+        ("add a clap at intensity 0.72", 0.72),
+        ("add a clap at 80% intensity", 0.8),
+    ],
+)
+def test_numeric_named_motion_intensity_is_preserved(instruction, expected):
+    plan = AE.plan_edit(instruction, {}, 1.0, 6.0)
+    assert plan.steps[0].params["intensity"] == pytest.approx(expected)
 
 
 def test_llm_plan_falls_back_to_keyword_when_the_api_errors(monkeypatch):

@@ -187,6 +187,14 @@ def test_motion_defaults_distinguish_beat_hits_from_phrase_motions():
     assert all(spec.default_anchor in {"beat", "center"} for spec in bank.specs)
 
 
+def test_named_motions_default_to_a_slight_exaggeration():
+    bank = default_motion_bank()
+    base = _base(180)
+    for spec in bank.specs:
+        _out, report = bank.apply(base, spec.id, beats=np.arange(0, 180, 15))
+        assert report["intensity"] == pytest.approx(0.65), spec.id
+
+
 @pytest.mark.parametrize(
     "motion_id",
     [spec.id for spec in default_motion_bank().specs if spec.default_anchor == "beat"],
@@ -228,6 +236,92 @@ def test_agent_threads_beat_strengths_to_named_motion_placement():
     assert report["anchor"] == "beat"
     assert report["event_frame"] == 30
     assert result.ok
+
+
+@pytest.mark.parametrize(
+    "motion_id",
+    [spec.id for spec in default_motion_bank().specs if spec.id not in _CLAP_HAND_CONTRACTS],
+)
+def test_default_exaggeration_strengthens_owned_pose_without_moving_the_beat(motion_id):
+    from agentlodge.dance.transition import _matrix_to_axis_angle, _sixd_to_matrix
+
+    base = _base(180)
+    beats = np.arange(0, 180, 15)
+    neutral, neutral_report = default_motion_bank().apply(
+        base, motion_id, beats=beats, intensity=0.5,
+    )
+    boosted, boosted_report = default_motion_bank().apply(
+        base, motion_id, beats=beats,
+    )
+    spec = default_motion_bank().resolve(motion_id)
+    start, end = neutral_report["action_range"]
+    joints = sorted(
+        (set(spec.absolute_joints) | set(spec.additive_joints)) - {0, 20, 21}
+    )
+    base_rot = _sixd_to_matrix(base[start:end, 3:135].reshape(-1, 22, 6))
+    neutral_rot = _sixd_to_matrix(neutral[start:end, 3:135].reshape(-1, 22, 6))
+    boosted_rot = _sixd_to_matrix(boosted[start:end, 3:135].reshape(-1, 22, 6))
+    neutral_delta = np.linalg.norm(_matrix_to_axis_angle(
+        neutral_rot[:, joints] @ np.swapaxes(base_rot[:, joints], -1, -2)
+    ), axis=-1)
+    boosted_delta = np.linalg.norm(_matrix_to_axis_angle(
+        boosted_rot[:, joints] @ np.swapaxes(base_rot[:, joints], -1, -2)
+    ), axis=-1)
+    neutral_rms = float(np.sqrt(np.mean(neutral_delta ** 2)))
+    boosted_rms = float(np.sqrt(np.mean(boosted_delta ** 2)))
+    assert boosted_rms > 1.03 * neutral_rms
+    assert boosted_report["event_frame"] == neutral_report["event_frame"]
+    assert boosted_report["action_range"] == neutral_report["action_range"]
+
+
+@pytest.mark.parametrize("motion_id", _CLAP_HAND_CONTRACTS)
+def test_default_clap_exaggeration_preserves_safe_contact(motion_id):
+    from server.fk import compute_poses
+
+    base = _base(180)
+    beats = np.arange(0, 180, 15)
+    neutral, neutral_report = default_motion_bank().apply(
+        base, motion_id, beats=beats, intensity=0.5,
+    )
+    boosted, boosted_report = default_motion_bank().apply(
+        base, motion_id, beats=beats,
+    )
+    event = boosted_report["event_frame"]
+    neutral_joints = compute_poses(neutral)["fk_joints"]
+    boosted_joints = compute_poses(boosted)["fk_joints"]
+    a, b = boosted_report["action_range"]
+    neutral_gaps = np.linalg.norm(
+        neutral_joints[:, 20] - neutral_joints[:, 21], axis=-1,
+    )
+    boosted_gaps = np.linalg.norm(
+        boosted_joints[:, 20] - boosted_joints[:, 21], axis=-1,
+    )
+    contact_frames = [
+        frame
+        for frame in range(a + 1, b - 1)
+        if neutral_gaps[frame] < 0.08
+        and neutral_gaps[frame] <= neutral_gaps[frame - 1]
+        and neutral_gaps[frame] <= neutral_gaps[frame + 1]
+    ]
+    assert contact_frames
+    assert np.allclose(
+        boosted_gaps[contact_frames], neutral_gaps[contact_frames], atol=1e-5,
+    )
+    for frame in contact_frames:
+        palm_dot, finger_dot = _clap_hand_alignment(boosted, frame)
+        assert palm_dot < -0.95
+        assert finger_dot > 0.95
+
+    gap = float(boosted_gaps[event])
+    neutral_travel = float(np.linalg.norm(
+        np.diff(neutral_joints[a:b, [20, 21]], axis=0), axis=-1
+    ).sum())
+    boosted_travel = float(np.linalg.norm(
+        np.diff(boosted_joints[a:b, [20, 21]], axis=0), axis=-1
+    ).sum())
+    assert 0.005 < gap < 0.12
+    assert boosted_travel > neutral_travel
+    assert boosted_report["event_frame"] == neutral_report["event_frame"]
 
 
 def test_beat_strengths_must_align_one_to_one_with_beats():

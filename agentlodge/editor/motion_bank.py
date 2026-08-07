@@ -38,6 +38,11 @@ _JOIN_MAX_FRAMES = 16
 _CONTACT = slice(135, 139)
 _DEFAULT_ROOT = Path(__file__).resolve().parents[2] / "assets" / "motion_bank"
 _VALID_ANCHORS = {"start", "early", "center", "beat", "late", "end"}
+DEFAULT_MOTION_INTENSITY = 0.65
+_POSE_INTENSITY_SHARE = 0.65
+_INTENSITY_EDGE_FRAMES = 4
+_INTENSITY_LOCK_CORE = 1
+_INTENSITY_LOCK_RADIUS = 1
 
 _FPS = 30.0
 _CLOSE_YAW_RATE = 2.5      # rad/s the root may turn while giving an offset back
@@ -80,6 +85,7 @@ class MotionSpec:
     replace_contacts: bool
     carry_root_rotation: bool
     event_pose_joints: tuple[int, ...]
+    intensity_lock_frames: tuple[int, ...]
 
     @classmethod
     def from_dict(cls, raw: dict) -> "MotionSpec":
@@ -109,6 +115,11 @@ class MotionSpec:
             raise ValueError(
                 f"{motion_id}: event-pose joints must also be declared as absolute joints"
             )
+        intensity_lock_frames = tuple(
+            int(x) for x in composition.get("intensity_lock_frames", ())
+        )
+        if any(frame < 0 or frame >= int(raw["frames"]) for frame in intensity_lock_frames):
+            raise ValueError(f"{motion_id}: intensity lock frame lies outside clip")
         axes = {"x": 0, "y": 1, "z": 2}
         try:
             translation_axes = tuple(axes[str(x).lower()] for x in composition.get(
@@ -148,6 +159,7 @@ class MotionSpec:
             replace_contacts=bool(composition.get("replace_contacts", False)),
             carry_root_rotation=carry_root_rotation,
             event_pose_joints=event_pose,
+            intensity_lock_frames=intensity_lock_frames,
         )
 
     def public_dict(self) -> dict:
@@ -169,6 +181,7 @@ class MotionSpec:
                 "replace_contacts": self.replace_contacts,
                 "carry_root_rotation": self.carry_root_rotation,
                 "event_pose_joints": list(self.event_pose_joints),
+                "intensity_lock_frames": list(self.intensity_lock_frames),
             },
             "source": self.source,
             "license": self.license,
@@ -243,7 +256,7 @@ class MotionBank:
         mode: str = "replace",
         anchor: str | None = None,
         mirror: bool = False,
-        intensity: float = 0.5,
+        intensity: float | None = None,
         repeats: int = 1,
         blend_frames: int = 8,
     ) -> tuple[np.ndarray, dict]:
@@ -255,6 +268,11 @@ class MotionBank:
         resolved_anchor = spec.default_anchor if anchor is None else str(anchor).strip().lower()
         if resolved_anchor not in _VALID_ANCHORS:
             raise ValueError(f"unsupported motion-bank anchor: {anchor!r}")
+        resolved_intensity = float(np.clip(
+            DEFAULT_MOTION_INTENSITY if intensity is None else intensity,
+            0.0,
+            1.0,
+        ))
         raw = self.load_clip(spec)
         compose_spec = spec
         if mirror:
@@ -274,13 +292,20 @@ class MotionBank:
             raw = np.concatenate([raw] * count, axis=0)
             if compose_spec.event_pose_joints:
                 compose_spec = replace(compose_spec, event_pose_joints=())
+        intensity_lock_frames = tuple(
+            copy * spec.frames + frame
+            for copy in range(count)
+            for frame in spec.intensity_lock_frames
+        )
         source_event = (count // 2) * spec.frames + spec.event_frame
-        gain = 0.7 + 0.6 * float(np.clip(intensity, 0.0, 1.0))
+        gain = 0.7 + 0.6 * resolved_intensity
         if abs(gain - 1.0) > 1e-6:
+            neutral_raw = raw
             raw = accentuate(
                 raw, gain, baseline_win=min(13, max(3, raw.shape[0] // 4 * 2 + 1)),
                 taper_frames=min(4, max(1, raw.shape[0] // 8)), trans_gain=0.6,
             )
+            raw = _protect_intensity_frames(raw, neutral_raw, intensity_lock_frames)
 
         n = int(base.shape[0])
         if mode not in {"replace", "insert"}:
@@ -303,6 +328,16 @@ class MotionBank:
         start, end, actual_event, local_event = _action_placement(
             n, action_len, local_event, target_event,
         )
+        protected_frames = tuple(
+            start + _fit_event_frame(
+                frame,
+                raw.shape[0],
+                source_event,
+                action_len,
+                local_event,
+            )
+            for frame in intensity_lock_frames
+        )
         host = (
             base
             if mode == "replace"
@@ -316,6 +351,14 @@ class MotionBank:
             action_len,
             compose_spec,
             blend_frames=blend_frames,
+        )
+        fitted = _exaggerate_owned_delta(
+            fitted,
+            host,
+            compose_spec,
+            action_range,
+            gain=1.0 + _POSE_INTENSITY_SHARE * (gain - 1.0),
+            protected_frames=protected_frames,
         )
 
         fitted = _close_root_residual(fitted, base, earliest=action_range[1])
@@ -335,7 +378,7 @@ class MotionBank:
             "recommended_beats": float(spec.recommended_beats * count),
             "beat_error_frames": _beat_error(actual_event, beats, n),
             "mirror": bool(mirror),
-            "intensity": float(np.clip(intensity, 0.0, 1.0)),
+            "intensity": resolved_intensity,
             "repeats": count,
             "source": spec.source,
             "license": spec.license,
@@ -559,6 +602,121 @@ def _beat_error(target: int, beats: np.ndarray | None, n: int) -> float | None:
     if not valid.size:
         return None
     return float(np.min(np.abs(valid - int(target))))
+
+
+def _intensity_release(n: int, locked_frames: tuple[int, ...]) -> np.ndarray:
+    """Return zero at protected poses and ease back to full intensity around them."""
+    release = np.ones(int(n), dtype=np.float32)
+    positions = np.arange(int(n), dtype=np.float32)
+    for frame in locked_frames:
+        distance = np.abs(positions - float(frame)) - _INTENSITY_LOCK_CORE
+        t = np.clip(distance / _INTENSITY_LOCK_RADIUS, 0.0, 1.0)
+        release = np.minimum(release, t * t * (3.0 - 2.0 * t))
+    return release
+
+
+def _protect_intensity_frames(
+    accented: np.ndarray,
+    neutral: np.ndarray,
+    locked_frames: tuple[int, ...],
+) -> np.ndarray:
+    """Preserve authored contact geometry while accenting its approach and release."""
+    if not locked_frames:
+        return accented
+    out = np.asarray(accented, dtype=np.float32).copy()
+    reference = np.asarray(neutral, dtype=np.float32)
+    release = _intensity_release(out.shape[0], locked_frames)
+    out[:, :3] = reference[:, :3] + release[:, None] * (
+        out[:, :3] - reference[:, :3]
+    )
+    reference_r = _sixd_to_matrix(reference[:, _ROT].reshape(-1, 22, 6))
+    accented_r = _sixd_to_matrix(out[:, _ROT].reshape(-1, 22, 6))
+    delta = accented_r @ np.swapaxes(reference_r, -1, -2)
+    out[:, _ROT] = _matrix_to_sixd(
+        _fractional_rotation(delta, release[:, None]) @ reference_r
+    ).reshape(-1, 22 * 6)
+    return out
+
+
+def _fit_event_frame(
+    frame: int,
+    source_frames: int,
+    event: int,
+    output_frames: int,
+    target: int,
+) -> int:
+    """Map a source pose to the same output frame used by ``_fit_event``."""
+    frame = int(np.clip(frame, 0, source_frames - 1))
+    event = int(np.clip(event, 0, source_frames - 1))
+    target = int(np.clip(target, 0, output_frames - 1))
+    if frame <= event:
+        return int(round(target * frame / max(1, event)))
+    tail = int(output_frames - 1 - target)
+    return int(target + round(
+        tail * (frame - event) / max(1, source_frames - 1 - event)
+    ))
+
+
+def _exaggerate_owned_delta(
+    motion: np.ndarray,
+    reference: np.ndarray,
+    spec: MotionSpec,
+    action_range: tuple[int, int],
+    *,
+    gain: float,
+    protected_frames: tuple[int, ...] = (),
+) -> np.ndarray:
+    """Scale only the named action's owned delta, leaving the host dance and seams intact."""
+    if abs(float(gain) - 1.0) <= 1e-6:
+        return motion
+    out = np.asarray(motion, dtype=np.float32).copy()
+    ref = np.asarray(reference, dtype=np.float32)
+    a, b = map(int, action_range)
+    if b <= a:
+        return out
+
+    frame_gain = np.full(b - a, float(gain), dtype=np.float32)
+    edge = min(_INTENSITY_EDGE_FRAMES, max(1, (b - a) // 4))
+    if edge:
+        t = np.linspace(0.0, 1.0, edge + 2, dtype=np.float32)[1:-1]
+        taper = t * t * (3.0 - 2.0 * t)
+        frame_gain[:edge] = 1.0 + (gain - 1.0) * taper
+        frame_gain[-edge:] = 1.0 + (gain - 1.0) * taper[::-1]
+    local_locks = tuple(frame - a for frame in protected_frames if a <= frame < b)
+    if local_locks:
+        frame_gain = 1.0 + (frame_gain - 1.0) * _intensity_release(
+            b - a, local_locks
+        )
+    active = np.flatnonzero(np.abs(frame_gain - 1.0) > 1e-6)
+    if not active.size:
+        return out
+
+    # Root yaw has its own bounded close-out and wrists carry authored hand planes. Scaling either
+    # here can create a seam whip or make a correct palm pose look detached from its forearm.
+    owned = sorted(
+        (set(spec.absolute_joints) | set(spec.additive_joints)) - {0, 20, 21}
+    )
+    if owned:
+        ref_rot = _sixd_to_matrix(ref[a:b, _ROT].reshape(-1, 22, 6))
+        out_rot = _sixd_to_matrix(out[a:b, _ROT].reshape(-1, 22, 6))
+        delta = (
+            out_rot[active][:, owned]
+            @ np.swapaxes(ref_rot[active][:, owned], -1, -2)
+        )
+        delta_aa = _matrix_to_axis_angle(delta) * frame_gain[active, None, None]
+        scaled = _matrix_to_sixd(
+            _axis_angle_to_matrix(delta_aa) @ ref_rot[active][:, owned]
+        )
+        for index, joint in enumerate(owned):
+            channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+            out[a + active, channels] = scaled[:, index]
+
+    for axis in spec.translation_axes:
+        frames = a + active
+        out[frames, axis] = ref[frames, axis] + frame_gain[active] * (
+            out[frames, axis] - ref[frames, axis]
+        )
+    return out
 
 
 def _join_tail(n: int) -> int:

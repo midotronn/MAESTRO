@@ -144,7 +144,8 @@ def test_editor_review_actions_explain_the_user_flow():
     tour = js[js.index("const TOUR_STEPS"):js.index("let tourIdx")]
     assert "\\u2014" not in tour and "—" not in tour
     assert 'el: "motionPicker"' in tour
-    assert "strongest beat in the selected window by default" in tour
+    assert "slightly exaggerated so they read clearly" in tour
+    assert "strongest beat in the selected window" in tour
 
 
 def test_basic_auth_middleware_guards_when_env_set():
