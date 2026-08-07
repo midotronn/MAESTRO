@@ -37,6 +37,7 @@ _JOIN_MAX_RATE = 0.05
 _JOIN_MAX_FRAMES = 16
 _CONTACT = slice(135, 139)
 _DEFAULT_ROOT = Path(__file__).resolve().parents[2] / "assets" / "motion_bank"
+_VALID_ANCHORS = {"start", "early", "center", "beat", "late", "end"}
 
 _FPS = 30.0
 _CLOSE_YAW_RATE = 2.5      # rad/s the root may turn while giving an offset back
@@ -71,6 +72,7 @@ class MotionSpec:
     repeatable: bool
     event_frame: int
     recommended_beats: float
+    default_anchor: str
     validator: dict
     absolute_joints: tuple[int, ...]
     additive_joints: tuple[int, ...]
@@ -84,7 +86,7 @@ class MotionSpec:
         required = {
             "id", "name", "aliases", "category", "clip", "fps", "frames", "source", "license",
             "attribution", "stationary", "mirrorable", "repeatable", "event_frame",
-            "recommended_beats", "validator", "composition",
+            "recommended_beats", "default_anchor", "validator", "composition",
         }
         missing = sorted(required - set(raw))
         if missing:
@@ -116,6 +118,11 @@ class MotionSpec:
         carry_root_rotation = bool(composition.get("carry_root_rotation", False))
         if carry_root_rotation and 0 not in additive:
             raise ValueError(f"{motion_id}: carrying root rotation requires additive joint 0")
+        default_anchor = str(raw["default_anchor"]).strip().lower()
+        if default_anchor not in {"center", "beat"}:
+            raise ValueError(
+                f"{motion_id}: default_anchor must be 'center' or 'beat', got {default_anchor!r}"
+            )
         return cls(
             id=motion_id,
             name=str(raw["name"]).strip(),
@@ -133,6 +140,7 @@ class MotionSpec:
             repeatable=bool(raw["repeatable"]),
             event_frame=int(raw["event_frame"]),
             recommended_beats=float(raw["recommended_beats"]),
+            default_anchor=default_anchor,
             validator=dict(raw["validator"]),
             absolute_joints=absolute,
             additive_joints=additive,
@@ -153,6 +161,7 @@ class MotionSpec:
             "mirrorable": self.mirrorable,
             "repeatable": self.repeatable,
             "recommended_beats": self.recommended_beats,
+            "default_anchor": self.default_anchor,
             "composition": {
                 "absolute_joints": list(self.absolute_joints),
                 "additive_joints": list(self.additive_joints),
@@ -231,7 +240,7 @@ class MotionBank:
         *,
         beats: np.ndarray | None = None,
         mode: str = "replace",
-        anchor: str = "center",
+        anchor: str | None = None,
         mirror: bool = False,
         intensity: float = 0.5,
         repeats: int = 1,
@@ -242,6 +251,9 @@ class MotionBank:
         if base.ndim != 2 or base.shape[1] != 139:
             raise ValueError(f"base clip must have shape (frames, 139), got {base.shape}")
         spec = self.resolve(motion_id)
+        resolved_anchor = spec.default_anchor if anchor is None else str(anchor).strip().lower()
+        if resolved_anchor not in _VALID_ANCHORS:
+            raise ValueError(f"unsupported motion-bank anchor: {anchor!r}")
         raw = self.load_clip(spec)
         compose_spec = spec
         if mirror:
@@ -282,7 +294,7 @@ class MotionBank:
         target_event = _target_event(
             n,
             beats,
-            anchor,
+            resolved_anchor,
             minimum=local_event,
             maximum=latest + local_event,
         )
@@ -314,7 +326,7 @@ class MotionBank:
             "name": spec.name,
             "category": spec.category,
             "mode": mode,
-            "anchor": anchor,
+            "anchor": resolved_anchor,
             "event_frame": int(actual_event),
             "action_range": action_range,
             "action_frames": int(action_range[1] - action_range[0]),

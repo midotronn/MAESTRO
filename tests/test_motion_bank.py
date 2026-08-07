@@ -175,6 +175,31 @@ def test_every_name_and_alias_routes_through_the_single_generic_tool():
             assert plan.steps[0].params["mode"] == "replace"
 
 
+def test_motion_defaults_distinguish_beat_hits_from_phrase_motions():
+    beat_hits = {
+        "clap_single", "clap_repeat", "clap_overhead",
+        "jump_two_foot", "jump_arms_up",
+        "point_side", "celebrate_hands_up", "chest_pop", "arm_punch",
+        "crouch_drop", "rise_reach",
+    }
+    bank = default_motion_bank()
+    assert {spec.id for spec in bank.specs if spec.default_anchor == "beat"} == beat_hits
+    assert all(spec.default_anchor in {"beat", "center"} for spec in bank.specs)
+
+
+@pytest.mark.parametrize(
+    "motion_id",
+    [spec.id for spec in default_motion_bank().specs if spec.default_anchor == "beat"],
+)
+def test_beat_hit_motion_defaults_land_on_a_musical_beat(motion_id):
+    base = _base(180)
+    _out, report = default_motion_bank().apply(
+        base, motion_id, beats=np.arange(0, 180, 15),
+    )
+    assert report["anchor"] == "beat"
+    assert report["beat_error_frames"] <= 0.5
+
+
 @pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
 def test_every_motion_fits_replacement_and_preserves_contract(motion_id):
     bank = default_motion_bank()

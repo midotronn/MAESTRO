@@ -155,7 +155,7 @@ def _tool_regenerate(clip, ctx, *, backbone: str = "auto", energy: float = 0.5, 
 
 
 def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
-                      anchor: str = "center", mirror: bool = False,
+                      anchor: str | None = None, mirror: bool = False,
                       intensity: float = 0.5, repeats: int = 1):
     bank = default_motion_bank()
     spec = bank.resolve(motion_id)
@@ -227,7 +227,7 @@ TOOLS: dict[str, ToolSpec] = {
         "window while preserving the song duration. Use for clap, jump, wave, point, punch, steps, "
         "turns, body roll, crouch, rise, and other listed named actions",
         'params: {"motion_id": "<bank id>", "mode": "replace"|"insert", '
-        '"anchor": "early"|"center"|"late"|"beat", "mirror": bool, '
+        '"anchor": optional "early"|"center"|"late"|"beat" (omit for the motion default), "mirror": bool, '
         '"intensity": 0..1, "repeats": 1..8}'),
 }
 
@@ -598,6 +598,45 @@ def _escalate_params(tool: str, params: dict, cycle: int) -> dict:
     return p
 
 
+def _requested_motion_anchor(instruction: str) -> str | None:
+    """Return only a placement the user explicitly requested."""
+    text = f" {normalize_name(instruction)} "
+    if any(phrase in text for phrase in (" before ", " ahead of ")):
+        return "early"
+    if any(phrase in text for phrase in (" after ", " following ")):
+        return "late"
+    if any(phrase in text for phrase in (
+        " at the start ", " at start ", " at the beginning ", " at beginning ",
+    )):
+        return "start"
+    if any(phrase in text for phrase in (" at the end ", " at end ")):
+        return "end"
+    if any(phrase in text for phrase in (" in the middle ", " at the center ", " in the center ")):
+        return "center"
+    if any(phrase in text for phrase in (
+        " on beat ", " on the beat ", " to the beat ", " nearest beat ", " hit the beat ",
+    )):
+        return "beat"
+    return None
+
+
+def _apply_motion_anchor_defaults(plan: AgentPlan, instruction: str) -> AgentPlan:
+    """Make named-action timing deterministic instead of accepting an LLM's arbitrary anchor."""
+    requested = _requested_motion_anchor(instruction)
+    bank = default_motion_bank()
+    for step in plan.steps:
+        if step.tool != "motion_bank":
+            continue
+        motion_id = step.params.get("motion_id")
+        try:
+            spec = bank.resolve(motion_id)
+        except (TypeError, ValueError):
+            continue
+        step.params = dict(step.params)
+        step.params["anchor"] = requested or spec.default_anchor
+    return plan
+
+
 def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
     """Offline planner: compose one tool per requested metric (multi-goal aware).
 
@@ -611,9 +650,7 @@ def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
         explicit_insert = any(phrase in text for phrase in (
             " insert ", " before ", " after ", " between ", " ahead of ", " following ",
         ))
-        anchor = "early" if any(x in text for x in (" before ", " ahead of ")) else (
-            "late" if any(x in text for x in (" after ", " following ")) else "beat"
-        )
+        anchor = _requested_motion_anchor(instruction) or bank_spec.default_anchor
         repeats = 3 if any(x in text for x in (" three times ", " thrice ")) else (
             2 if any(x in text for x in (" twice ", " two times ")) else 1
         )
@@ -716,6 +753,7 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
     bank_lines = ", ".join(f"{s.id} ({s.name}; aliases: {', '.join(s.aliases)})" for s in _specs)
     repeatable = ", ".join(s.id for s in _specs if s.repeatable) or "none"
     mirrorable = ", ".join(s.id for s in _specs if s.mirrorable) or "none"
+    beat_default = ", ".join(s.id for s in _specs if s.default_anchor == "beat") or "none"
     prompt = (
         "You are a dance-motion editing agent. The user selected the window "
         f"[{a_sec:.1f}s..{b_sec:.1f}s] of a dance and asked: \"{instruction}\".\n"
@@ -731,7 +769,12 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         "song duration. Never invent a motion_id outside this vocabulary.\n"
         f"Only these accept repeats>1: {repeatable}. Only these accept mirror=true: {mirrorable}. "
         "Asking for either outside those lists is dropped and the action simply plays once, so "
-        "prefer a motion that supports repetition when the user asks for something twice.\n\n"
+        "prefer a motion that supports repetition when the user asks for something twice.\n"
+        f"These named actions are beat-hit motions and default to anchor=beat: {beat_default}. "
+        "Their clap, impact, accent, or arrival pose must land on the nearest feasible musical beat "
+        "unless the user explicitly asks for early, late, before, after, start, center, or end. "
+        "For every named action, omit anchor when the user gives no placement; MAESTRO applies the "
+        "motion's manifest default deterministically.\n\n"
         "Return JSON ONLY:\n"
         '{"summary": "<one plain-English line describing your plan>",\n'
         ' "steps": [{"tool": "<name>", "params": {...}, "why": "<short reason>"}],\n'
@@ -855,15 +898,17 @@ def plan_edit(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         try:
             p = _llm_plan(instruction, ctx_metrics, a_sec, b_sec, api_key,
                           feedback=feedback, goals=goals)
+            p = _apply_motion_anchor_defaults(p, instruction)
             p.planner, p.planner_note = "llm", "AI agent (LLM reasoning)"
             return p
         except Exception as exc:  # noqa: BLE001 - robust offline fallback
             logger.warning("agent plan via LLM failed (%s); using keyword plan", exc)
             p = _keyword_plan(instruction, feedback=feedback)
+            p = _apply_motion_anchor_defaults(p, instruction)
             p.planner = "keyword_fallback"
             p.planner_note = f"offline keyword planner (LLM call failed: {str(exc)[:120]})"
             return p
-    p = _keyword_plan(instruction, feedback=feedback)
+    p = _apply_motion_anchor_defaults(_keyword_plan(instruction, feedback=feedback), instruction)
     p.planner, p.planner_note = "keyword", "offline keyword planner (no API key configured)"
     return p
 

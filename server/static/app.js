@@ -235,13 +235,15 @@ const TOUR_STEPS = [
     text: "Drag across this bar to choose the window of the dance you want to change. The shaded band is your window." },
   { el: "instruction", title: "2 · Say what you want",
     text: "Describe the change in plain English, for example \u201cmake it more energetic\u201d, \u201ctighten to the beat\u201d, \u201cadd a clap here\u201d, or \u201cinsert a wave before the next move\u201d. The agent chooses the right edit." },
-  { el: "apply", title: "3 · Apply the edit",
-    text: "The agent plans the right tools, applies them, and verifies the result actually hit your goal \u2014 refining if it didn\u2019t." },
-  { el: "compareBtn", title: "4 · Review the result",
+  { el: "motionPicker", title: "3 · Browse 20 supported motions",
+    text: "Open this catalog to see every common motion MAESTRO supports. Click one to add it to your prompt. Claps and other beat-hit motions land on the nearest beat by default." },
+  { el: "apply", title: "4 · Apply the edit",
+    text: "The agent plans the right tools, applies them, and verifies the result actually hit your goal. If needed, it refines the edit." },
+  { el: "compareBtn", title: "5 · Review the result",
     text: "Review the edited window beside an earlier version, synchronized to the music. Use Render full dance only when you want a slower final review of the complete performance." },
-  { el: "history", title: "5 · Iterate freely",
-    text: "Every edit is a checkpoint \u2014 undo, redo, compare versions, or reset to start over. Edit, listen, refine." },
-  { el: "song", title: "That\u2019s it \u2014 have fun!",
+  { el: "history", title: "6 · Iterate freely",
+    text: "Every edit is a checkpoint. Undo, redo, compare versions, or reset to start over. Edit, listen, refine." },
+  { el: "song", title: "That\u2019s it. Have fun!",
     text: "Switch songs here or upload your own. Tap the \u201c?\u201d in the top bar to see this again anytime." },
 ];
 let tourIdx = 0;
@@ -251,6 +253,7 @@ function showTourStep(i) {
   if (!step) return endTour();
   const target = $(step.el), ring = $("tourRing"), card = $("tourCard");
   if (target) {
+    if (target.tagName === "DETAILS") target.open = true;
     const r = target.getBoundingClientRect(), pad = 6;
     ring.style.display = "block";
     ring.style.left = (r.left - pad) + "px"; ring.style.top = (r.top - pad) + "px";
@@ -294,12 +297,16 @@ async function loadMotionBank() {
   try {
     const data = await api("/api/motions");
     host.innerHTML = "";
-    (data.motions || []).forEach((motion) => {
+    const motions = data.motions || [];
+    motions.forEach((motion) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "chip";
       button.textContent = motion.name;
-      button.title = `${motion.category} · try this named motion`;
+      const timing = motion.default_anchor === "beat"
+        ? "lands on the nearest beat by default"
+        : "centered in the selected window by default";
+      button.title = `${motion.category} · ${timing}`;
       button.onclick = () => {
         $("instruction").value = `add a ${motion.name.toLowerCase()} here`;
         $("instruction").focus();

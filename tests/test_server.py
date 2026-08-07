@@ -48,6 +48,7 @@ def test_lists_named_motions_from_the_shared_manifest(client):
     clap = next(m for m in data["motions"] if m["id"] == "clap_single")
     assert clap["name"] == "Single clap"
     assert "clap" in clap["aliases"]
+    assert clap["default_anchor"] == "beat"
     assert clap["source"] and clap["license"] and clap["attribution"]
 
 
@@ -118,9 +119,16 @@ def test_editor_review_actions_explain_the_user_flow():
     assert "startFullRender" in js
     assert 'startRender("window")' not in js
     assert 'id="motionSuggestions"' in html
+    assert 'id="motionPicker"' in html
+    assert "20 supported common motions" in html
     assert "/api/motions" in js
     assert "add a clap here" in js
     assert "insert a wave before the next move" in js
+
+    tour = js[js.index("const TOUR_STEPS"):js.index("let tourIdx")]
+    assert "\\u2014" not in tour and "—" not in tour
+    assert 'el: "motionPicker"' in tour
+    assert "nearest beat by default" in tour
 
 
 def test_basic_auth_middleware_guards_when_env_set():

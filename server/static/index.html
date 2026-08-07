@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260804-3" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@500;700;800&family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="/static/style.css?v=20260804-2" />
+<link rel="stylesheet" href="/static/style.css?v=20260807-1" />
 </head>
 <body>
 <div class="app">
@@ -105,9 +105,10 @@
                placeholder="Describe any change in your own words…  e.g. 'calmer but keep it tight to the beat', 'explosive hits on the drop', 'flip and reverse this'" />
         <button id="apply" class="apply">Apply edit</button>
       </div>
-      <details class="motion-picker">
-        <summary>Named motions <span>claps, jumps, gestures, steps, turns, and level changes</span></summary>
-        <div id="motionSuggestions" class="chips" aria-label="Named motion examples"></div>
+      <details id="motionPicker" class="motion-picker">
+        <summary><strong>20 supported common motions</strong><span>browse the full motion catalog</span></summary>
+        <p class="motion-picker-help">Click a motion to add it to your prompt. Beat-hit motions land on the nearest beat by default.</p>
+        <div id="motionSuggestions" class="chips" aria-label="20 supported common motions"></div>
       </details>
     </section>
 
@@ -153,6 +154,6 @@
     </div>
   </div>
 </div>
-<script src="/static/app.js?v=20260804-2"></script>
+<script src="/static/app.js?v=20260807-1"></script>
 </body>
 </html>

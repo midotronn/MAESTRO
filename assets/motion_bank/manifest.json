@@ -19,6 +19,7 @@
       "repeatable": true,
       "event_frame": 24,
       "recommended_beats": 1.0,
+      "default_anchor": "beat",
       "validator": {"type": "joint_activity", "joints": [18, 19, 20, 21], "threshold": 0.45},
       "composition": {
         "absolute_joints": [13, 14, 16, 17, 18, 19, 20, 21],
@@ -42,6 +43,7 @@
       "repeatable": true,
       "event_frame": 20,
       "recommended_beats": 2.0,
+      "default_anchor": "beat",
       "validator": {"type": "joint_activity", "joints": [18, 19, 20, 21], "threshold": 0.45},
       "composition": {
         "absolute_joints": [13, 14, 16, 17, 18, 19, 20, 21]
@@ -64,6 +66,7 @@
       "repeatable": true,
       "event_frame": 30,
       "recommended_beats": 1.0,
+      "default_anchor": "beat",
       "validator": {"type": "joint_activity", "joints": [16, 17, 18, 19], "threshold": 0.65},
       "composition": {
         "absolute_joints": [13, 14, 16, 17, 18, 19, 20, 21],
@@ -87,6 +90,7 @@
       "repeatable": true,
       "event_frame": 28,
       "recommended_beats": 1.0,
+      "default_anchor": "beat",
       "validator": {"type": "vertical_peak", "threshold": 0.14, "airborne_fraction": 0.15},
       "composition": {
         "additive_joints": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
@@ -111,6 +115,7 @@
       "repeatable": true,
       "event_frame": 31,
       "recommended_beats": 1.0,
+      "default_anchor": "beat",
       "validator": {"type": "vertical_peak", "threshold": 0.16, "airborne_fraction": 0.15},
       "composition": {
         "absolute_joints": [13, 14, 16, 17, 18, 19, 20, 21],
@@ -137,6 +142,7 @@
       "repeatable": true,
       "event_frame": 18,
       "recommended_beats": 2.0,
+      "default_anchor": "center",
       "validator": {"type": "vertical_cycles", "threshold": 2},
       "composition": {
         "additive_joints": [0, 3, 4, 5, 6, 9, 12, 16, 17],
@@ -160,6 +166,7 @@
       "repeatable": true,
       "event_frame": 36,
       "recommended_beats": 2.0,
+      "default_anchor": "center",
       "validator": {"type": "joint_activity", "joints": [16, 17, 18, 19, 20, 21], "threshold": 0.65},
       "composition": {
         "absolute_joints": [14, 17, 19, 21],
@@ -183,6 +190,7 @@
       "repeatable": false,
       "event_frame": 30,
       "recommended_beats": 1.0,
+      "default_anchor": "beat",
       "validator": {"type": "joint_activity", "joints": [16, 17, 18, 19], "threshold": 0.75},
       "composition": {
         "absolute_joints": [14, 17, 19, 21],
@@ -207,6 +215,7 @@
       "repeatable": false,
       "event_frame": 35,
       "recommended_beats": 1.0,
+      "default_anchor": "beat",
       "validator": {"type": "joint_activity", "joints": [16, 17], "threshold": 1.0},
       "composition": {
         "absolute_joints": [13, 14, 16, 17, 18, 19, 20, 21],
@@ -231,6 +240,7 @@
       "repeatable": true,
       "event_frame": 23,
       "recommended_beats": 1.0,
+      "default_anchor": "beat",
       "validator": {"type": "articulation_chain", "joints": [3, 6, 9], "threshold": 0.18},
       "composition": {
         "additive_joints": [0, 3, 4, 5, 6, 9, 12, 16, 17]
@@ -253,6 +263,7 @@
       "repeatable": true,
       "event_frame": 26,
       "recommended_beats": 1.0,
+      "default_anchor": "beat",
       "validator": {"type": "joint_activity", "joints": [16, 17, 18, 19], "threshold": 0.85},
       "composition": {
         "absolute_joints": [14, 17, 19, 21],
@@ -277,6 +288,7 @@
       "repeatable": true,
       "event_frame": 34,
       "recommended_beats": 2.0,
+      "default_anchor": "center",
       "validator": {"type": "root_displacement", "axis": "x", "threshold": 0.25},
       "composition": {
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11],
@@ -302,6 +314,7 @@
       "repeatable": true,
       "event_frame": 42,
       "recommended_beats": 2.0,
+      "default_anchor": "center",
       "validator": {"type": "root_displacement", "axis": "x", "threshold": 0.18},
       "composition": {
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11],
@@ -327,6 +340,7 @@
       "repeatable": true,
       "event_frame": 34,
       "recommended_beats": 2.0,
+      "default_anchor": "center",
       "validator": {"type": "root_displacement", "axis": "y", "threshold": 0.28},
       "composition": {
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11],
@@ -352,6 +366,7 @@
       "repeatable": true,
       "event_frame": 34,
       "recommended_beats": 2.0,
+      "default_anchor": "center",
       "validator": {"type": "root_displacement", "axis": "y", "threshold": 0.28},
       "composition": {
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11],
@@ -377,6 +392,7 @@
       "repeatable": true,
       "event_frame": 36,
       "recommended_beats": 2.0,
+      "default_anchor": "center",
       "validator": {"type": "root_yaw", "threshold": 1.25},
       "composition": {
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11],
@@ -402,6 +418,7 @@
       "repeatable": true,
       "event_frame": 42,
       "recommended_beats": 2.0,
+      "default_anchor": "center",
       "validator": {"type": "root_yaw", "threshold": 2.6},
       "composition": {
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11],
@@ -427,6 +444,7 @@
       "repeatable": true,
       "event_frame": 38,
       "recommended_beats": 2.0,
+      "default_anchor": "center",
       "validator": {"type": "articulation_chain", "joints": [3, 6, 9], "threshold": 0.25},
       "composition": {
         "additive_joints": [0, 3, 4, 5, 6, 9, 12, 16, 17],
@@ -450,6 +468,7 @@
       "repeatable": false,
       "event_frame": 38,
       "recommended_beats": 1.0,
+      "default_anchor": "beat",
       "validator": {"type": "root_level", "direction": "down", "threshold": 0.18},
       "composition": {
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11],
@@ -474,6 +493,7 @@
       "repeatable": false,
       "event_frame": 42,
       "recommended_beats": 1.0,
+      "default_anchor": "beat",
       "validator": {"type": "root_level", "direction": "up", "threshold": 0.18},
       "composition": {
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21],

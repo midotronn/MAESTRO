@@ -93,6 +93,31 @@ def test_llm_prompt_carries_the_critical_routing_rules(monkeypatch):
     assert "new motion" in prompt and "choreograph" in prompt          # create-new routing present
     assert "only" in prompt and "goal" in prompt                       # goal-discipline present
     assert "reshape" in prompt or "resize" in prompt                   # lever-vs-regenerate distinction
+    assert "beat-hit motions" in prompt and "clap_single" in prompt
+
+
+def test_llm_cannot_move_a_default_beat_hit_off_the_beat(monkeypatch):
+    captured: dict = {}
+    _fake_openai(
+        monkeypatch,
+        '{"summary":"clap","steps":[{"tool":"motion_bank","params":'
+        '{"motion_id":"clap_single","anchor":"center"},"why":"add clap"}],"goals":[]}',
+        captured,
+    )
+    plan = AE.plan_edit("add a clap here", {}, 1.0, 6.0, api_key="sk-x")
+    assert plan.steps[0].params["anchor"] == "beat"
+
+
+def test_explicit_named_motion_placement_overrides_its_default(monkeypatch):
+    captured: dict = {}
+    _fake_openai(
+        monkeypatch,
+        '{"summary":"late clap","steps":[{"tool":"motion_bank","params":'
+        '{"motion_id":"clap_single","anchor":"center"},"why":"add clap"}],"goals":[]}',
+        captured,
+    )
+    plan = AE.plan_edit("add a clap after the next move", {}, 1.0, 6.0, api_key="sk-x")
+    assert plan.steps[0].params["anchor"] == "late"
 
 
 def test_llm_plan_falls_back_to_keyword_when_the_api_errors(monkeypatch):

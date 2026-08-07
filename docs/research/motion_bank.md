@@ -183,6 +183,13 @@ note says so — failing the whole edit would hand back an unchanged window, whi
 worse than the nearest valid edit. The planner is told which motions accept `repeats` and `mirror`
 so it can choose a better one, but the degradation is what makes it safe when it does not.
 
+Each manifest entry also declares a `default_anchor`. Discrete hits and arrivals, including claps,
+jumps, points, celebrations, chest pops, punches, drops, and rises, default to `beat`; their semantic
+event is placed on the nearest feasible musical beat. Grooves and multi-beat phrases default to
+`center`. This is enforced after either planner runs, so an LLM cannot move a clap off beat merely by
+returning an arbitrary `center` anchor. An explicit user placement such as before, after, start,
+center, or end still overrides the motion default.
+
 That BAS exception applies only when "on the beat" anchors the named event. An explicit compound
 request such as "add a clap, then make the rest of the window more on beat" retains its whole-window
 BAS goal and is verified separately. Likewise, composed `joint_activity` and
