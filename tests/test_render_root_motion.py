@@ -55,6 +55,35 @@ def test_prepare_root_motion_rotates_travel_with_the_render_yaw():
     assert np.allclose(plan.root_path[-1, :2], [-original_delta[1], original_delta[0]])
 
 
+def test_render_npz_keeps_contacts_for_contact_aware_grounding(tmp_path, monkeypatch):
+    from server import fk
+
+    motion = np.zeros((3, 139), dtype=np.float32)
+    motion[:, 3:135] = np.tile(
+        np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0], dtype=np.float32),
+        (3, 22),
+    )
+    motion[:, 135:139] = np.array([
+        [1.0, 1.0, 1.0, 1.0],
+        [0.0, 0.0, 0.0, 0.0],
+        [1.0, 0.0, 1.0, 0.0],
+    ])
+    monkeypatch.setattr(
+        fk,
+        "compute_poses",
+        lambda value: {
+            "poses": np.zeros((len(value), 24, 3), dtype=np.float32),
+            "trans": np.zeros((len(value), 3), dtype=np.float32),
+            "fk_joints": np.zeros((len(value), 22, 3), dtype=np.float32),
+        },
+    )
+    path = tmp_path / "poses.npz"
+    fk.save_poses_npz(motion, path)
+
+    with np.load(path) as payload:
+        assert np.array_equal(payload["contacts"], motion[:, 135:139])
+
+
 def test_smooth_path_reduces_camera_jitter_and_keeps_the_shape():
     frame_count = 9
     path = np.column_stack([

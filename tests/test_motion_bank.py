@@ -124,6 +124,17 @@ def test_manifest_has_twenty_valid_redistributable_motions():
         assert validate_semantics(clip, spec)["ok"]
 
 
+@needs_fk
+def test_committed_clips_match_the_procedural_authoring_source():
+    """A blind audit must not certify stale .npy files after the recipe changes."""
+    from scripts.build_motion_bank import build_motion
+
+    bank = default_motion_bank()
+    for spec in bank.specs:
+        expected = build_motion(spec.id, spec.frames)
+        assert np.allclose(bank.load_clip(spec), expected, rtol=1e-6, atol=1e-6), spec.id
+
+
 def test_every_wrist_owning_motion_has_an_explicit_hand_contract():
     wrist_owners = {
         spec.id
@@ -132,9 +143,187 @@ def test_every_wrist_owning_motion_has_an_explicit_hand_contract():
     }
     assert wrist_owners == (
         set(_CLAP_HAND_CONTRACTS)
-        | set(_HOST_WRIST_CONTRACTS)
         | set(_FOREARM_HAND_CONTRACTS)
     )
+
+
+def test_every_motion_has_a_blind_visual_acceptance_contract():
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "assets", "motion_bank", "visual_contracts.json",
+    )
+    payload = json.loads(open(path, encoding="utf-8").read())
+    bank_ids = {spec.id for spec in default_motion_bank().specs}
+
+    assert set(payload["motions"]) == bank_ids
+    assert "unlabeled" in payload["acceptance_rule"].lower()
+    assert "cannot override" in payload["acceptance_rule"].lower()
+    for motion_id, contract in payload["motions"].items():
+        assert contract["recognizable_as"].strip(), motion_id
+        assert len(contract["required_phases"]) >= 4, motion_id
+        assert all(str(phase).strip() for phase in contract["required_phases"]), motion_id
+
+
+def test_blind_review_locks_every_guess_before_loading_the_separate_answer_key():
+    """Revealing one card must not expose answers while other takes remain unlocked."""
+    from scripts.build_motion_bank_audit import _review_html
+
+    page = _review_html(
+        [
+            {"take": "take_01", "control": "control_01"},
+            {"take": "take_02", "control": "control_02"},
+        ],
+        "recognize the unlabeled edit",
+        audit_id="paired-test",
+        normalized_facing=True,
+    )
+
+    assert "Arm punch" not in page
+    assert page.count('fetch("answer_key.json"') == 1
+    assert 'const takeIds = ["take_01", "take_02"]' in page
+    assert "takeIds.every" in page
+    assert 'class="lock"' in page
+    assert 'id="reveal-all" type="button" disabled' in page
+    assert 'class="reveal"' not in page
+    assert "localStorage" in page
+    assert "phase_sheets/take_01_review.html" in page
+    assert "phase_sheets/take_02_review.html" in page
+    assert "Source choreography" in page
+    reveal_handler = page.split('revealAll.addEventListener("click"', 1)[1]
+    assert reveal_handler.index("if (!allGuessesLocked())") < reveal_handler.index(
+        "await loadAnswers()"
+    )
+
+
+def test_rebuilt_audit_cannot_restore_revealed_state_from_the_previous_build():
+    from pathlib import Path
+
+    from scripts.build_motion_bank_audit import _new_audit_id, _review_html
+
+    first_id = _new_audit_id(Path("current"), 84593)
+    second_id = _new_audit_id(Path("current"), 84593)
+    assert first_id.startswith("current-seed-84593-")
+    assert second_id.startswith("current-seed-84593-")
+    assert first_id != second_id
+
+    second_page = _review_html(
+        [{"take": "take_01", "control": "control_01"}],
+        "recognize the unlabeled edit",
+        audit_id=second_id,
+        normalized_facing=True,
+    )
+    assert json.dumps(second_id) in second_page
+    assert first_id not in second_page
+
+
+def test_semantic_audit_views_normalize_facing_without_changing_the_edit_delta():
+    """Forward/back scoring needs a known profile direction on a faceless audit rig."""
+    from agentlodge.editor.motion_bank import _root_yaw_series, _yaw_rotate
+    from scripts.build_motion_bank_audit import _paired_views
+
+    source = _base(36)
+    source = _yaw_rotate(source, 0.91, source[0, :3].copy())
+    edited = source.copy()
+    edited[12:, 0] += np.linspace(0.0, 0.4, len(edited) - 12, dtype=np.float32)
+    expected_heading = float(_root_yaw_series(edited[12:13])[0])
+
+    front, side, control, control_side, heading = _paired_views(
+        edited,
+        source,
+        12,
+        normalize_facing=True,
+    )
+
+    front_yaw = float(_root_yaw_series(front[12:13])[0])
+    side_yaw = float(_root_yaw_series(side[12:13])[0])
+    quarter_turn = (side_yaw - front_yaw + np.pi) % (2.0 * np.pi) - np.pi
+    assert abs(front_yaw) < 1e-5
+    assert quarter_turn == pytest.approx(np.pi / 2.0, abs=1e-5)
+    assert heading == pytest.approx(expected_heading, abs=1e-5)
+    assert np.allclose(front[12, :3], control[12, :3], atol=1e-6)
+    assert np.allclose(side[12, :3], control_side[12, :3], atol=1e-6)
+    before = np.linalg.norm(edited[:, :2] - source[:, :2], axis=1)
+    after = np.linalg.norm(front[:, :2] - control[:, :2], axis=1)
+    assert np.allclose(after, before, atol=1e-6)
+
+
+def test_audit_phase_sheets_keep_action_boundaries_and_event_visible():
+    from scripts.build_motion_audit_sheets import _selected_frames
+
+    item = {
+        "frames": 54,
+        "action_range": [12, 42],
+        "event_frame": 29,
+    }
+    selected = _selected_frames(item, stride=4, context=2)
+
+    assert selected == sorted(set(selected))
+    assert 10 == selected[0]
+    assert 43 == selected[-1]
+    assert 12 in selected
+    assert 29 in selected
+    assert 41 in selected
+
+
+def test_audit_phase_sheets_build_synchronized_dual_view(tmp_path):
+    from PIL import Image
+
+    from scripts.build_motion_audit_sheets import build_sheets
+
+    review = {
+        "takes": [{
+            "take": "take_01",
+            "control": "control_01",
+            "frames": 4,
+            "action_range": [1, 3],
+            "event_frame": 2,
+        }],
+    }
+    (tmp_path / "review.json").write_text(json.dumps(review), encoding="utf-8")
+    colors = {
+        ("take_01", "front"): (240, 20, 20),
+        ("take_01", "side"): (20, 20, 240),
+        ("control_01", "front"): (20, 240, 20),
+        ("control_01", "side"): (240, 240, 20),
+    }
+    for pair_id in ("take_01", "control_01"):
+        for view in ("front", "side"):
+            frames = tmp_path / f"{pair_id}_{view}_frames"
+            frames.mkdir()
+            for frame in range(4):
+                Image.new("RGB", (128, 128), colors[(pair_id, view)]).save(
+                    frames / f"frame_{frame:05d}.png"
+                )
+
+    output = build_sheets(tmp_path, size=96)
+
+    dual = Image.open(output / "take_01_dual.jpg")
+    assert dual.width == 960
+    assert dual.height == 282
+    review_page = Image.open(output / "take_01_review_01.jpg")
+    assert review_page.width == 1152
+    assert review_page.height == 402
+    edit_front = review_page.getpixel((48, 114))
+    edit_side = review_page.getpixel((144, 114))
+    edit_detail = review_page.getpixel((232, 114))
+    source_front = review_page.getpixel((48, 234))
+    source_side = review_page.getpixel((144, 234))
+    source_detail = review_page.getpixel((232, 234))
+    delta_front = review_page.getpixel((48, 354))
+    delta_side = review_page.getpixel((144, 354))
+    delta_detail = review_page.getpixel((232, 354))
+    assert edit_front[0] > 180 and max(edit_front[1:]) < 80
+    assert edit_side[2] > 180 and max(edit_side[:2]) < 80
+    assert edit_detail[0] > 180 and max(edit_detail[1:]) < 80
+    assert source_front[1] > 180 and max(source_front[0], source_front[2]) < 80
+    assert min(source_side[:2]) > 180 and source_side[2] < 80
+    assert source_detail[1] > 180 and max(source_detail[0], source_detail[2]) < 80
+    assert min(delta_front[:2]) > 180 and delta_front[2] < 80
+    assert min(delta_side) > 180
+    assert min(delta_detail[:2]) > 180 and delta_detail[2] < 80
+    review_index = (output / "take_01_review.html").read_text(encoding="utf-8")
+    assert "take_01_review_01.jpg" in review_index
+    assert "edit-minus-source" in review_index
 
 
 @pytest.mark.parametrize(
@@ -194,6 +383,11 @@ def test_named_motions_default_to_a_slight_exaggeration():
     for spec in bank.specs:
         _out, report = bank.apply(base, spec.id, beats=np.arange(0, 180, 15))
         assert report["intensity"] == pytest.approx(0.65), spec.id
+
+
+def test_rise_reach_has_time_to_read_as_a_planted_level_change():
+    """Compressing load, extension, and reach into one beat makes the rise look like a jump."""
+    assert default_motion_bank().resolve("rise_reach").recommended_beats == 2.0
 
 
 @pytest.mark.parametrize(
@@ -386,7 +580,7 @@ def test_insertion_time_warps_the_host_instead_of_aliasing_replacement():
     [
         ("wave", (13, 16, 18, 20), (14, 17, 19, 21)),
         ("point_side", (13, 16, 18, 20), (14, 17, 19, 21)),
-        ("arm_punch", (13, 16, 18, 20), (14, 19, 21)),
+        ("arm_punch", (13, 14, 16, 17, 18, 19, 20), ()),
     ],
 )
 def test_mirroring_moves_composition_ownership_to_the_other_side(
@@ -598,11 +792,10 @@ def test_real_output_clap_preserves_the_host_rhythm_and_reads_as_a_clap():
     "motion_id,max_jerk_ratio",
     [
         ("clap_overhead", 3.0),
-        ("jump_arms_up", 2.0),
+        ("jump_arms_up", 2.6),
         ("point_side", 1.6),
         ("celebrate_hands_up", 2.0),
-        ("arm_punch", 1.7),
-        ("rise_reach", 3.2),
+        ("rise_reach", 3.6),
     ],
 )
 def test_beat_compressed_pose_accents_take_the_shortest_path(
@@ -610,10 +803,11 @@ def test_beat_compressed_pose_accents_take_the_shortest_path(
 ):
     """Retiming a long ready-stance clip into one beat must not preserve its whole wind-up.
 
-    The semantic pose belongs on the beat, but making the host visit every authored in-between
-    pose first creates the same acceleration spike that made the original clap feel pasted onto
-    the dance. Event-pose joints travel directly from the host to the accent and back; joints
-    carrying real internal motion (the jump, rise, or torso response) keep their clip trajectory.
+    The semantic pose belongs on the beat, but making the host visit every irrelevant authored
+    in-between pose first creates the same acceleration spike that made the original clap feel
+    pasted onto the dance. Event-pose joints travel directly from the host to the accent and back;
+    joints carrying meaningful internal motion (the jump, rise, punch, or torso response) retain
+    their clip trajectory and have phase-specific contracts instead.
     """
     from agentlodge.dance.format import to_editor139
 
@@ -901,6 +1095,72 @@ def test_lateral_steps_spread_the_stance_instead_of_leaning_both_legs_one_way():
         assert same_side < 0.75, (motion_id, same_side)
         separation = np.linalg.norm(joints[:, 7, :2] - joints[:, 8, :2], axis=-1)
         assert float(separation.max()) > 0.35, (motion_id, separation.max())
+
+
+@needs_fk
+def test_side_step_and_step_touch_have_distinct_named_phases():
+    """The recipes were once label-swapped: the side step closed and the touch kept travelling."""
+    from server.fk import compute_poses
+
+    bank = default_motion_bank()
+    side_spec = bank.resolve("side_step")
+    touch_spec = bank.resolve("step_touch")
+    side = bank.load_clip(side_spec)
+    touch = bank.load_clip(touch_spec)
+    side_joints = compute_poses(side)["fk_joints"]
+    touch_joints = compute_poses(touch)["fk_joints"]
+
+    side_gap = float(np.linalg.norm(
+        side_joints[side_spec.event_frame, 7, :2]
+        - side_joints[side_spec.event_frame, 8, :2]
+    ))
+    touch_gap = float(np.linalg.norm(
+        touch_joints[touch_spec.event_frame, 7, :2]
+        - touch_joints[touch_spec.event_frame, 8, :2]
+    ))
+    assert side_gap > 0.38, side_gap
+    assert touch_gap < 0.12, touch_gap
+    assert side_gap > touch_gap + 0.25
+
+    neighborhood = touch[
+        touch_spec.event_frame - 3:touch_spec.event_frame + 4, 0
+    ]
+    assert float(np.ptp(neighborhood)) < 0.01
+    assert np.all(touch[touch_spec.event_frame, 135:139] == 1.0)
+    trailing_clearance = float(
+        np.max(touch_joints[len(touch) // 2:touch_spec.event_frame, 8, 2])
+        - touch_joints[touch_spec.event_frame, 8, 2]
+    )
+    assert trailing_clearance > 0.04, trailing_clearance
+
+    for motion, joints in ((side, side_joints), (touch, touch_joints)):
+        for channels, ankle in ((slice(135, 137), 7), (slice(137, 139), 8)):
+            planted = np.all(motion[:, channels] > 0.5, axis=1)
+            travel = np.linalg.norm(np.diff(joints[:, ankle, :2], axis=0), axis=1)
+            stable = planted[:-1] & planted[1:]
+            assert stable.any()
+            assert float(np.max(travel[stable])) < 0.012, (ankle, travel[stable].max())
+
+
+@needs_fk
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+def test_lateral_step_signatures_survive_real_host_composition():
+    from agentlodge.dance.format import to_editor139
+    from server.fk import compute_poses
+
+    base = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:180]
+    bank = default_motion_bank()
+    gaps = {}
+    for motion_id in ("side_step", "step_touch"):
+        out, report = bank.apply(base, motion_id, beats=np.arange(0, 180, 15))
+        event = int(report["event_frame"])
+        joints = compute_poses(out)["fk_joints"]
+        gaps[motion_id] = float(np.linalg.norm(
+            joints[event, 7, :2] - joints[event, 8, :2]
+        ))
+    assert gaps["side_step"] > 0.32, gaps
+    assert gaps["step_touch"] < 0.16, gaps
+    assert gaps["side_step"] > gaps["step_touch"] + 0.16, gaps
 
 
 # The manifest validators are generic shape checks -- joint_activity only asks that the arms
@@ -1243,7 +1503,7 @@ def test_a_chest_pop_moves_the_chest_and_not_the_head():
 
     chest, head = travel(9), travel(15)
     chest_fwd, head_fwd = float(chest @ fwd), float(head @ fwd)
-    assert chest_fwd > 0.04, ("the chest never actually pops forward", chest_fwd)
+    assert chest_fwd > 0.10, ("the chest pop is too subtle to read at full-body scale", chest_fwd)
     assert abs(head_fwd) < 0.6 * chest_fwd, (
         "the head travels as far as the chest, so this reads as a nod", head_fwd, chest_fwd)
     assert float(head[2]) > -0.06, ("the head dives instead of staying level", float(head[2]))
@@ -1265,6 +1525,76 @@ def test_jumps_are_off_the_ground_at_their_accent(motion_id):
 
 
 @needs_fk
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+@pytest.mark.parametrize("motion_id", ["jump_two_foot", "jump_arms_up"])
+def test_a_composed_jump_has_load_takeoff_apex_and_two_foot_landing(motion_id):
+    """A vertical root arc is not a jump unless the real host body performs every jump phase."""
+    from agentlodge.dance.format import to_editor139
+    from server.fk import compute_poses
+
+    bank = default_motion_bank()
+    spec = bank.resolve(motion_id)
+    assert {1, 2, 4, 5, 7, 8, 10, 11}.issubset(spec.absolute_joints)
+    assert set(spec.phase_joints) == {1, 2, 4, 5, 7, 8, 10, 11}
+    assert spec.phase_blend_frames is not None and spec.phase_blend_frames <= 3
+
+    base = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:120]
+    out, report = bank.apply(
+        base, motion_id, beats=np.arange(0, 120, 15), anchor="beat",
+    )
+    joints = compute_poses(out)["fk_joints"]
+    start, end = report["action_range"]
+    event = int(report["event_frame"])
+    load = start + int(np.argmin(joints[start:event + 1, 0, 2]))
+    landing = event + int(np.argmin(joints[event:end, 0, 2]))
+
+    def joint_angle(a, b, c):
+        left = a - b
+        right = c - b
+        cosine = np.sum(left * right, axis=-1) / (
+            np.linalg.norm(left, axis=-1) * np.linalg.norm(right, axis=-1) + 1e-9
+        )
+        return np.rad2deg(np.arccos(np.clip(cosine, -1.0, 1.0)))
+
+    left_knee = joint_angle(joints[:, 1], joints[:, 4], joints[:, 7])
+    right_knee = joint_angle(joints[:, 2], joints[:, 5], joints[:, 8])
+    assert max(float(left_knee[load]), float(right_knee[load])) < 145.0
+    assert max(float(left_knee[landing]), float(right_knee[landing])) < 145.0
+
+    toes = joints[event, [10, 11]]
+    assert float(np.linalg.norm(toes[0, :2] - toes[1, :2])) < 0.32
+    assert abs(float(toes[0, 2] - toes[1, 2])) < 0.04
+    planted_height = max(
+        float(joints[load, [7, 8, 10, 11], 2].min()),
+        float(joints[landing, [7, 8, 10, 11], 2].min()),
+    )
+    assert float(joints[event, [7, 8, 10, 11], 2].min()) - planted_height > 0.20
+    assert int(out[load, 135:139].sum()) > 0
+    assert int(out[event, 135:139].sum()) == 0
+    assert int(out[landing, 135:139].sum()) > 0
+
+
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+@pytest.mark.parametrize("motion_id", ["jump_two_foot", "jump_arms_up"])
+def test_jump_validator_rejects_a_root_only_float(motion_id):
+    from agentlodge.dance.format import to_editor139
+
+    bank = default_motion_bank()
+    base = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:120]
+    out, report = bank.apply(
+        base, motion_id, beats=np.arange(0, 120, 15), anchor="beat",
+    )
+    start, end = report["action_range"]
+    impostor = out[start:end].copy()
+    reference = base[start:end]
+    impostor[:, 3:135] = reference[:, 3:135]
+
+    result = validate_semantics(impostor, bank.resolve(motion_id), reference=reference)
+    assert not result["ok"]
+    assert "flex" in result["detail"]
+
+
+@needs_fk
 def test_a_bounce_actually_travels_far_enough_to_see():
     """The bounce lives entirely in the knees, and a shallow one is invisible on a rendered body.
 
@@ -1277,6 +1607,74 @@ def test_a_bounce_actually_travels_far_enough_to_see():
     pelvis = compute_poses(clip)["fk_joints"][:, 0, 2]
     travel = float(pelvis.max() - pelvis.min())
     assert travel > 0.07, travel
+
+
+def test_a_root_only_bob_cannot_impersonate_a_bounce():
+    """Contacts and root oscillation alone describe a floating mannequin, not a bounce."""
+    bank = default_motion_bank()
+    spec = bank.resolve("bounce_in_place")
+    impostor = bank.load_clip(spec).copy()
+    impostor[:, 3:135] = impostor[:1, 3:135]
+    result = validate_semantics(impostor, spec)
+    assert not result["ok"]
+    assert "bilateral activity" in result["detail"]
+
+
+@needs_fk
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+@pytest.mark.parametrize("motion_id", ["bounce_in_place", "crouch_drop", "rise_reach"])
+def test_planted_level_motions_keep_both_feet_on_the_host_floor(motion_id):
+    """Vertical translation must fade with the leg pose instead of floating or sinking the feet."""
+    from agentlodge.dance.format import to_editor139
+    from server.fk import compute_poses
+
+    base = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:180]
+    bank = default_motion_bank()
+    out, report = bank.apply(base, motion_id, beats=np.arange(0, 180, 15))
+    start, end = map(int, report["action_range"])
+    action = compute_poses(out[start:end])["fk_joints"]
+    host = compute_poses(base[start:end])["fk_joints"]
+    host_floor = np.min(host[:, (7, 8, 10, 11), 2], axis=1)
+    blend = bank.resolve(motion_id).phase_blend_frames or 0
+    core = slice(blend, end - start - blend if blend else end - start)
+
+    for foot in ((7, 10), (8, 11)):
+        height = np.min(action[:, foot, 2], axis=1) - host_floor
+        assert float(np.max(np.abs(height[core]))) < 0.06, (motion_id, foot, height)
+    assert np.all(out[start:end, 135:139] == 1.0)
+    assert float(out[start, 2] - base[start, 2]) == pytest.approx(0.0, abs=1e-6)
+    assert float(out[end - 1, 2] - base[end - 1, 2]) == pytest.approx(0.0, abs=1e-6)
+
+
+@needs_fk
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+def test_a_forward_punch_has_guard_strike_and_recoil_phases():
+    """A held straight arm reads as a reach; a punch must cock, strike forward, and retract."""
+    from agentlodge.dance.format import to_editor139
+    from server.fk import compute_poses
+
+    base = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:180]
+    beats = np.arange(0, 180, 15)
+    out, report = default_motion_bank().apply(
+        base, "arm_punch", beats=beats,
+    )
+    start, end = map(int, report["action_range"])
+    joints = compute_poses(out[start:end])["fk_joints"]
+    forward = np.stack([_body_forward(joints, frame) for frame in range(len(joints))])
+    lateral = np.column_stack([-forward[:, 1], forward[:, 0], np.zeros(len(joints))])
+    forward_reach = np.sum((joints[:, 21] - joints[:, 9]) * forward, axis=1)
+    side_reach = np.abs(np.sum((joints[:, 21] - joints[:, 17]) * lateral, axis=1))
+    arm_length = np.linalg.norm(joints[:, 21] - joints[:, 17], axis=1)
+    peak = int(np.argmax(forward_reach))
+
+    assert 1 < peak < len(joints) - 2
+    assert float(forward_reach[peak]) > 1.5 * float(side_reach[peak])
+    assert float(arm_length[peak] - np.min(arm_length[:peak])) > 0.15
+    assert float(arm_length[peak] - np.min(arm_length[peak + 1:])) > 0.15
+    assert int(np.count_nonzero(forward_reach > 0.9 * forward_reach[peak])) <= 3
+    assert float(np.linalg.norm(joints[peak, 20] - joints[peak, 9])) < 0.30
+    assert float(np.linalg.norm(joints[peak, 20] - joints[peak, 16])) < 0.35
+    assert window_metrics(out, beats)["jerk"] < 5.0 * window_metrics(base, beats)["jerk"]
 
 
 @pytest.mark.parametrize("motion_id", ["side_step", "step_touch"])
@@ -1519,10 +1917,21 @@ def test_rise_reach_leads_with_one_arm_up_and_forward_as_its_recipe_claims():
 def _spliced(bank, motion_id, mode, n=240):
     """Apply a named motion and put it back in the song the way the editor does."""
     from agentlodge.dance.transition import crossfade_edit
+    from agentlodge.editor.motion_bank import _insertion_host
+
     song = np.concatenate([_base(n)] * 3, axis=0)
     a, b = n, 2 * n
-    window, report = bank.apply(song[a:b], motion_id, mode=mode, anchor="center")
-    return song, window, crossfade_edit(song, a, b, window, blend_frames=8)[a:b], report
+    base = song[a:b]
+    window, report = bank.apply(base, motion_id, mode=mode, anchor="center")
+    start, end = map(int, report["action_range"])
+    event = int(report["event_frame"])
+    host = (
+        base
+        if mode == "replace"
+        else _insertion_host(base, start, end, event, event - start)
+    )
+    spliced = crossfade_edit(song, a, b, window, blend_frames=8)[a:b]
+    return song, host, window, spliced, report
 
 
 @pytest.mark.parametrize("motion_id", [s.id for s in default_motion_bank().specs])
@@ -1531,8 +1940,8 @@ def test_a_named_motion_still_reads_as_itself_once_it_is_spliced(motion_id):
     back to the song, which used to erase a turn or a step from the record entirely."""
     bank = default_motion_bank()
     for mode in ("replace", "insert"):
-        _song, _window, spliced, report = _spliced(bank, motion_id, mode)
-        check = verify_applied_motion(spliced, report)
+        _song, host, _window, spliced, report = _spliced(bank, motion_id, mode)
+        check = verify_applied_motion(spliced, report, reference=host)
         assert check["ok"], (motion_id, mode, check["detail"])
 
 
@@ -1543,7 +1952,7 @@ def test_a_travelling_motion_hands_the_root_back_before_the_window_ends(motion_i
     left off. Anything still owed at the last frame gets ripped back by the crossfade."""
     bank = default_motion_bank()
     for mode in ("replace", "insert"):
-        song, window, _spliced_win, _report = _spliced(bank, motion_id, mode)
+        song, _host, window, _spliced_win, _report = _spliced(bank, motion_id, mode)
         gap = float(np.linalg.norm(window[-1, :3] - song[2 * 240 - 1, :3]))
         yaw = _root_yaw_series(np.stack([window[-1], song[2 * 240 - 1]]))
         assert gap < 0.02, (motion_id, mode, gap)
@@ -1556,7 +1965,7 @@ def test_a_spliced_turn_does_not_whip_round_at_the_seam(motion_id):
     blend frames -- 55 rad/s, six times anything in the song."""
     bank = default_motion_bank()
     for mode in ("replace", "insert"):
-        _song, _window, spliced, _report = _spliced(bank, motion_id, mode)
+        _song, _host, _window, spliced, _report = _spliced(bank, motion_id, mode)
         rate = float(np.abs(np.diff(_root_yaw_series(spliced))).max() * 30)
         assert rate < 10.0, (motion_id, mode, rate)
 

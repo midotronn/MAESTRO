@@ -77,6 +77,7 @@ def _render_request(req, cfg):
         build_scene="", force_align=False, fk_npz=req.get("fk_npz", ""),
         fast=bool(req.get("fast", True)),
         lock_root=bool(req.get("lock_root", False)),
+        fixed_camera=bool(req.get("fixed_camera", False)),
     )
     os.makedirs(args.frames_dir, exist_ok=True)
     ybot.render_take(args, color)

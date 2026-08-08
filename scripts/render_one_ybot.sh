@@ -25,10 +25,12 @@ RENGINE="${RENDER_ENGINE:-eevee}"; RDENOISE="${RENDER_DENOISE:-1}"
 AUDIO_ARG=()
 [ -n "$SID" ] && [ -f "$WORKSPACE/LODGE/data/finedance/music_wav/${SID}.wav" ] && \
   AUDIO_ARG=(--audio "$WORKSPACE/LODGE/data/finedance/music_wav/${SID}.wav")
+CAMERA_ARG=()
+[ "${RENDER_FIXED_CAMERA:-0}" = "1" ] && CAMERA_ARG=(--fixed-camera)
 __EGL_VENDOR_LIBRARY_FILENAMES=$EGL "$PY" "$A/scripts/render_blender_dance.py" \
   --agentlodge-root "$A" --motion-npy "$MOTION" --output-mp4 "$OUT" \
   --lodge-code-path "$WORKSPACE/LODGE" --blender-bin "$BB" --blender-script "$BS" \
   --character ybot --ybot-fbx "$YB" --color 0.5,0.5,0.52 \
   "${AUDIO_ARG[@]}" --width "$RW" --height "$RH" --samples "$RS" \
-  --engine "$RENGINE" --denoise "$RDENOISE"
+  --engine "$RENGINE" --denoise "$RDENOISE" "${CAMERA_ARG[@]}"
 echo "RENDER_ONE_DONE $OUT"

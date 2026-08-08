@@ -1,0 +1,188 @@
+{
+  "version": 2,
+  "acceptance_rule": "At normal speed, the motion added to the unlabeled edited render must be recognizable before its answer is revealed. A paired source render may distinguish host choreography from the edit, but numeric metrics cannot override a failed recognition or phase review.",
+  "motions": {
+    "clap_single": {
+      "recognizable_as": "one chest-level clap",
+      "required_phases": [
+        "hands begin apart",
+        "both hands approach each other",
+        "one palm-to-palm contact occurs at chest level",
+        "hands separate into the host dance"
+      ]
+    },
+    "clap_repeat": {
+      "recognizable_as": "three chest-level claps",
+      "required_phases": [
+        "hands rise to a chest-level guard",
+        "three distinct contacts occur with visible recoil",
+        "hands stay near the guard between contacts",
+        "arms return without flapping to the hips"
+      ]
+    },
+    "clap_overhead": {
+      "recognizable_as": "one overhead clap",
+      "required_phases": [
+        "both arms rise above the head",
+        "palms meet above the head without intersecting it",
+        "hands separate",
+        "arms lower into the host dance"
+      ]
+    },
+    "jump_two_foot": {
+      "recognizable_as": "a two-foot jump",
+      "required_phases": [
+        "both legs narrow into a stable stance",
+        "hips and knees visibly load downward",
+        "both feet push off and leave the floor",
+        "the body reaches one clear apex",
+        "both feet land with bent-knee absorption"
+      ]
+    },
+    "jump_arms_up": {
+      "recognizable_as": "a two-foot jump with both arms raised",
+      "required_phases": [
+        "hips and knees visibly load downward",
+        "both feet push off and leave the floor",
+        "both arms rise overhead during flight",
+        "the body reaches one clear apex",
+        "both feet land with bent-knee absorption"
+      ]
+    },
+    "bounce_in_place": {
+      "recognizable_as": "a rhythmic bounce in place",
+      "required_phases": [
+        "the feet remain planted",
+        "knees and hips compress and extend repeatedly",
+        "the pelvis visibly changes height on each pulse",
+        "the torso retains the host groove"
+      ]
+    },
+    "wave": {
+      "recognizable_as": "a hand wave",
+      "required_phases": [
+        "one hand rises above shoulder level",
+        "the raised hand changes direction repeatedly",
+        "the forearm and wrist remain connected",
+        "the hand lowers into the host dance"
+      ]
+    },
+    "point_side": {
+      "recognizable_as": "a clear point to the side",
+      "required_phases": [
+        "one arm prepares from the host pose",
+        "the arm extends dominantly sideways",
+        "the torso and head support the indicated direction",
+        "the arm retracts smoothly"
+      ]
+    },
+    "celebrate_hands_up": {
+      "recognizable_as": "a hands-up celebration",
+      "required_phases": [
+        "both arms rise",
+        "the arms form a clear celebratory V",
+        "the pose lands on the accent",
+        "both arms lower smoothly"
+      ]
+    },
+    "chest_pop": {
+      "recognizable_as": "a chest pop",
+      "required_phases": [
+        "the chest drives forward sharply",
+        "the pelvis remains comparatively stable",
+        "the head does not turn the action into a nod",
+        "the chest recoils to the host pose"
+      ]
+    },
+    "arm_punch": {
+      "recognizable_as": "a forward arm punch",
+      "required_phases": [
+        "the punching arm prepares",
+        "the elbow extends dominantly forward",
+        "the torso counter-rotates into the hit",
+        "the arm retracts without becoming a side reach"
+      ]
+    },
+    "side_step": {
+      "recognizable_as": "a committed side step into a wide stance",
+      "required_phases": [
+        "the lead foot lifts and opens laterally",
+        "the root travels sideways over the lead leg",
+        "weight settles into a visibly wide stance",
+        "the feet do not close into a trailing-foot touch"
+      ]
+    },
+    "step_touch": {
+      "recognizable_as": "a clear step-and-touch",
+      "required_phases": [
+        "the lead foot steps laterally and accepts the weight",
+        "the root settles over the lead leg",
+        "the trailing foot lifts and taps beside the lead foot",
+        "the root pauses during the tap instead of continuing sideways"
+      ]
+    },
+    "step_forward": {
+      "recognizable_as": "a forward step",
+      "required_phases": [
+        "the lead foot swings and plants ahead",
+        "the root travels forward",
+        "the body follows the planted foot",
+        "the feet do not slide or moonwalk"
+      ]
+    },
+    "step_backward": {
+      "recognizable_as": "a backward step",
+      "required_phases": [
+        "the lead foot reaches and plants behind",
+        "the root travels backward",
+        "the body follows the planted foot",
+        "the action is visibly opposite to step_forward"
+      ]
+    },
+    "turn_quarter": {
+      "recognizable_as": "a coordinated quarter turn",
+      "required_phases": [
+        "the body prepares through the feet and hips",
+        "the whole body rotates about 90 degrees",
+        "the feet support the new facing",
+        "the turn resolves without a yaw whip"
+      ]
+    },
+    "turn_half": {
+      "recognizable_as": "a coordinated half turn",
+      "required_phases": [
+        "the body prepares through the feet and hips",
+        "the whole body rotates about 180 degrees",
+        "the head and torso spot the turn",
+        "the turn resolves facing the opposite direction"
+      ]
+    },
+    "body_roll": {
+      "recognizable_as": "a body roll",
+      "required_phases": [
+        "the wave begins in the hips or lower torso",
+        "the curve travels sequentially through the spine",
+        "the chest and upper torso arrive after the hips",
+        "the action does not read as one rigid bow or lean"
+      ]
+    },
+    "crouch_drop": {
+      "recognizable_as": "a controlled crouch or drop",
+      "required_phases": [
+        "both hips and knees bend",
+        "the pelvis clearly lowers",
+        "the feet remain planted",
+        "the low pose is stable rather than an airborne tuck"
+      ]
+    },
+    "rise_reach": {
+      "recognizable_as": "a rise with an upward reach",
+      "required_phases": [
+        "the action begins from a visibly low level",
+        "the legs extend while the torso rises",
+        "the arms reach upward with one hand leading",
+        "the feet remain planted so the action does not become a jump"
+      ]
+    }
+  }
+}

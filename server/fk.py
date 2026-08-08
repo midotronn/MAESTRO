@@ -91,5 +91,13 @@ def compute_poses(motion139: np.ndarray) -> dict:
 
 
 def save_poses_npz(motion139: np.ndarray, path) -> None:
-    d = compute_poses(motion139)
-    np.savez(path, poses=d["poses"], trans=d["trans"], fk_joints=d["fk_joints"])
+    motion = np.asarray(motion139, dtype=np.float32)
+    d = compute_poses(motion)
+    contacts = to_native_finedance139(motion)[:, :4].astype(np.float32)
+    np.savez(
+        path,
+        poses=d["poses"],
+        trans=d["trans"],
+        fk_joints=d["fk_joints"],
+        contacts=contacts,
+    )

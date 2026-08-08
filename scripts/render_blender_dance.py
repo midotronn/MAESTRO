@@ -325,6 +325,7 @@ def render_ybot_dance(
     samples: int = 32,
     engine: str = "eevee",
     denoise: bool = True,
+    fixed_camera: bool = False,
     fps: int = 30,
 ) -> Path:
     """Render a dance as EDGE's Mixamo Y-Bot robot by posing ybot.fbx's SMPL armature."""
@@ -353,6 +354,8 @@ def render_ybot_dance(
         "--color", color,
         "--align-x", str(align_x),
     ]
+    if fixed_camera:
+        cmd.append("--fixed-camera")
     logger.info("Rendering Y-Bot in Blender (%dx%d, %d samples, %s)...",
                 img_size[0], img_size[1], samples, engine)
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -388,6 +391,10 @@ def main() -> int:
     parser.add_argument("--samples", type=int, default=64)
     parser.add_argument("--engine", default="eevee", choices=["eevee", "cycles"])
     parser.add_argument("--denoise", type=int, default=1)
+    parser.add_argument(
+        "--fixed-camera", action="store_true",
+        help="Preserve root travel while keeping the audit camera fixed.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -408,6 +415,7 @@ def main() -> int:
             samples=args.samples,
             engine=args.engine,
             denoise=bool(args.denoise),
+            fixed_camera=bool(args.fixed_camera),
         )
         print(f"Saved Blender dance video to {out} ({out.stat().st_size} bytes)")
         return 0

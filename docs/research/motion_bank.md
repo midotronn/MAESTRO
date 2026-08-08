@@ -159,11 +159,12 @@ duplicate aliases, missing provenance, and out-of-range event anchors. Declarati
 validators cover:
 
 - upper-body joint activity for claps, waves, points, celebrations, and punches;
-- root height and airborne contact intervals for jumps;
+- ground-load-air-apex-land phases for jumps;
+- planted vertical cycles and bilateral leg activity for bounces;
 - root displacement for locomotion;
 - root yaw for turns;
 - spine-chain activity for chest pops and body rolls;
-- root level direction for drops and rises.
+- root level direction for drops and planted low-to-high phases for rises.
 
 The root contracts measure the **largest excursion from the opening pose**, not the difference
 between the first and last frame. An endpoint measure cannot survive the splice: the window's edges
@@ -376,7 +377,8 @@ A fourth trap is vertical: `_ground` re-solves root height from the leg pose on 
 frame, so an authored `trans[:, 2]` rise is silently cancelled whenever the feet stay planted. A
 bounce or a dip has to come from knee flexion, not from the root.
 
-A fifth is that the *validator* has a frame too, and it is not the same one the clip is in by thetime it runs. `insert` yaw-aligns the action to whatever direction the dancer faces at the splice
+A fifth is that the *validator* has a frame too, and it is not the same one the clip is in by the
+time it runs. `insert` yaw-aligns the action to whatever direction the dancer faces at the splice
 point, so a `root_displacement` contract read along a fixed world axis measures the travel only
 while the dancer happens to face down that axis. Every travelling motion failed validation at 45,
 90, 225 and 270 degrees of song rotation and passed at 0 and 180 — a user-visible edit that worked
@@ -414,6 +416,127 @@ AMASS, BABEL, FineDance, HumanML3D-derived arrays, SMPL assets, or a raw Mixamo 
 separate permission and licensing review. Clearly licensed AIST++ excerpts may be added with
 CC BY 4.0 attribution after their action identity and output quality are reviewed.
 
+## Visual acceptance gate
+
+Semantic acceptance is a blind recognition test, not a metric threshold. The first review pass
+pairs an unlabeled, normal-speed edited Y-Bot render with the exact unedited host choreography.
+The reviewer names what the edit added, then locks that guess before the page loads the separate
+answer key. If the action is unclear or guessed incorrectly, it fails even when root displacement,
+joint activity, contact, or beat metrics pass.
+
+After revealing the answer, the reviewer checks every phase in
+`assets/motion_bank/visual_contracts.json` from both front and side. Root travel is reviewed once
+with a fixed world camera, because a following camera can hide a step completely. The semantic
+pass normalizes the dancer's heading at action start, so the faceless audit rig has a known front
+view and faces screen right in the side view. A separate production-camera pass preserves the
+source heading and checks real framing. Metrics are diagnostic evidence only: they help locate the
+bad frame and prevent a known regression, but they cannot promote an unrecognizable render.
+
+Build the same blind audit after any authoring, composition, retiming, renderer, or intensity change:
+
+```bash
+python scripts/build_motion_bank_audit.py \
+  --host tests/data/lodge_sample_dance.npy \
+  --output /workspace/visual_audit/current
+bash scripts/render_motion_bank_audit.sh /workspace/visual_audit/current
+python -m http.server 8000 --directory /workspace/visual_audit/current
+```
+
+During iteration, pass `--motions motion_a motion_b` to rebuild only changed motions and a few
+recognition controls. The renderer resolves the repository from its own script path so an isolated
+worktree cannot accidentally audit stale production code, and the builder refuses to continue if a
+committed clip differs from its procedural recipe. Build the separate production-camera input with
+`--preserve-heading`, then render it with `AUDIT_FIXED_CAMERA=0`. The final release gate still
+requires one full-bank shuffle.
+
+Open `review.html` through the local HTTP server, play each source/edit pair before scrubbing, write
+every guess, and lock all takes before revealing any name or required phase. The UI does not fetch
+the answer key until every take has a non-empty locked guess. Locked guesses persist in browser
+storage and can be exported as JSON. Each generated audit receives a fresh storage nonce, so
+rebuilding a reused output directory cannot restore answers revealed by an earlier run. The answer
+text is not embedded in the review page, and shuffled take ids prevent the manifest order or
+filename from giving away the answer.
+The render step also writes `phase_sheets/`: readable front and side playback strips that interleave
+the edited take with its exact source at the full 30 FPS and force the action boundaries and event
+frame into view, plus a cropped front detail for hands and upper-body articulation. A synchronized
+dual-view strip places front and side frames beside one another, so foot clearance and palm contact
+must be judged in the same review pass. The primary static review strip adds that upper-body crop to
+every synchronized frame, so cadence, torso articulation, foot clearance, and hand contact remain
+visible together instead of requiring the reviewer to remember evidence from separate sheets. It is
+split into short horizontal pages so browser or terminal image scaling cannot compress a full action
+into unreadable thumbnails. Each page also contains an amplified edit-minus-source difference row.
+Motion already present in the host cancels out there, while the named edit remains visible, preventing
+an existing host jump or step from being scored as the inserted action. These are the static-review
+fallback when video playback is unavailable. Do not
+use one giant all-bank contact sheet for acceptance: scaling dozens of rows into one viewport hides
+airborne feet, palm contacts, and repeated cadence, which can turn a good jump into an apparent clap
+or collapse three claps into one.
+
+The final unseen full-bank audit used seed `84593` and the paged synchronized difference workflow.
+All 20 motions were identified correctly before the answer key was accessed, and every required
+phase passed after reveal. A separate full-bank pass preserved the source heading and used the
+following production camera; all bodies, overhead hands, lateral gestures, jumps, rises, crouches,
+and locomotion remained fully framed and readable.
+
+The earlier unpaired review protocol itself produced misleading failures. A chest pop inherited a
+small hop from the host and was guessed as a jump, while the actual jump was assigned the remaining
+label despite a visible load, 27 cm rise, and bent-knee landing. Forward and backward travel were
+also hard to name from the profile of a faceless rig with no declared screen-facing direction.
+Those were reviewer attribution errors, not motion geometry failures. Paired host playback,
+heading normalization, persisted guess locking, and a separately loaded answer key make the visual
+decision reproducible without weakening the recognition gate.
+
+The two jump clips exposed why this gate is necessary. Their old contracts required only a vertical
+peak and an airborne contact span. Their lower-body rotations were additive and their full seven
+frame composition fade suppressed the authored crouch, while root height remained unattenuated.
+The result was a host pose floating upward, not a jump. Jumps now take absolute ownership of both
+legs, use a three-frame lower-body phase blend so the load and landing survive one-beat retiming
+without snapping the arms, and validate a ground-load-air-apex-land sequence with explicit knee
+flexion.
+
+The first complete blind pass found four more defects that the numeric contracts had accepted:
+
+- `arm_punch` used an event-pose hold, so its arm eased into a sustained reach and was confused
+  with `point_side`. It now preserves a bent guard, a short forward strike, and a visible recoil.
+- `bounce_in_place` inherited the host footwork. Its root oscillated enough to pass while the feet
+  lifted. It now owns a stable lower-body stance, replaces contacts, and requires repeated vertical
+  travel plus bilateral knee activity.
+- Vertical translation was measured from the first host frame instead of the host's live height,
+  and it did not fade with the lower-body pose. A rise therefore floated at the hand-back and a
+  crouch could sink below the floor. Vertical deltas now layer onto each host frame and use the
+  lower-body phase envelope. `rise_reach` also begins from the shared stance, visibly loads, then
+  rises with both feet planted.
+- The corrected chest isolation was still subtle at full-body scale. Its chest drive and supporting
+  shoulder and knee accents were increased while the head-isolation bound remained intact.
+
+A focused blind re-audit then exposed three more integration defects:
+
+- `rise_reach` was compressed into the same one-beat load-and-arms-up silhouette as
+  `jump_arms_up`, and the renderer's one-time floor calibration could leave a planted pose visibly
+  floating. The rise now uses two beats, while render NPZs carry foot contacts so the Y-Bot
+  renderer can ground contact frames without flattening airborne jump frames or horizontal travel.
+- The stronger chest pop still required knowledge of the motion list to identify. Its chest drive,
+  shoulder opening, and supporting knee accent were increased again; the FK contract now requires
+  more than 10 cm of chest-relative travel while retaining the head-isolation bound.
+- The punch recipe authored a bent non-punching guard, but the manifest did not own that elbow, so
+  composition discarded it and swung a straight counter-arm. Both arm chains now preserve the
+  authored guard-strike-recoil phases, with a regression on the guard's folded arm length.
+
+The first genuinely unseen full-bank shuffle scored 18/20. The only misses were a direct swap:
+`side_step` was guessed as `step_touch`, and `step_touch` was guessed as `side_step`. Frame-by-frame
+FK confirmed that the reviewer was right. The side-step recipe lifted one foot out and back while
+its supposedly planted support foot slid with the root, which reads as a tap. The step-touch recipe
+alternated weight-bearing legs and kept travelling, which reads as a side step. Both clips passed
+the same unsigned root-displacement validator.
+
+The two recipes now use leg IK and explicit planted world-space foot targets. `side_step` lifts the
+lead foot, transfers the pelvis, and resolves in a held wide stance. `step_touch` lands the lead
+step, stops the pelvis over it, then lifts and taps the trailing foot beside it without accepting a
+second weight transfer. Their event poses are intentionally opposite: the side-step feet are wide,
+while the touch feet are close. Regression tests pin those event gaps, the trailing-foot clearance,
+the paused root at the touch, planted-foot sliding, and the same distinction after composition on
+real LODGE choreography.
+
 ## Adding a motion
 
 1. Add a unique manifest entry and avoid aliases owned by another action.
@@ -422,9 +545,8 @@ CC BY 4.0 attribution after their action identity and output quality are reviewe
 4. Choose a validator type and threshold that the canonical clip passes for the intended reason.
 5. Add the action to the table-driven planner, fitting, insertion, and adversarial tests by relying
    on manifest enumeration rather than writing a new executor branch.
-6. Render and visually review the action before publishing it. `scripts/build_motion_bank_reel.py`
-   stitches the whole bank into one continuous take with the editor's own seam blend, and
-   `scripts/render_motion_bank_reel.sh` renders it on the GPU pod as the Y-Bot with each action's
-   name burned in, so a new action is judged against the rest of the vocabulary in one pass rather
-   than as an isolated clip. Numeric checks are the gate, not the review: a 2D contact sheet
-   flattens depth badly enough to invent problems that measurement disproves.
+6. Run the blind real-host visual acceptance gate before publishing. The action must be recognizable
+   without its label, satisfy every required phase from front and side, preserve travel under a fixed
+   camera, and remain well framed under the production camera. The labeled canonical reel remains a
+   useful comparison tool, but neither that reel nor numeric metrics can replace the blind applied
+   render.

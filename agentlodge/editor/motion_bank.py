@@ -86,6 +86,8 @@ class MotionSpec:
     carry_root_rotation: bool
     event_pose_joints: tuple[int, ...]
     intensity_lock_frames: tuple[int, ...]
+    phase_joints: tuple[int, ...]
+    phase_blend_frames: int | None
 
     @classmethod
     def from_dict(cls, raw: dict) -> "MotionSpec":
@@ -120,6 +122,16 @@ class MotionSpec:
         )
         if any(frame < 0 or frame >= int(raw["frames"]) for frame in intensity_lock_frames):
             raise ValueError(f"{motion_id}: intensity lock frame lies outside clip")
+        phase_joints = tuple(int(x) for x in composition.get("phase_joints", ()))
+        if not set(phase_joints).issubset(set(absolute) | set(additive)):
+            raise ValueError(f"{motion_id}: phase joints must be owned by the motion")
+        phase_blend_frames = composition.get("phase_blend_frames")
+        if phase_blend_frames is not None:
+            phase_blend_frames = int(phase_blend_frames)
+            if phase_blend_frames < 1:
+                raise ValueError(f"{motion_id}: phase_blend_frames must be positive")
+            if not phase_joints:
+                raise ValueError(f"{motion_id}: phase_blend_frames requires phase_joints")
         axes = {"x": 0, "y": 1, "z": 2}
         try:
             translation_axes = tuple(axes[str(x).lower()] for x in composition.get(
@@ -160,6 +172,8 @@ class MotionSpec:
             carry_root_rotation=carry_root_rotation,
             event_pose_joints=event_pose,
             intensity_lock_frames=intensity_lock_frames,
+            phase_joints=phase_joints,
+            phase_blend_frames=phase_blend_frames,
         )
 
     def public_dict(self) -> dict:
@@ -182,6 +196,8 @@ class MotionSpec:
                 "carry_root_rotation": self.carry_root_rotation,
                 "event_pose_joints": list(self.event_pose_joints),
                 "intensity_lock_frames": list(self.intensity_lock_frames),
+                "phase_joints": list(self.phase_joints),
+                "phase_blend_frames": self.phase_blend_frames,
             },
             "source": self.source,
             "license": self.license,
@@ -284,6 +300,7 @@ class MotionBank:
                 absolute_joints=tuple(_MIRROR_JOINTS[j] for j in spec.absolute_joints),
                 additive_joints=tuple(_MIRROR_JOINTS[j] for j in spec.additive_joints),
                 event_pose_joints=tuple(_MIRROR_JOINTS[j] for j in spec.event_pose_joints),
+                phase_joints=tuple(_MIRROR_JOINTS[j] for j in spec.phase_joints),
             )
         count = int(np.clip(repeats, 1, 8))
         if count > 1:
@@ -457,6 +474,77 @@ def validate_semantics(
             )
         metric = activity
         detail = f"joint activity {metric:.3f}"
+    elif kind == "jump_phases":
+        z = np.asarray(clip[:, 2], dtype=np.float32)
+        if reference is not None:
+            ref = np.asarray(reference, dtype=np.float32)
+            if ref.shape != clip.shape:
+                raise ValueError(
+                    f"semantic reference must match clip shape {clip.shape}, got {ref.shape}"
+                )
+            z = z - ref[:, 2]
+        else:
+            z = z - np.linspace(float(z[0]), float(z[-1]), clip.shape[0], dtype=np.float32)
+        apex = int(np.argmax(z))
+        if apex < 2 or apex > clip.shape[0] - 3:
+            return {
+                "ok": False,
+                "type": kind,
+                "metric": 0.0,
+                "threshold": 1.0,
+                "detail": f"apex frame {apex} leaves no takeoff or landing phase",
+            }
+        load = int(np.argmin(z[:apex + 1]))
+        landing = apex + int(np.argmin(z[apex:]))
+        baseline = 0.5 * (float(z[0]) + float(z[-1]))
+        rise = float(z[apex] - min(float(z[0]), float(z[-1])))
+        load_drop = float(baseline - z[load])
+        airborne = float(np.mean(np.sum(clip[:, _CONTACT], axis=1) == 0))
+
+        rotations = _sixd_to_matrix(clip[:, _ROT].reshape(-1, 22, 6))
+        load_delta = _matrix_to_axis_angle(
+            rotations[load, [4, 5]]
+            @ np.swapaxes(rotations[apex, [4, 5]], -1, -2)
+        )
+        landing_delta = _matrix_to_axis_angle(
+            rotations[landing, [4, 5]]
+            @ np.swapaxes(rotations[apex, [4, 5]], -1, -2)
+        )
+        load_flexion = float(np.min(np.linalg.norm(load_delta, axis=-1)))
+        landing_flexion = float(np.min(np.linalg.norm(landing_delta, axis=-1)))
+        grounded_before = bool(np.any(np.sum(clip[:apex, _CONTACT], axis=1) > 0))
+        grounded_after = bool(np.any(np.sum(clip[apex + 1:, _CONTACT], axis=1) > 0))
+        apex_airborne = bool(np.sum(clip[apex, _CONTACT]) == 0)
+
+        requirements = {
+            "rise": (rise, float(contract.get("height", 0.0))),
+            "load drop": (load_drop, float(contract.get("load_drop", 0.0))),
+            "load knee flexion": (
+                load_flexion, float(contract.get("load_flexion", 0.0))
+            ),
+            "landing knee flexion": (
+                landing_flexion, float(contract.get("landing_flexion", 0.0))
+            ),
+            "airborne fraction": (
+                airborne, float(contract.get("airborne_fraction", 0.0))
+            ),
+        }
+        ratios = [
+            value / max(required, 1e-6)
+            for value, required in requirements.values()
+            if required > 0.0
+        ]
+        metric = min(ratios) if ratios else 1.0
+        contacts_ok = grounded_before and apex_airborne and grounded_after
+        if not contacts_ok:
+            metric = 0.0
+        detail = (
+            f"load f{load} drop {load_drop:.3f} flex {load_flexion:.3f}; "
+            f"apex f{apex} rise {rise:.3f}; landing f{landing} flex "
+            f"{landing_flexion:.3f}; airborne {airborne:.3f}; "
+            f"contacts {'ground-air-ground' if contacts_ok else 'invalid'}"
+        )
+        threshold = 1.0
     elif kind == "vertical_peak":
         z = clip[:, 2]
         rise = float(np.max(z) - min(float(z[0]), float(z[-1])))
@@ -465,6 +553,50 @@ def validate_semantics(
         metric = min(rise / max(threshold, 1e-6), airborne / max(required_air, 1e-6))
         detail = f"rise {rise:.3f}, airborne {airborne:.3f}"
         threshold = 1.0
+    elif kind == "grounded_vertical_cycles":
+        z = np.asarray(clip[:, 2], dtype=np.float32)
+        if reference is not None:
+            ref = np.asarray(reference, dtype=np.float32)
+            if ref.shape != clip.shape:
+                raise ValueError(
+                    f"semantic reference must match clip shape {clip.shape}, got {ref.shape}"
+                )
+            z = z - ref[:, 2]
+        turns = np.diff(np.sign(np.diff(z)))
+        pulses = int(np.count_nonzero(turns > 0))
+        height = float(np.max(z) - np.min(z))
+        grounded = float(np.mean(np.all(clip[:, _CONTACT] > 0.5, axis=1)))
+        joints = [int(j) for j in contract.get("joints", ())]
+        rotations = _sixd_to_matrix(clip[:, _ROT].reshape(-1, 22, 6))
+        activity = (
+            np.max(np.linalg.norm(_matrix_to_axis_angle(rotations[:, joints]), axis=-1), axis=0)
+            if joints else np.array([np.inf], dtype=np.float32)
+        )
+        if reference is not None and joints:
+            ref_r = _sixd_to_matrix(ref[:, _ROT].reshape(-1, 22, 6))
+            delta = _matrix_to_axis_angle(
+                rotations[:, joints] @ np.swapaxes(ref_r[:, joints], -1, -2)
+            )
+            activity = np.maximum(
+                activity,
+                np.max(np.linalg.norm(delta, axis=-1), axis=0),
+            )
+        bilateral_activity = float(np.min(activity))
+        required_pulses = max(1, int(contract.get("pulses", threshold or 1)))
+        required_height = max(1e-6, float(contract.get("height", 0.0)))
+        required_grounded = max(1e-6, float(contract.get("grounded_fraction", 1.0)))
+        required_activity = max(1e-6, float(contract.get("joint_activity", 0.0)))
+        metric = min(
+            pulses / required_pulses,
+            height / required_height,
+            grounded / required_grounded,
+            bilateral_activity / required_activity,
+        )
+        threshold = 1.0
+        detail = (
+            f"down pulses {pulses}; vertical travel {height:.3f}; "
+            f"fully planted {grounded:.3f}; bilateral activity {bilateral_activity:.3f}"
+        )
     elif kind == "vertical_cycles":
         z = clip[:, 2] - float(np.mean(clip[:, 2]))
         turns = np.count_nonzero(np.diff(np.sign(np.diff(z))) < 0)
@@ -474,9 +606,39 @@ def validate_semantics(
         yaw = _root_yaw_series(clip)
         metric = float(np.max(np.abs(yaw - yaw[0])))
         detail = f"yaw excursion {metric:.3f} rad"
+    elif kind == "rise_phases":
+        z = np.asarray(clip[:, 2], dtype=np.float32)
+        if reference is not None:
+            ref = np.asarray(reference, dtype=np.float32)
+            if ref.shape != clip.shape:
+                raise ValueError(
+                    f"semantic reference must match clip shape {clip.shape}, got {ref.shape}"
+                )
+            z = z - ref[:, 2]
+        low = int(np.argmin(z))
+        high = low + int(np.argmax(z[low:]))
+        rise = float(z[high] - z[low])
+        grounded = float(np.mean(np.all(clip[:, _CONTACT] > 0.5, axis=1)))
+        required_height = max(1e-6, float(contract.get("height", threshold)))
+        required_grounded = max(1e-6, float(contract.get("grounded_fraction", 1.0)))
+        metric = min(rise / required_height, grounded / required_grounded)
+        threshold = 1.0
+        detail = (
+            f"low f{low}; high f{high}; rise {rise:.3f}; "
+            f"fully planted {grounded:.3f}"
+        )
     elif kind == "root_level":
         direction = str(contract.get("direction", "down"))
-        delta = clip[:, 2] - float(clip[0, 2])
+        z = np.asarray(clip[:, 2], dtype=np.float32)
+        if reference is not None:
+            ref = np.asarray(reference, dtype=np.float32)
+            if ref.shape != clip.shape:
+                raise ValueError(
+                    f"semantic reference must match clip shape {clip.shape}, got {ref.shape}"
+                )
+            delta = z - ref[:, 2]
+        else:
+            delta = z - float(z[0])
         metric = float(np.max(-delta if direction == "down" else delta))
         detail = f"root level excursion {metric:.3f}"
     elif kind == "root_displacement":
@@ -909,28 +1071,46 @@ def _compose_beat_locked(
     host = base[start:end]
     out = base.copy()
     weight = _composition_envelope(action_len, local_event, blend_frames)
+    phase_weight = weight
+    if spec.phase_joints and spec.phase_blend_frames is not None:
+        phase_weight = _composition_envelope(
+            action_len,
+            local_event,
+            min(int(blend_frames), spec.phase_blend_frames),
+        )
+    phase_joints = set(spec.phase_joints)
     base_r = _sixd_to_matrix(host[:, _ROT].reshape(action_len, 22, 6))
     action_r = _sixd_to_matrix(fitted[:, _ROT].reshape(action_len, 22, 6))
     composed = base_r.copy()
 
     if spec.absolute_joints:
-        joints = np.asarray(spec.absolute_joints, dtype=np.int64)
-        absolute_r = action_r
-        if spec.event_pose_joints:
-            absolute_r = action_r.copy()
-            event_pose = action_r[local_event]
-            for joint in spec.event_pose_joints:
-                absolute_r[:, joint] = event_pose[joint]
-        offset = absolute_r[:, joints] @ np.swapaxes(base_r[:, joints], -1, -2)
-        composed[:, joints] = _fractional_rotation(
-            offset, weight[:, None],
-        ) @ base_r[:, joints]
+        event_pose_joints = set(spec.event_pose_joints)
+        for joint in spec.absolute_joints:
+            absolute_r = action_r[:, joint]
+            if joint == 0:
+                # A planted level change may need the authored root tilt so its canonical leg
+                # pose still reaches the floor, but it must not reset the dancer's heading.
+                action_yaw = _root_yaw_series(fitted)
+                host_yaw = _root_yaw_series(host)
+                absolute_r = _yaw_rotation(host_yaw - action_yaw) @ absolute_r
+            if joint in event_pose_joints:
+                absolute_r = np.repeat(
+                    action_r[local_event:local_event + 1, joint],
+                    action_len,
+                    axis=0,
+                )
+            offset = absolute_r @ np.swapaxes(base_r[:, joint], -1, -2)
+            joint_weight = phase_weight if joint in phase_joints else weight
+            composed[:, joint] = (
+                _fractional_rotation(offset, joint_weight) @ base_r[:, joint]
+            )
 
     if spec.additive_joints:
         reference = action_r[:1]
         for joint in spec.additive_joints:
+            joint_weight = phase_weight if joint in phase_joints else weight
             if joint == 0:
-                root_weight = weight
+                root_weight = joint_weight
                 if spec.carry_root_rotation:
                     width = int(max(1, min(blend_frames, local_event)))
                     root_weight = np.ones(action_len, dtype=np.float32)
@@ -956,7 +1136,9 @@ def _compose_beat_locked(
                     composed[:, 0] = _fractional_rotation(delta, root_weight) @ base_r[:, 0]
             else:
                 delta = np.swapaxes(reference[:, joint], -1, -2) @ action_r[:, joint]
-                composed[:, joint] = base_r[:, joint] @ _fractional_rotation(delta, weight)
+                composed[:, joint] = (
+                    base_r[:, joint] @ _fractional_rotation(delta, joint_weight)
+                )
 
     composed_6d = _matrix_to_sixd(composed)
     owned_joints = sorted(set(spec.absolute_joints) | set(spec.additive_joints))
@@ -968,6 +1150,11 @@ def _compose_beat_locked(
         canonical = fitted[:, :3] - fitted[:1, :3]
         selected = np.zeros_like(canonical)
         selected[:, list(spec.translation_axes)] = canonical[:, list(spec.translation_axes)]
+        if 2 in spec.translation_axes:
+            # Vertical root motion and the lower-body pose describe the same level change.
+            # Fading the pose while carrying the full root offset makes a rise float and a
+            # crouch sink at the hand-back. Use the lower-body phase envelope for both.
+            selected[:, 2] *= phase_weight
         selected = _rotate_translation_into_facing(selected, fitted, host[0])
         translated = host[:, :3].copy()
 
@@ -990,7 +1177,7 @@ def _compose_beat_locked(
             host_owned = (host_delta @ basis)[:, None] * basis[None, :]
             translated[:, :2] = host[:, :2] - host_owned + selected[:, :2]
         if 2 in spec.translation_axes:
-            translated[:, 2] = host[0, 2] + selected[:, 2]
+            translated[:, 2] = host[:, 2] + selected[:, 2]
 
         out[start:end, :3] = translated
         if end < n:

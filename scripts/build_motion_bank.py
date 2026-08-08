@@ -18,7 +18,7 @@ from agentlodge.dance.transition import (  # noqa: E402
     to_zup,
 )
 from agentlodge.editor.motion_bank import MotionBank  # noqa: E402
-from server.fk import _template, compute_poses  # noqa: E402
+from server.fk import BODY_PARENTS, _template, compute_poses  # noqa: E402
 
 BANK = ROOT / "assets" / "motion_bank"
 MANIFEST = BANK / "manifest.json"
@@ -130,6 +130,94 @@ def _align_vector(source, target):
         axis = cross / norm
     angle = np.arccos(dot)
     return _axis_angle_to_matrix((axis * angle).astype(np.float32))
+
+
+def _native_joint_positions(axis_angles: np.ndarray) -> np.ndarray:
+    """Forward-kinematic joint positions in the native SMPL authoring frame."""
+    local = _axis_angle_to_matrix(np.asarray(axis_angles, dtype=np.float32))
+    template = _template()[:22]
+    global_r = np.empty_like(local)
+    positions = np.empty((22, 3), dtype=np.float32)
+    global_r[0] = local[0]
+    positions[0] = template[0]
+    for joint in range(1, 22):
+        parent = BODY_PARENTS[joint]
+        positions[joint] = (
+            positions[parent]
+            + global_r[parent] @ (template[joint] - template[parent])
+        )
+        global_r[joint] = global_r[parent] @ local[joint]
+    return positions
+
+
+def _stance_ankle(side: str) -> np.ndarray:
+    """Ankle position of the shared ready stance in the native authoring frame."""
+    stance = np.zeros((1, 22, 3), dtype=np.float32)
+    _apply_stance(stance)
+    ankle = 7 if side == "left" else 8
+    return _native_joint_positions(stance[0])[ankle]
+
+
+def _phase_ease(t: np.ndarray, start: float, end: float) -> np.ndarray:
+    return _smoothstep(np.clip((t - start) / max(end - start, 1e-6), 0.0, 1.0))
+
+
+def _foot_swing(
+    t: np.ndarray,
+    start: float,
+    end: float,
+    origin: np.ndarray,
+    target: np.ndarray,
+    *,
+    lift: float,
+) -> np.ndarray:
+    """Move one ankle between planted targets with a visible airborne arc."""
+    raw = np.clip((t - start) / max(end - start, 1e-6), 0.0, 1.0)
+    progress = _smoothstep(raw)
+    origin = np.asarray(origin, dtype=np.float32)
+    target = np.asarray(target, dtype=np.float32)
+    out = origin[None, :] + progress[:, None] * (target - origin)[None, :]
+    active = (t > start) & (t < end)
+    out[:, 1] += float(lift) * np.sin(np.pi * raw) * active
+    return out
+
+
+def _solve_leg(aa: np.ndarray, side: str, ankle_targets: np.ndarray) -> None:
+    """Two-bone leg IK with a forward knee and a level foot."""
+    hip, knee, ankle = (1, 4, 7) if side == "left" else (2, 5, 8)
+    template = _template()[:22]
+    upper = template[knee] - template[hip]
+    lower = template[ankle] - template[knee]
+    upper_len = float(np.linalg.norm(upper))
+    lower_len = float(np.linalg.norm(lower))
+    knee_hint = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+
+    for frame, foot in enumerate(np.asarray(ankle_targets, dtype=np.float32)):
+        root_global = _axis_angle_to_matrix(aa[frame, 0])
+        origin = template[0] + root_global @ (template[hip] - template[0])
+        delta = foot - origin
+        raw_distance = float(np.linalg.norm(delta))
+        distance = float(np.clip(
+            raw_distance,
+            abs(upper_len - lower_len) + 1e-4,
+            upper_len + lower_len - 1e-4,
+        ))
+        direction = delta / (raw_distance + 1e-9)
+        along = (
+            upper_len * upper_len
+            - lower_len * lower_len
+            + distance * distance
+        ) / (2.0 * distance)
+        bend_height = np.sqrt(max(0.0, upper_len * upper_len - along * along))
+        bend = knee_hint - np.dot(knee_hint, direction) * direction
+        bend /= np.linalg.norm(bend) + 1e-9
+        knee_target = origin + along * direction + bend_height * bend
+
+        upper_global = _align_vector(upper, knee_target - origin)
+        lower_global = _align_vector(lower, foot - knee_target)
+        aa[frame, hip] = _matrix_to_axis_angle(root_global.T @ upper_global)
+        aa[frame, knee] = _matrix_to_axis_angle(upper_global.T @ lower_global)
+        aa[frame, ankle] = _matrix_to_axis_angle(lower_global.T)
 
 
 # Where the elbow swings to when the wrist target leaves it free to choose. Two positions of
@@ -248,6 +336,7 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
     _apply_stance(aa)
     t = np.linspace(0.0, 1.0, n, dtype=np.float32)
     phase = 2.0 * np.pi * t
+    leg_targets = None
 
     if motion_id in {"clap_single", "clap_overhead"}:
         overhead = motion_id == "clap_overhead"
@@ -276,32 +365,37 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         aa[:, 4, 0] += 0.14 * (1.0 - hit)
         aa[:, 5, 0] += 0.14 * (1.0 - hit)
     elif motion_id in {"jump_two_foot", "jump_arms_up"}:
-        air = np.sin(np.pi * _smoothstep((t - 0.18) / 0.64))
+        air = np.sin(np.pi * _smoothstep((t - 0.22) / 0.58))
         air = np.maximum(air, 0.0)
-        trans[:, 2] += (0.22 if motion_id == "jump_two_foot" else 0.27) * air
-        crouch = _pulse(t, 0.17, 0.10) + 0.45 * _pulse(t, 0.85, 0.10)
-        aa[:, 1, 0] -= 0.42 * crouch
-        aa[:, 2, 0] -= 0.42 * crouch
-        aa[:, 4, 0] += 0.75 * crouch
-        aa[:, 5, 0] += 0.75 * crouch
-        aa[:, 3, 0] += 0.24 * crouch - 0.12 * air            # fold to load, extend in the air
-        aa[:, 12, 0] -= 0.14 * air
-        contacts[air > 0.22] = 0.0
+        trans[:, 2] += (0.30 if motion_id == "jump_two_foot" else 0.36) * air
+        load = _pulse(t, 0.18, 0.09)
+        land = _pulse(t, 0.82, 0.09)
+        crouch = load + 0.72 * land
+        aa[:, 1, 0] -= 0.58 * crouch
+        aa[:, 2, 0] -= 0.58 * crouch
+        aa[:, 4, 0] += 1.02 * crouch
+        aa[:, 5, 0] += 1.02 * crouch
+        aa[:, 7, 0] -= 0.18 * air
+        aa[:, 8, 0] -= 0.18 * air
+        aa[:, 3, 0] += 0.32 * load + 0.20 * land - 0.16 * air
+        aa[:, 12, 0] -= 0.18 * air
+        contacts[air > 0.12] = 0.0
         if motion_id == "jump_arms_up":
             left = np.array([0.25, 0.48, 0.04], dtype=np.float32)
             right = np.array([-0.25, 0.48, 0.04], dtype=np.float32)
             _solve_arm(aa, "left", _arm_targets("left", air, left))
             _solve_arm(aa, "right", _arm_targets("right", air, right))
         else:
-            aa[:, 16, 1] -= 0.55 * crouch - 0.30 * air       # arms drive the two-foot takeoff
-            aa[:, 17, 1] += 0.55 * crouch - 0.30 * air
+            aa[:, 16, 1] -= 0.70 * load + 0.38 * land - 0.48 * air
+            aa[:, 17, 1] += 0.70 * load + 0.38 * land - 0.48 * air
     elif motion_id == "bounce_in_place":
-        bounce = 0.5 - 0.5 * np.cos(6.0 * np.pi * t)
+        compression = 0.5 - 0.5 * np.cos(6.0 * np.pi * t)
         # No authored root rise here: _ground re-solves pelvis height from the leg pose on every
         # grounded frame, so a hand-written trans[:, 2] term is silently cancelled. The bounce has
-        # to come from the knees, and 0.72 rad of flexion buys ~10cm of travel -- a visible groove.
-        aa[:, 4, 0] += 0.72 * (1.0 - bounce)
-        aa[:, 5, 0] += 0.72 * (1.0 - bounce)
+        # to come from the knees. Start and end tall, with three internal compressions, so the
+        # splice hands over on the shared stance instead of entering already crouched.
+        aa[:, 4, 0] += 0.82 * compression
+        aa[:, 5, 0] += 0.82 * compression
         aa[:, 3, 0] += 0.1 * np.sin(6.0 * np.pi * t)
         aa[:, 0, 2] += 0.13 * np.sin(3.0 * np.pi * t)        # hips answer every other bounce
         aa[:, 16, 1] -= 0.16 * np.sin(3.0 * np.pi * t)
@@ -359,68 +453,109 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         # forward and 0.13 m down: a pigeon peck, not a pop. The forward drive now lives at
         # pelvis/spine1/spine2, and spine3 plus the neck give back that same total so the
         # shoulders open and the head arrives level instead of leading.
-        base = 0.07 * drive                                  # hips stay under the ribcage
-        lower = 0.26 * drive
-        mid = 0.23 * drive                                   # the chest travels off these three
+        pop_scale = 1.65
+        base = pop_scale * 0.07 * drive                      # hips stay under the ribcage
+        lower = pop_scale * 0.26 * drive
+        mid = pop_scale * 0.23 * drive                       # the chest travels off these three
         # Cancelling only the rotation is not enough to hold the head: the chain below has
         # already carried it forward, so the counter has to over-rotate to bring it back. The
         # extra 0.34 is the arcsin of that leftover head travel over the spine3->head length.
-        counter = base + lower + mid + 0.34 * drive
+        counter = base + lower + mid + pop_scale * 0.34 * drive
         aa[:, 0, 0] += base
         aa[:, 3, 0] += lower
         aa[:, 6, 0] += mid
         aa[:, 9, 0] -= 0.58 * counter                        # shoulders open rather than dive
         aa[:, 12, 0] -= 0.42 * counter                       # head holds its place
-        aa[:, 16, 2] -= 0.30 * hit
-        aa[:, 17, 2] += 0.30 * hit
-        aa[:, 4, 0] += 0.18 * hit
-        aa[:, 5, 0] += 0.18 * hit
-        _travel(trans, -0.035 * drive)                       # hips settle back off the chest
+        aa[:, 16, 2] -= 0.48 * hit
+        aa[:, 17, 2] += 0.48 * hit
+        aa[:, 4, 0] += 0.30 * hit
+        aa[:, 5, 0] += 0.30 * hit
+        _travel(trans, -0.055 * drive)                       # hips settle back off the chest
     elif motion_id == "arm_punch":
-        hit = _pulse(t, 0.55, 0.10)
-        recoil = _pulse(t, 0.78, 0.12)
-        target = np.array([-0.12, 0.04, 0.72], dtype=np.float32)
-        _solve_arm(aa, "right", _arm_targets(
-            "right", np.clip(hit - 0.30 * recoil, 0.0, None), target))
-        aa[:, 9, 1] -= 0.42 * hit                            # sharp: the whole torso rotates in
-        aa[:, 0, 1] -= 0.22 * hit
-        aa[:, 16, 1] += 0.40 * hit                           # opposite arm pulls back
+        ready = _smoothstep(t / 0.24) * _smoothstep((1.0 - t) / 0.18)
+        wind = _pulse(t, 0.34, 0.09)
+        hit = _pulse(t, 0.55, 0.12)
+        right_rest = _stance_wrist("right")
+        right_guard = np.array([-0.24, 0.16, 0.20], dtype=np.float32)
+        right_strike = np.array([-0.14, 0.08, 0.72], dtype=np.float32)
+        right_targets = (
+            right_rest[None, :]
+            + ready[:, None] * (right_guard - right_rest)[None, :]
+            + hit[:, None] * (right_strike - right_guard)[None, :]
+        )
+        left_rest = _stance_wrist("left")
+        left_guard = np.array([0.18, 0.12, 0.22], dtype=np.float32)
+        left_tuck = np.array([0.12, 0.10, 0.18], dtype=np.float32)
+        left_targets = (
+            left_rest[None, :]
+            + ready[:, None] * (left_guard - left_rest)[None, :]
+            + hit[:, None] * (left_tuck - left_guard)[None, :]
+        )
+        _solve_arm(aa, "right", right_targets)
+        _solve_arm(aa, "left", left_targets)
+        aa[:, 9, 1] += 0.12 * wind - 0.56 * hit              # wind up, then rotate into the hit
+        aa[:, 0, 1] += 0.08 * wind - 0.26 * hit
         aa[:, 12, 1] -= 0.12 * hit
-        aa[:, 4, 0] += 0.20 * hit
-        _travel(trans, 0.06 * hit)                           # a short step into the punch
+        aa[:, 3, 0] += 0.14 * hit
+        aa[:, 4, 0] += 0.28 * hit
+        _travel(trans, 0.075 * hit)                          # a short step into the punch
     elif motion_id == "side_step":
-        # A lateral weight transfer, NOT a walking gait: the feet stay square to the front, the
-        # hips carry the weight sideways, and the torso counter-leans. This is what separates it
-        # from step_forward, which uses an actual alternating gait.
-        shift = _smoothstep(t)
+        # The lead foot opens and the pelvis settles over it while the trailing foot stays
+        # planted. Holding the wide stance is what distinguishes this from a step-and-touch.
+        left_start = _stance_ankle("left")
+        right_start = _stance_ankle("right")
+        left_end = left_start.copy()
+        left_end[0] += 0.34
+        trans[:, 0] += 0.24 * _phase_ease(t, 0.30, 0.64)
+        left_targets = _foot_swing(
+            t, 0.05, 0.45, left_start, left_end, lift=0.09,
+        )
+        right_targets = np.repeat(right_start[None, :], n, axis=0)
+        leg_targets = (left_targets, right_targets)
+
+        settle = _phase_ease(t, 0.25, 0.62)
+        aa[:, 0, 2] += 0.18 * settle
+        aa[:, 9, 2] -= 0.15 * settle
         reach = np.sin(np.pi * t)
-        trans[:, 0] += 0.42 * shift
-        aa[:, 1, 2] += 0.34 * reach                          # lead leg reaches out of the stance
-        aa[:, 2, 2] -= 0.20 * reach                          # trailing leg spreads the other way
-        aa[:, 4, 0] += 0.30 * reach
-        aa[:, 5, 0] += 0.16 * reach
-        aa[:, 0, 2] += 0.26 * reach                          # hips ride the weight across
-        aa[:, 9, 2] -= 0.24 * reach                          # shoulders counter-lean
-        aa[:, 16, 2] -= 0.28 * reach
-        aa[:, 17, 2] -= 0.28 * reach                         # both arms drift with the momentum
-        contacts[:, 0:2] = (reach < 0.55)[:, None]
+        aa[:, 16, 2] -= 0.25 * reach
+        aa[:, 17, 2] -= 0.25 * reach
+        contacts[:, 0:2] = ((t <= 0.05) | (t >= 0.42))[:, None]
+        contacts[:, 2:4] = 1.0
     elif motion_id == "step_touch":
-        # Step out and close: two lateral steps that each end with the feet together.
-        cycle = np.sin(2.0 * np.pi * t)
-        trans[:, 0] += 0.30 * _smoothstep(t)
-        trans[:, 0] += 0.06 * np.sin(4.0 * np.pi * t)        # the out-and-close within each step
-        out = np.abs(np.sin(2.0 * np.pi * t))
-        aa[:, 1, 2] += 0.30 * out                            # the stance opens, then closes again
-        aa[:, 2, 2] -= 0.14 * out
-        aa[:, 4, 0] += 0.26 * out
-        aa[:, 5, 0] += 0.14 * out
-        aa[:, 0, 2] += 0.22 * cycle
-        aa[:, 9, 2] -= 0.18 * cycle
-        aa[:, 16, 2] -= 0.24 * out
-        aa[:, 17, 2] -= 0.24 * out
-        aa[:, 12, 2] += 0.10 * cycle
-        contacts[:, 0:2] = (cycle <= 0)[:, None]
-        contacts[:, 2:4] = (cycle >= 0)[:, None]
+        # The lead foot accepts the weight before the trailing foot lifts and taps beside it.
+        # The pelvis stops during the tap instead of continuing into another lateral step.
+        left_start = _stance_ankle("left")
+        right_start = _stance_ankle("right")
+        left_end = left_start.copy()
+        left_end[0] += 0.31
+        right_touch = left_end.copy()
+        right_touch[0] -= 0.085
+        trans[:, 0] += 0.29 * _phase_ease(t, 0.34, 0.62)
+
+        left_targets = _foot_swing(
+            t, 0.05, 0.46, left_start, left_end, lift=0.085,
+        )
+        right_targets = _foot_swing(
+            t, 0.50, 0.77, right_start, right_touch, lift=0.075,
+        )
+        right_finish = right_start.copy()
+        right_finish[0] += float(trans[-1, 0])
+        right_targets += (
+            _phase_ease(t, 0.88, 1.0)[:, None]
+            * (right_finish - right_touch)[None, :]
+        )
+        leg_targets = (left_targets, right_targets)
+
+        groove = np.sin(np.pi * t)
+        aa[:, 0, 2] += 0.10 * groove
+        aa[:, 9, 2] -= 0.10 * groove
+        aa[:, 16, 2] -= 0.20 * groove
+        aa[:, 17, 2] -= 0.20 * groove
+        aa[:, 12, 2] += 0.08 * _pulse(t, 0.77, 0.12)
+        contacts[:, 0:2] = ((t <= 0.05) | (t >= 0.42))[:, None]
+        contacts[:, 2:4] = (
+            (t <= 0.50) | ((t >= 0.76) & (t <= 0.86))
+        )[:, None]
     elif motion_id in {"step_forward", "step_backward"}:
         direction = 1.0 if motion_id == "step_forward" else -1.0
         _travel(trans, direction * 0.46 * _smoothstep(t))
@@ -467,12 +602,13 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         aa[:, 18, 1] += 0.30 * down
         aa[:, 19, 1] -= 0.30 * down
     elif motion_id == "rise_reach":
-        rise = _smoothstep(t / 0.72)
-        fall = 1.0 - rise
-        aa[:, 1, 0] -= 0.95 * fall
-        aa[:, 2, 0] -= 0.95 * fall
-        aa[:, 4, 0] += 1.85 * fall
-        aa[:, 5, 0] += 1.85 * fall
+        load = _smoothstep(t / 0.24)
+        rise = _smoothstep(np.clip((t - 0.28) / 0.44, 0.0, 1.0))
+        crouch = load * (1.0 - rise)
+        aa[:, 1, 0] -= 0.95 * crouch
+        aa[:, 2, 0] -= 0.95 * crouch
+        aa[:, 4, 0] += 1.85 * crouch
+        aa[:, 5, 0] += 1.85 * crouch
         # One continuous reach up and slightly forward, with the leading arm ahead of the other,
         # so it reads as a rise rather than the symmetric held V of celebrate_hands_up. Both
         # targets stay dominantly vertical -- the forward term only keeps the hands off the back.
@@ -487,6 +623,11 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
         raise KeyError(f"no procedural authoring recipe for {motion_id}")
 
     _performance_layer(aa, trans, t)
+    if leg_targets is not None:
+        root_offset = np.zeros((n, 3), dtype=np.float32)
+        root_offset[:, 0] = trans[:, 0]
+        _solve_leg(aa, "left", leg_targets[0] - root_offset)
+        _solve_leg(aa, "right", leg_targets[1] - root_offset)
     rotations = _matrix_to_sixd(_axis_angle_to_matrix(aa)).reshape(n, 132)
     # Author against the native Y-up SMPL template, then convert the complete clip to MAESTRO's
     # Z-up editing frame. ``trans`` above is expressed in desired Z-up coordinates.

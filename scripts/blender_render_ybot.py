@@ -77,6 +77,9 @@ def parse_args():
     p.add_argument("--lock-root", action="store_true",
                    help="Legacy preview mode: pin the pelvis horizontally and ground the feet "
                         "every frame instead of preserving the FK root trajectory.")
+    p.add_argument("--fixed-camera", action="store_true",
+                   help="Preserve root motion but keep the studio camera and key light fixed. "
+                        "Use for visual audits where camera following would hide travel.")
     return p.parse_args(argv)
 
 
@@ -244,6 +247,15 @@ def render_take(args, color):
     data = np.load(args.poses)
     poses = data["poses"].astype(np.float32)  # (L, J, 3)
     L = poses.shape[0]
+    contacts = None
+    if "contacts" in data.files:
+        contacts = np.asarray(data["contacts"], dtype=np.float32)
+        if contacts.ndim != 2 or contacts.shape[0] != L:
+            raise ValueError(
+                f"contacts must have shape ({L}, channels), got {contacts.shape}"
+            )
+        if not np.isfinite(contacts).all():
+            raise ValueError("contacts contain non-finite values")
 
     # Reuse the cached scene if this Blender was opened with one (rig + studio already loaded), else
     # do the full one-time setup (import FBX, style, scale, studio).
@@ -366,6 +378,7 @@ def render_take(args, color):
     root_path = None
     follow_xy = None
     root_ground_offset = 0.0
+    contact_ground_offsets = None
     cam = bpy.data.objects.get("Cam")
     target = bpy.data.objects.get("Target")
     spot = bpy.data.objects.get("Spot")
@@ -388,24 +401,54 @@ def render_take(args, color):
         root_plan = prepare_root_motion(fk, yaw_degrees=float(args.yaw))
         root_path = root_plan.root_path
         follow_xy = root_plan.follow_xy
+        grounded = (
+            np.any(contacts > 0.5, axis=1)
+            if contacts is not None
+            else np.zeros(L, dtype=bool)
+        )
+        calibration_frames = (
+            np.flatnonzero(grounded)
+            if grounded.any()
+            else root_plan.calibration_frames
+        )
+        measured_offsets = np.full(L, np.nan, dtype=np.float64)
         mesh_floor = float("inf")
-        for frame in root_plan.calibration_frames:
-            apply_pose(int(frame))
+        for frame in calibration_frames:
+            frame = int(frame)
+            apply_pose(frame)
             arm.location = (0.0, 0.0, 0.0)
             bpy.context.view_layer.update()
             pelvis = whead("m_avg_Pelvis")
-            target_root = root_path[int(frame)]
+            target_root = root_path[frame]
             arm.location = (
                 float(target_root[0] - pelvis.x),
                 float(target_root[1] - pelvis.y),
                 float(target_root[2] - pelvis.z),
             )
             bpy.context.view_layer.update()
-            mesh_floor = min(
-                mesh_floor,
-                lowest_mesh_z(bpy.context.evaluated_depsgraph_get(), ground_meshes),
+            frame_floor = lowest_mesh_z(
+                bpy.context.evaluated_depsgraph_get(), ground_meshes
             )
-        if mesh_floor != float("inf"):
+            if frame_floor == float("inf"):
+                continue
+            if grounded.any():
+                measured_offsets[frame] = -frame_floor
+            else:
+                mesh_floor = min(mesh_floor, frame_floor)
+        valid_offsets = np.flatnonzero(np.isfinite(measured_offsets))
+        if valid_offsets.size:
+            contact_ground_offsets = np.interp(
+                np.arange(L, dtype=np.float64),
+                valid_offsets.astype(np.float64),
+                measured_offsets[valid_offsets],
+            )
+            print(
+                "YBOT_GROUND contact-aware "
+                f"frames={valid_offsets.size} "
+                f"offset=[{contact_ground_offsets.min():.4f},"
+                f"{contact_ground_offsets.max():.4f}]"
+            )
+        elif mesh_floor != float("inf"):
             root_ground_offset = -mesh_floor
 
     # Rate-limit the floor offset so per-frame foot-height jitter (the lowest vertex hopping between
@@ -420,13 +463,21 @@ def render_take(args, color):
         pelvis = whead("m_avg_Pelvis")
         if preserve_root:
             target_root = root_path[i]
+            ground_offset = (
+                root_ground_offset
+                if contact_ground_offsets is None
+                else float(contact_ground_offsets[i])
+            )
             arm.location = (
                 float(target_root[0] - pelvis.x),
                 float(target_root[1] - pelvis.y),
-                float(target_root[2] - pelvis.z + root_ground_offset),
+                float(target_root[2] - pelvis.z + ground_offset),
             )
             bpy.context.view_layer.update()
-            if target is not None and cam is not None and cam_offset is not None:
+            if (
+                not bool(getattr(args, "fixed_camera", False))
+                and target is not None and cam is not None and cam_offset is not None
+            ):
                 tx, ty = map(float, follow_xy[i])
                 target.location = (tx, ty, target.location.z)
                 cam.location = (

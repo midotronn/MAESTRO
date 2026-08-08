@@ -98,9 +98,19 @@
       "event_frame": 28,
       "recommended_beats": 1.0,
       "default_anchor": "beat",
-      "validator": {"type": "vertical_peak", "threshold": 0.14, "airborne_fraction": 0.15},
+      "validator": {
+        "type": "jump_phases",
+        "height": 0.22,
+        "load_drop": 0.05,
+        "load_flexion": 0.45,
+        "landing_flexion": 0.45,
+        "airborne_fraction": 0.25
+      },
       "composition": {
-        "additive_joints": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
+        "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11],
+        "additive_joints": [0, 3, 6, 9, 12, 13, 14, 15, 16, 17, 18, 19],
+        "phase_joints": [1, 2, 4, 5, 7, 8, 10, 11],
+        "phase_blend_frames": 3,
         "translation_axes": ["z"],
         "replace_contacts": true
       }
@@ -123,11 +133,20 @@
       "event_frame": 31,
       "recommended_beats": 1.0,
       "default_anchor": "beat",
-      "validator": {"type": "vertical_peak", "threshold": 0.16, "airborne_fraction": 0.15},
+      "validator": {
+        "type": "jump_phases",
+        "height": 0.28,
+        "load_drop": 0.05,
+        "load_flexion": 0.45,
+        "landing_flexion": 0.45,
+        "airborne_fraction": 0.25
+      },
       "composition": {
-        "absolute_joints": [13, 14, 16, 17, 18, 19, 20, 21],
-        "additive_joints": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15],
+        "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21],
+        "additive_joints": [0, 3, 6, 9, 12, 15],
         "event_pose_joints": [13, 14, 16, 17, 18, 19, 20, 21],
+        "phase_joints": [1, 2, 4, 5, 7, 8, 10, 11],
+        "phase_blend_frames": 3,
         "translation_axes": ["z"],
         "replace_contacts": true
       }
@@ -150,10 +169,22 @@
       "event_frame": 18,
       "recommended_beats": 2.0,
       "default_anchor": "center",
-      "validator": {"type": "vertical_cycles", "threshold": 2},
+      "validator": {
+        "type": "grounded_vertical_cycles",
+        "threshold": 1.0,
+        "pulses": 2,
+        "height": 0.08,
+        "grounded_fraction": 1.0,
+        "joints": [4, 5],
+        "joint_activity": 0.45
+      },
       "composition": {
-        "additive_joints": [0, 3, 4, 5, 6, 9, 12, 16, 17],
-        "translation_axes": ["z"]
+        "absolute_joints": [0, 1, 2, 4, 5, 7, 8, 10, 11],
+        "additive_joints": [3, 6, 9, 12, 16, 17],
+        "phase_joints": [0, 1, 2, 4, 5, 7, 8, 10, 11],
+        "phase_blend_frames": 3,
+        "translation_axes": ["z"],
+        "replace_contacts": true
       }
     },
     {
@@ -248,7 +279,7 @@
       "event_frame": 23,
       "recommended_beats": 1.0,
       "default_anchor": "beat",
-      "validator": {"type": "articulation_chain", "joints": [3, 6, 9], "threshold": 0.18},
+      "validator": {"type": "articulation_chain", "joints": [3, 6, 9], "threshold": 0.22},
       "composition": {
         "additive_joints": [0, 3, 4, 5, 6, 9, 12, 16, 17]
       }
@@ -273,9 +304,10 @@
       "default_anchor": "beat",
       "validator": {"type": "joint_activity", "joints": [16, 17, 18, 19], "threshold": 0.85},
       "composition": {
-        "absolute_joints": [14, 17, 19, 21],
-        "additive_joints": [0, 4, 9, 12, 16],
-        "event_pose_joints": [14, 17, 19, 21]
+        "absolute_joints": [13, 14, 16, 17, 18, 19, 21],
+        "additive_joints": [0, 4, 9, 12],
+        "phase_joints": [13, 14, 16, 17, 18, 19],
+        "phase_blend_frames": 4
       }
     },
     {
@@ -293,10 +325,10 @@
       "travel_axis": "x",
       "mirrorable": true,
       "repeatable": true,
-      "event_frame": 34,
+      "event_frame": 41,
       "recommended_beats": 2.0,
       "default_anchor": "center",
-      "validator": {"type": "root_displacement", "axis": "x", "threshold": 0.25},
+      "validator": {"type": "root_displacement", "axis": "x", "threshold": 0.20},
       "composition": {
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11],
         "additive_joints": [0, 3, 9, 16, 17],
@@ -319,7 +351,7 @@
       "travel_axis": "x",
       "mirrorable": true,
       "repeatable": true,
-      "event_frame": 42,
+      "event_frame": 64,
       "recommended_beats": 2.0,
       "default_anchor": "center",
       "validator": {"type": "root_displacement", "axis": "x", "threshold": 0.18},
@@ -327,7 +359,8 @@
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11],
         "additive_joints": [0, 3, 9, 12, 16, 17],
         "translation_axes": ["x"],
-        "replace_contacts": true
+        "replace_contacts": true,
+        "intensity_lock_frames": [64]
       }
     },
     {
@@ -480,7 +513,10 @@
       "composition": {
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11],
         "additive_joints": [3, 12, 16, 17, 18, 19],
-        "translation_axes": ["z"]
+        "phase_joints": [1, 2, 4, 5, 7, 8, 10, 11],
+        "phase_blend_frames": 3,
+        "translation_axes": ["z"],
+        "replace_contacts": true
       }
     },
     {
@@ -499,14 +535,22 @@
       "mirrorable": false,
       "repeatable": false,
       "event_frame": 42,
-      "recommended_beats": 1.0,
+      "recommended_beats": 2.0,
       "default_anchor": "beat",
-      "validator": {"type": "root_level", "direction": "up", "threshold": 0.18},
+      "validator": {
+        "type": "rise_phases",
+        "threshold": 1.0,
+        "height": 0.18,
+        "grounded_fraction": 1.0
+      },
       "composition": {
-        "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21],
+        "absolute_joints": [0, 1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21],
         "additive_joints": [3, 12],
         "event_pose_joints": [13, 14, 16, 17, 18, 19, 20, 21],
-        "translation_axes": ["z"]
+        "phase_joints": [0, 1, 2, 4, 5, 7, 8, 10, 11],
+        "phase_blend_frames": 4,
+        "translation_axes": ["z"],
+        "replace_contacts": true
       }
     }
   ]
