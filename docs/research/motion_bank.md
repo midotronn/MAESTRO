@@ -21,8 +21,9 @@ backward steps, quarter and half turns, body roll, crouch or drop, and rise or r
 - canonical ID, display name, aliases, and category;
 - clip path, frame rate, frame count, and semantic event frame;
 - mirror and repeat capabilities;
+- semantic direction capabilities, their canonical side, and optional authored directional clips;
 - stationary or traveling behavior;
-- a declared musical duration (`recommended_beats`);
+- a declared musical duration (`recommended_beats`) and optional minimum readable duration;
 - composition ownership: absolute and additive joints, translation axes, contacts, and whether a
   turn carries its root heading into the suffix;
 - optional event-pose joints that take the shortest path to the beat pose instead of replaying a
@@ -55,6 +56,12 @@ edited. `event_pose_joints` identifies joints whose only contract is the pose on
 travel directly from the host pose to that event pose and back under the composition envelope.
 Joints with meaningful internal timing retain the clip trajectory: the hand oscillation of a wave,
 the three contacts of a repeated clap, and the root and leg phases of jumps and level changes.
+
+Beat fitting also has a lower speed bound when compressing further would erase required phases.
+The jumps now span two beats and require at least 24 action frames. At a 15-frame beat this yields a
+one-second load, takeoff, flight, landing, and recovery instead of the previous half-second jump.
+At unusually fast tempos the bank adds another beat rather than compressing below the minimum; a
+selection too short to contain that duration fails with a clear request for a longer window.
 
 Beat-locking never fills the window to its last frame. A few frames of real dance are always kept
 after the action for the hand-back to fade into; when an action finished two frames from the edge
@@ -192,6 +199,16 @@ fall back to the nearest feasible beat until their `beat_strengths.npy` is gener
 multi-beat phrases default to `center`. This is enforced after either planner runs, so an LLM cannot
 move a clap off beat merely by returning an arbitrary `center` anchor. An explicit user placement
 such as before, after, start, center, or end still overrides the motion default.
+
+Directional motions accept `direction=left`, `right`, or, where meaningful, `forward`. With no
+explicit direction, `auto` reads the host's root travel in the dancer's local frame, then its turn
+direction, and uses the authored canonical side only when the phrase has no clear flow. The three
+claps use authored forward, left, and right clips. Their side variants turn the upper body into the
+clap while keeping the legs and feet in the host choreography; the manifest now preserves the
+authored spine and head support that composition previously discarded. Existing asymmetric
+motions such as waves, points, punches, lateral steps, and turns use their mirror capability behind
+the semantic direction parameter. The planner cannot invent a side when the user did not request
+one because post-planning defaults force `auto`.
 
 Named motions also default to intensity `0.65`, rather than the old neutral `0.50`. The authored
 clip dynamics are accented first, then the composed pose and root-travel delta owned by the motion
@@ -490,9 +507,11 @@ The two jump clips exposed why this gate is necessary. Their old contracts requi
 peak and an airborne contact span. Their lower-body rotations were additive and their full seven
 frame composition fade suppressed the authored crouch, while root height remained unattenuated.
 The result was a host pose floating upward, not a jump. Jumps now take absolute ownership of both
-legs, use a three-frame lower-body phase blend so the load and landing survive one-beat retiming
+legs, use a three-frame lower-body phase blend so the load and landing survive beat retiming
 without snapping the arms, and validate a ground-load-air-apex-land sequence with explicit knee
-flexion.
+flexion. The later live review showed that retaining the phases was not enough when all of them were
+compressed into one beat. Both jumps now use two beats with a 24-frame floor, preserving the same
+strongest-feasible-beat apex while making the full cycle readable at normal dance speed.
 
 The first complete blind pass found four more defects that the numeric contracts had accepted:
 

@@ -52,6 +52,7 @@ _SMOOTHSTEP_PEAK = 1.5     # a smoothstep ramp peaks at 1.5x its average rate
 _CLOSE_MAX_RATIO = 0.35    # never spend more than this share of the window closing
 _INSERT_HOST_RATE = 0.75   # host choreography keeps moving while time is made for an insertion
 _MIRROR_JOINTS = (0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12, 14, 13, 15, 17, 16, 19, 18, 21, 20)
+_DIRECTIONS = {"forward", "left", "right"}
 
 
 def normalize_name(value: str) -> str:
@@ -88,6 +89,11 @@ class MotionSpec:
     intensity_lock_frames: tuple[int, ...]
     phase_joints: tuple[int, ...]
     phase_blend_frames: int | None
+    minimum_frames: int
+    direction_mode: str | None
+    directions: tuple[str, ...]
+    canonical_direction: str | None
+    direction_clips: tuple[tuple[str, str], ...]
 
     @classmethod
     def from_dict(cls, raw: dict) -> "MotionSpec":
@@ -132,6 +138,53 @@ class MotionSpec:
                 raise ValueError(f"{motion_id}: phase_blend_frames must be positive")
             if not phase_joints:
                 raise ValueError(f"{motion_id}: phase_blend_frames requires phase_joints")
+        minimum_frames = int(raw.get("minimum_frames", 1))
+        if minimum_frames < 1 or minimum_frames > int(raw["frames"]):
+            raise ValueError(
+                f"{motion_id}: minimum_frames must be within the authored clip"
+            )
+        direction = raw.get("direction")
+        direction_mode = None
+        directions: tuple[str, ...] = ()
+        canonical_direction = None
+        direction_clips: tuple[tuple[str, str], ...] = ()
+        if direction is not None:
+            if not isinstance(direction, dict):
+                raise ValueError(f"{motion_id}: direction must be an object")
+            direction_mode = str(direction.get("mode", "")).strip().lower()
+            if direction_mode not in {"clip", "mirror"}:
+                raise ValueError(
+                    f"{motion_id}: direction mode must be 'clip' or 'mirror'"
+                )
+            directions = tuple(
+                str(value).strip().lower() for value in direction.get("supported", ())
+            )
+            if not directions or len(set(directions)) != len(directions):
+                raise ValueError(
+                    f"{motion_id}: supported directions must be non-empty and unique"
+                )
+            if set(directions) - _DIRECTIONS:
+                raise ValueError(f"{motion_id}: unsupported direction name")
+            canonical_direction = str(direction.get("canonical", "")).strip().lower()
+            if canonical_direction not in directions:
+                raise ValueError(
+                    f"{motion_id}: canonical direction must be supported"
+                )
+            clips = direction.get("clips", {})
+            if direction_mode == "clip":
+                if not isinstance(clips, dict) or set(clips) != set(directions):
+                    raise ValueError(
+                        f"{motion_id}: clip directions need one clip per supported direction"
+                    )
+                direction_clips = tuple(
+                    (name, str(clips[name]).strip()) for name in directions
+                )
+                if any(not path for _name, path in direction_clips):
+                    raise ValueError(f"{motion_id}: direction clip path cannot be empty")
+            elif not bool(raw["mirrorable"]):
+                raise ValueError(
+                    f"{motion_id}: mirror direction mode requires mirrorable=true"
+                )
         axes = {"x": 0, "y": 1, "z": 2}
         try:
             translation_axes = tuple(axes[str(x).lower()] for x in composition.get(
@@ -174,6 +227,11 @@ class MotionSpec:
             intensity_lock_frames=intensity_lock_frames,
             phase_joints=phase_joints,
             phase_blend_frames=phase_blend_frames,
+            minimum_frames=minimum_frames,
+            direction_mode=direction_mode,
+            directions=directions,
+            canonical_direction=canonical_direction,
+            direction_clips=direction_clips,
         )
 
     def public_dict(self) -> dict:
@@ -188,6 +246,10 @@ class MotionSpec:
             "repeatable": self.repeatable,
             "recommended_beats": self.recommended_beats,
             "default_anchor": self.default_anchor,
+            "minimum_frames": self.minimum_frames,
+            "minimum_seconds": self.minimum_frames / self.fps,
+            "directions": list(self.directions),
+            "default_direction": "auto" if self.directions else None,
             "composition": {
                 "absolute_joints": list(self.absolute_joints),
                 "additive_joints": list(self.additive_joints),
@@ -251,9 +313,21 @@ class MotionBank:
         matches.sort(key=lambda item: item[0], reverse=True)
         return matches[0][1]
 
-    def load_clip(self, spec_or_id: MotionSpec | str) -> np.ndarray:
+    def load_clip(
+        self,
+        spec_or_id: MotionSpec | str,
+        *,
+        direction: str | None = None,
+    ) -> np.ndarray:
         spec = spec_or_id if isinstance(spec_or_id, MotionSpec) else self.resolve(spec_or_id)
-        path = (self.root / spec.clip).resolve()
+        clip_path = spec.clip
+        if direction is not None and spec.direction_mode == "clip":
+            clip_path = dict(spec.direction_clips).get(str(direction), "")
+            if not clip_path:
+                raise ValueError(
+                    f"{spec.name} does not support direction {direction!r}"
+                )
+        path = (self.root / clip_path).resolve()
         if self.root.resolve() not in path.parents:
             raise ValueError(f"{spec.id}: clip path escapes the motion bank")
         if not path.is_file():
@@ -272,6 +346,7 @@ class MotionBank:
         mode: str = "replace",
         anchor: str | None = None,
         mirror: bool = False,
+        direction: str | None = None,
         intensity: float | None = None,
         repeats: int = 1,
         blend_frames: int = 8,
@@ -289,9 +364,27 @@ class MotionBank:
             0.0,
             1.0,
         ))
-        raw = self.load_clip(spec)
+        legacy_mirror = bool(mirror) and direction is None
+        direction_request = (
+            spec.canonical_direction
+            if legacy_mirror and spec.directions
+            else direction
+        )
+        requested_direction, resolved_direction, direction_source = _resolve_direction(
+            base,
+            spec,
+            direction_request,
+        )
+        raw = self.load_clip(spec, direction=resolved_direction)
         compose_spec = spec
-        if mirror:
+        direction_mirror = bool(
+            spec.direction_mode == "mirror"
+            and resolved_direction != spec.canonical_direction
+        )
+        # Semantic direction wins when both controls are supplied. ``mirror`` remains a backwards-
+        # compatible low-level modifier only for callers that did not provide direction.
+        effective_mirror = legacy_mirror ^ direction_mirror
+        if effective_mirror:
             if not spec.mirrorable:
                 raise ValueError(f"{spec.name} does not support mirroring")
             raw = mirror_motion(raw)
@@ -302,6 +395,9 @@ class MotionBank:
                 event_pose_joints=tuple(_MIRROR_JOINTS[j] for j in spec.event_pose_joints),
                 phase_joints=tuple(_MIRROR_JOINTS[j] for j in spec.phase_joints),
             )
+            if resolved_direction in {"left", "right"} and legacy_mirror:
+                resolved_direction = "right" if resolved_direction == "left" else "left"
+                direction_source = "mirror"
         count = int(np.clip(repeats, 1, 8))
         if count > 1:
             if not spec.repeatable:
@@ -329,8 +425,16 @@ class MotionBank:
             raise ValueError(f"unsupported motion-bank mode: {mode!r}")
         if mode == "insert" and n < 24:
             raise ValueError("selected window is too short for insertion; use replace or select at least 0.8s")
+        required_minimum = spec.minimum_frames * count
+        if n - _join_tail(n) < required_minimum:
+            minimum_window = _minimum_window_frames(required_minimum)
+            raise ValueError(
+                f"selected window is too short for {spec.name}; select at least "
+                f"{minimum_window / _FPS:.1f}s so it can play at a natural speed"
+            )
         action_len = _beat_locked_length(
             raw.shape[0], n, beats, recommended_beats=spec.recommended_beats * count,
+            minimum_frames=required_minimum,
         )
         local_event = _action_local_event(raw.shape[0], source_event, action_len)
         latest = max(0, n - action_len - _join_tail(n))
@@ -394,7 +498,10 @@ class MotionBank:
             "action_frames": int(action_range[1] - action_range[0]),
             "recommended_beats": float(spec.recommended_beats * count),
             "beat_error_frames": _beat_error(actual_event, beats, n),
-            "mirror": bool(mirror),
+            "mirror": effective_mirror,
+            "direction_request": requested_direction,
+            "direction": resolved_direction,
+            "direction_source": direction_source,
             "intensity": resolved_intensity,
             "repeats": count,
             "source": spec.source,
@@ -886,6 +993,70 @@ def _join_tail(n: int) -> int:
     return int(min(8, max(0, int(n) // 8)))
 
 
+def _minimum_window_frames(action_frames: int) -> int:
+    """Smallest selection that leaves both the action and its blend-back room."""
+    n = int(max(1, action_frames))
+    while n - _join_tail(n) < action_frames:
+        n += 1
+    return n
+
+
+def _dance_flow_direction(base: np.ndarray) -> str:
+    """Infer left/right flow in the dancer's frame, falling back to forward.
+
+    Translation is the strongest cue. A mostly stationary turning phrase uses yaw direction as
+    its fallback. Tiny lateral noise is ignored so a centered dance does not make gestures flip
+    sides unpredictably.
+    """
+    clip = np.asarray(base, dtype=np.float32)
+    n = int(clip.shape[0])
+    if n < 4:
+        return "forward"
+    width = int(np.clip(n // 5, 2, 18))
+    start = np.mean(clip[:width, :2], axis=0)
+    end = np.mean(clip[-width:, :2], axis=0)
+    delta = end - start
+    yaw_series = _root_yaw_series(clip)
+    center = yaw_series[max(0, n // 2 - width // 2):min(n, n // 2 + width // 2 + 1)]
+    yaw = float(np.median(center))
+    left_axis = np.array([np.cos(yaw), np.sin(yaw)], dtype=np.float32)
+    forward_axis = np.array([-np.sin(yaw), np.cos(yaw)], dtype=np.float32)
+    lateral = float(delta @ left_axis)
+    forward = float(delta @ forward_axis)
+    if abs(lateral) >= 0.04 and abs(lateral) >= 0.45 * abs(forward):
+        return "left" if lateral > 0.0 else "right"
+    yaw_change = float(yaw_series[-1] - yaw_series[0])
+    if abs(yaw_change) >= 0.25:
+        return "left" if yaw_change > 0.0 else "right"
+    return "forward"
+
+
+def _resolve_direction(
+    base: np.ndarray,
+    spec: MotionSpec,
+    requested: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    if not spec.directions:
+        if requested not in (None, "", "auto"):
+            raise ValueError(f"{spec.name} does not support direction")
+        return None, None, None
+    normalized = "auto" if requested is None else normalize_name(requested).replace(" ", "_")
+    if normalized == "straight_ahead":
+        normalized = "forward"
+    if normalized != "auto" and normalized not in spec.directions:
+        raise ValueError(
+            f"{spec.name} supports directions: {', '.join(spec.directions)}"
+        )
+    if normalized != "auto":
+        return normalized, normalized, "explicit"
+    flow = _dance_flow_direction(base)
+    if flow in spec.directions:
+        return "auto", flow, "dance_flow"
+    if "forward" in spec.directions:
+        return "auto", "forward", "dance_flow"
+    return "auto", spec.canonical_direction, "canonical_fallback"
+
+
 def _action_local_event(action_frames: int, event: int, action_len: int) -> int:
     ratio = float(np.clip(event / max(1, action_frames - 1), 0.0, 1.0))
     return int(round(ratio * max(0, action_len - 1)))
@@ -958,6 +1129,7 @@ def _beat_locked_length(
     beats: np.ndarray | None,
     *,
     recommended_beats: float | None = None,
+    minimum_frames: int = 1,
 ) -> int:
     """How many frames the action gets: its authored duration, snapped to a whole number of beats.
 
@@ -974,14 +1146,15 @@ def _beat_locked_length(
     # frames: measured joint speed hit nearly six times anything in the song when the action ended
     # two frames from the edge. Dropping a beat is far cheaper than that lurch.
     room = int(max(1, n - _join_tail(n)))
+    minimum = int(np.clip(minimum_frames, 1, room))
     if beats is None:
-        return int(min(natural, room))
+        return int(np.clip(natural, minimum, room))
     b = np.unique(np.asarray(beats, dtype=float))
     if b.size < 2:
-        return int(min(natural, room))
+        return int(np.clip(natural, minimum, room))
     period = float(np.median(np.diff(b)))
     if not np.isfinite(period) or period < 1.0:
-        return int(min(natural, room))
+        return int(np.clip(natural, minimum, room))
     if recommended_beats is None:
         beats_wide = max(1.0, float(round(natural / period)))
     else:
@@ -990,7 +1163,13 @@ def _beat_locked_length(
     while beats_wide > 1.0 and fitted > room:
         beats_wide -= 1.0
         fitted = int(round(beats_wide * period))
-    return int(np.clip(fitted, 1, room))
+    while fitted < minimum:
+        candidate = int(round((beats_wide + 1.0) * period))
+        if candidate > room or candidate <= fitted:
+            break
+        beats_wide += 1.0
+        fitted = candidate
+    return int(np.clip(fitted, minimum, room))
 
 
 def _composition_envelope(n: int, event: int, blend_frames: int) -> np.ndarray:

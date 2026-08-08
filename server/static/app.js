@@ -234,7 +234,7 @@ const TOUR_STEPS = [
   { el: "timeline", title: "1 · Pick the part to edit",
     text: "Drag across this bar to choose the window of the dance you want to change. The shaded band is your window." },
   { el: "instruction", title: "2 · Say what you want",
-    text: "Describe the change in plain English, for example \u201cmake it more energetic\u201d, \u201ctighten to the beat\u201d, \u201cadd a clap here\u201d, or \u201cinsert a wave before the next move\u201d. The agent chooses the right edit." },
+    text: "Describe the change in plain English, for example \u201cmake it more energetic\u201d, \u201ctighten to the beat\u201d, \u201cclap to the right\u201d, or \u201cinsert a wave before the next move\u201d. If you omit a direction, MAESTRO follows the dance flow." },
   { el: "motionPicker", title: "3 · Browse 20 supported motions",
     text: "Open this catalog to see every common motion MAESTRO supports. Click one to add it to your prompt. Named motions are slightly exaggerated so they read clearly, and beat-hit motions land on the strongest beat in the selected window." },
   { el: "apply", title: "4 · Apply the edit",
@@ -306,7 +306,10 @@ async function loadMotionBank() {
       const timing = motion.default_anchor === "beat"
         ? "lands on the strongest beat in the selected window by default"
         : "centered in the selected window by default";
-      button.title = `${motion.category} · ${timing}`;
+      const direction = motion.directions && motion.directions.length
+        ? ` · directions: ${motion.directions.join(", ")}; auto follows the dance flow`
+        : "";
+      button.title = `${motion.category} · ${timing}${direction}`;
       button.onclick = () => {
         $("instruction").value = `add a ${motion.name.toLowerCase()} here`;
         $("instruction").focus();

@@ -47,12 +47,15 @@ def test_lists_songs_and_opens_session(client):
 
 def test_lists_named_motions_from_the_shared_manifest(client):
     data = client.get("/api/motions").json()
-    assert data["version"] == "1.0.0"
+    assert data["version"] == "1.1.0"
     assert len(data["motions"]) == 20
     clap = next(m for m in data["motions"] if m["id"] == "clap_single")
     assert clap["name"] == "Single clap"
     assert "clap" in clap["aliases"]
     assert clap["default_anchor"] == "beat"
+    assert clap["default_direction"] == "auto"
+    assert clap["directions"] == ["forward", "left", "right"]
+    assert clap["minimum_seconds"] > 0
     assert clap["source"] and clap["license"] and clap["attribution"]
 
 
@@ -138,8 +141,9 @@ def test_editor_review_actions_explain_the_user_flow():
     assert 'id="motionPicker"' in html
     assert "20 supported common motions" in html
     assert "/api/motions" in js
-    assert "add a clap here" in js
+    assert "clap to the right" in js
     assert "insert a wave before the next move" in js
+    assert "follows the dance flow" in js
 
     tour = js[js.index("const TOUR_STEPS"):js.index("let tourIdx")]
     assert "\\u2014" not in tour and "—" not in tour

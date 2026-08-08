@@ -161,6 +161,7 @@ def _tool_regenerate(clip, ctx, *, backbone: str = "auto", energy: float = 0.5, 
 
 def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
                       anchor: str | None = None, mirror: bool = False,
+                      direction: str | None = None,
                       intensity: float | None = None, repeats: int = 1):
     bank = default_motion_bank()
     spec = bank.resolve(motion_id)
@@ -173,11 +174,15 @@ def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
     if bool(mirror) and not spec.mirrorable:
         mirror = False
         dropped.append("mirroring")
+    if direction not in (None, "", "auto") and str(direction).lower() not in spec.directions:
+        direction = None
+        dropped.append("direction")
     out, report = bank.apply(
         clip, motion_id, beats=ctx.get("bank_beats", ctx.get("wbeats")),
         beat_strengths=ctx.get("bank_beat_strengths"),
         mode=mode, anchor=anchor,
-        mirror=bool(mirror), intensity=intensity, repeats=int(repeats),
+        mirror=bool(mirror), direction=direction,
+        intensity=intensity, repeats=int(repeats),
         blend_frames=int(ctx.get("blend_frames", 8)),
     )
     report["dropped"] = dropped
@@ -191,8 +196,10 @@ def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
         f"placed {report['name']} as a {report['mode']} edit, aligned at frame "
         f"{report['event_frame']} ({report['source']}, {report['license']})"
     )
+    if report.get("direction"):
+        note += f", directed {report['direction']}"
     if dropped:
-        note += f"; {spec.name} does not support {' or '.join(dropped)}, so it plays once as authored"
+        note += f"; {spec.name} does not support {' or '.join(dropped)}, so that option was ignored"
     return out, note
 
 
@@ -234,6 +241,7 @@ TOOLS: dict[str, ToolSpec] = {
         "turns, body roll, crouch, rise, and other listed named actions",
         'params: {"motion_id": "<bank id>", "mode": "replace"|"insert", '
         '"anchor": optional "early"|"center"|"late"|"beat" (omit for the motion default), "mirror": bool, '
+        '"direction": optional "auto"|"forward"|"left"|"right", '
         '"intensity": optional 0..1 (omit for the slightly exaggerated default), "repeats": 1..8}'),
 }
 
@@ -664,10 +672,36 @@ def _requested_motion_intensity(instruction: str) -> float | None:
     return None
 
 
+def _requested_motion_direction(instruction: str) -> str | None:
+    """Return a spatial direction only when the user explicitly requested one."""
+    normalized = normalize_name(instruction)
+    text = f" {normalized} "
+    named = r"(?:clap|wave|point|punch|step|turn)"
+    if any(phrase in text for phrase in (
+        " to the left ", " toward the left ", " towards the left ", " on the left ",
+        " left side ", " leftward ", " left hand ",
+    )) or re.search(rf"\b{named}\s+(?:to\s+(?:the\s+)?)?left\b", normalized):
+        return "left"
+    if any(phrase in text for phrase in (
+        " to the right ", " toward the right ", " towards the right ", " on the right ",
+        " right side ", " rightward ", " right hand ",
+    )) or re.search(
+        rf"\b{named}\s+(?:to\s+(?:the\s+)?)?right(?!\s+now\b)\b",
+        normalized,
+    ):
+        return "right"
+    if any(phrase in text for phrase in (
+        " straight ahead ", " directly forward ", " in front ", " to the front ",
+    )):
+        return "forward"
+    return None
+
+
 def _apply_motion_defaults(plan: AgentPlan, instruction: str) -> AgentPlan:
-    """Make named-action timing and intensity deterministic across planners."""
+    """Make named-action timing, intensity, and direction deterministic across planners."""
     requested = _requested_motion_anchor(instruction)
     requested_intensity = _requested_motion_intensity(instruction)
+    requested_direction = _requested_motion_direction(instruction)
     bank = default_motion_bank()
     for step in plan.steps:
         if step.tool != "motion_bank":
@@ -684,6 +718,11 @@ def _apply_motion_defaults(plan: AgentPlan, instruction: str) -> AgentPlan:
             if requested_intensity is None
             else requested_intensity
         )
+        if spec.directions:
+            step.params["direction"] = requested_direction or "auto"
+            step.params["mirror"] = False
+        else:
+            step.params.pop("direction", None)
     return plan
 
 
@@ -704,17 +743,15 @@ def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
         repeats = 3 if any(x in text for x in (" three times ", " thrice ")) else (
             2 if any(x in text for x in (" twice ", " two times ")) else 1
         )
-        mirror_requested = bool(
-            bank_spec.mirrorable
-            and any(x in text for x in (" left ", " left side ", " left hand ", " to the left "))
-        )
+        direction = _requested_motion_direction(instruction)
         intensity = _requested_motion_intensity(instruction)
         if intensity is None:
             intensity = DEFAULT_MOTION_INTENSITY
         mode = "insert" if explicit_insert else "replace"
         params = {
             "motion_id": bank_spec.id, "mode": mode, "anchor": anchor,
-            "mirror": mirror_requested, "intensity": intensity, "repeats": repeats,
+            "mirror": False, "direction": direction or ("auto" if bank_spec.directions else None),
+            "intensity": intensity, "repeats": repeats,
         }
         steps = []
         goals = []
@@ -803,6 +840,9 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
     bank_lines = ", ".join(f"{s.id} ({s.name}; aliases: {', '.join(s.aliases)})" for s in _specs)
     repeatable = ", ".join(s.id for s in _specs if s.repeatable) or "none"
     mirrorable = ", ".join(s.id for s in _specs if s.mirrorable) or "none"
+    directional = ", ".join(
+        f"{s.id} ({'/'.join(s.directions)})" for s in _specs if s.directions
+    ) or "none"
     beat_default = ", ".join(s.id for s in _specs if s.default_anchor == "beat") or "none"
     prompt = (
         "You are a dance-motion editing agent. The user selected the window "
@@ -820,6 +860,11 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         f"Only these accept repeats>1: {repeatable}. Only these accept mirror=true: {mirrorable}. "
         "Asking for either outside those lists is dropped and the action simply plays once, so "
         "prefer a motion that supports repetition when the user asks for something twice.\n"
+        f"These named actions accept a semantic direction: {directional}. Use direction=left/right/"
+        "forward only when the user explicitly says it. Otherwise use direction=auto so MAESTRO "
+        "follows the surrounding dance's lateral travel or turn and falls back to the authored "
+        "direction when the phrase has no clear flow. For these motions, direction is preferred "
+        "over the low-level mirror flag.\n"
         f"These named actions are beat-hit motions and default to anchor=beat: {beat_default}. "
         "Their clap, impact, accent, or arrival pose must land on the strongest feasible musical beat "
         "unless the user explicitly asks for early, late, before, after, start, center, or end. "

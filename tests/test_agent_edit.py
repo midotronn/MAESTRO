@@ -94,6 +94,7 @@ def test_llm_prompt_carries_the_critical_routing_rules(monkeypatch):
     assert "only" in prompt and "goal" in prompt                       # goal-discipline present
     assert "reshape" in prompt or "resize" in prompt                   # lever-vs-regenerate distinction
     assert "beat-hit motions" in prompt and "clap_single" in prompt
+    assert "direction=auto" in prompt and "dance" in prompt and "flow" in prompt
 
 
 def test_llm_cannot_move_a_default_beat_hit_off_the_beat(monkeypatch):
@@ -107,6 +108,23 @@ def test_llm_cannot_move_a_default_beat_hit_off_the_beat(monkeypatch):
     plan = AE.plan_edit("add a clap here", {}, 1.0, 6.0, api_key="sk-x")
     assert plan.steps[0].params["anchor"] == "beat"
     assert plan.steps[0].params["intensity"] == AE.DEFAULT_MOTION_INTENSITY
+    assert plan.steps[0].params["direction"] == "auto"
+    assert plan.steps[0].params["mirror"] is False
+
+
+def test_llm_cannot_invent_a_direction_but_explicit_direction_wins(monkeypatch):
+    captured: dict = {}
+    _fake_openai(
+        monkeypatch,
+        '{"summary":"clap","steps":[{"tool":"motion_bank","params":'
+        '{"motion_id":"clap_single","direction":"right"},"why":"add clap"}],"goals":[]}',
+        captured,
+    )
+    automatic = AE.plan_edit("add a clap here", {}, 1.0, 6.0, api_key="sk-x")
+    assert automatic.steps[0].params["direction"] == "auto"
+
+    explicit = AE.plan_edit("add a clap to the left", {}, 1.0, 6.0, api_key="sk-x")
+    assert explicit.steps[0].params["direction"] == "left"
 
 
 def test_explicit_named_motion_placement_overrides_its_default(monkeypatch):
@@ -143,6 +161,11 @@ def test_explicit_named_motion_intensity_overrides_the_default(monkeypatch):
 def test_numeric_named_motion_intensity_is_preserved(instruction, expected):
     plan = AE.plan_edit(instruction, {}, 1.0, 6.0)
     assert plan.steps[0].params["intensity"] == pytest.approx(expected)
+
+
+def test_right_now_does_not_get_misread_as_a_spatial_direction():
+    plan = AE.plan_edit("add a clap right now", {}, 1.0, 6.0)
+    assert plan.steps[0].params["direction"] == "auto"
 
 
 def test_llm_plan_falls_back_to_keyword_when_the_api_errors(monkeypatch):

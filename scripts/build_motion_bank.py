@@ -331,7 +331,12 @@ def _legs(aa, phase, amount=0.45):
     aa[:, 5, 0] += amount * np.maximum(0.0, np.sin(phase))
 
 
-def build_motion(motion_id: str, n: int) -> np.ndarray:
+def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.ndarray:
+    direction = str(direction).strip().lower()
+    if direction not in {"forward", "left", "right"}:
+        raise ValueError(f"unsupported authored direction: {direction!r}")
+    if direction != "forward" and not motion_id.startswith("clap_"):
+        raise ValueError(f"{motion_id} has no authored {direction} variant")
     aa, trans, contacts = _identity_clip(n)
     _apply_stance(aa)
     t = np.linspace(0.0, 1.0, n, dtype=np.float32)
@@ -622,6 +627,15 @@ def build_motion(motion_id: str, n: int) -> np.ndarray:
     else:
         raise KeyError(f"no procedural authoring recipe for {motion_id}")
 
+    if motion_id.startswith("clap_") and direction != "forward":
+        # A side-directed clap is still palm-to-palm in front of the chest; the upper body turns
+        # into it instead of dragging one arm across a square torso. Spine1 owns the turn, so the
+        # legs and planted feet keep following the host dance.
+        side = 1.0 if direction == "left" else -1.0
+        turn = _smoothstep(t / 0.18) * _smoothstep((1.0 - t) / 0.18)
+        aa[:, 3, 1] += side * 0.62 * turn
+        aa[:, 9, 1] += side * 0.08 * turn
+
     _performance_layer(aa, trans, t)
     if leg_targets is not None:
         root_offset = np.zeros((n, 3), dtype=np.float32)
@@ -677,6 +691,15 @@ def main() -> None:
         motion = build_motion(raw["id"], int(raw["frames"]))
         np.save(BANK / raw["clip"], motion)
         print(f"{raw['id']}: {motion.shape}")
+        direction = raw.get("direction", {})
+        if direction.get("mode") == "clip":
+            canonical = str(direction["canonical"])
+            for name, path in direction["clips"].items():
+                if name == canonical and path == raw["clip"]:
+                    continue
+                variant = build_motion(raw["id"], int(raw["frames"]), direction=name)
+                np.save(BANK / path, variant)
+                print(f"{raw['id']}[{name}]: {variant.shape}")
     bank = MotionBank(BANK)
     for spec in bank.specs:
         bank.load_clip(spec)

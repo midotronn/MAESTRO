@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "bank_version": "1.0.0",
+  "bank_version": "1.1.0",
   "motions": [
     {
       "id": "clap_single",
@@ -17,12 +17,23 @@
       "travel_axis": null,
       "mirrorable": false,
       "repeatable": true,
+      "direction": {
+        "mode": "clip",
+        "supported": ["forward", "left", "right"],
+        "canonical": "forward",
+        "clips": {
+          "forward": "clips/clap_single.npy",
+          "left": "clips/clap_single_left.npy",
+          "right": "clips/clap_single_right.npy"
+        }
+      },
       "event_frame": 24,
       "recommended_beats": 1.0,
       "default_anchor": "beat",
       "validator": {"type": "joint_activity", "joints": [18, 19, 20, 21], "threshold": 0.45},
       "composition": {
         "absolute_joints": [13, 14, 16, 17, 18, 19, 20, 21],
+        "additive_joints": [3, 6, 9, 12],
         "event_pose_joints": [13, 14, 16, 17, 18, 19, 20, 21],
         "intensity_lock_frames": [22, 23, 24, 25, 26]
       }
@@ -42,12 +53,23 @@
       "travel_axis": null,
       "mirrorable": false,
       "repeatable": true,
+      "direction": {
+        "mode": "clip",
+        "supported": ["forward", "left", "right"],
+        "canonical": "forward",
+        "clips": {
+          "forward": "clips/clap_repeat.npy",
+          "left": "clips/clap_repeat_left.npy",
+          "right": "clips/clap_repeat_right.npy"
+        }
+      },
       "event_frame": 20,
       "recommended_beats": 2.0,
       "default_anchor": "beat",
       "validator": {"type": "joint_activity", "joints": [18, 19, 20, 21], "threshold": 0.45},
       "composition": {
         "absolute_joints": [13, 14, 16, 17, 18, 19, 20, 21],
+        "additive_joints": [3, 6, 9, 12],
         "intensity_lock_frames": [
           16, 17, 18, 19, 20, 21, 22, 23,
           33, 34, 35, 36, 37, 38, 39, 40,
@@ -70,12 +92,23 @@
       "travel_axis": null,
       "mirrorable": false,
       "repeatable": true,
+      "direction": {
+        "mode": "clip",
+        "supported": ["forward", "left", "right"],
+        "canonical": "forward",
+        "clips": {
+          "forward": "clips/clap_overhead.npy",
+          "left": "clips/clap_overhead_left.npy",
+          "right": "clips/clap_overhead_right.npy"
+        }
+      },
       "event_frame": 30,
       "recommended_beats": 1.0,
       "default_anchor": "beat",
       "validator": {"type": "joint_activity", "joints": [16, 17, 18, 19], "threshold": 0.65},
       "composition": {
         "absolute_joints": [13, 14, 16, 17, 18, 19, 20, 21],
+        "additive_joints": [3, 6, 9, 12],
         "event_pose_joints": [13, 14, 16, 17, 18, 19, 20, 21],
         "intensity_lock_frames": [27, 28, 29, 30, 31]
       }
@@ -95,8 +128,9 @@
       "travel_axis": null,
       "mirrorable": false,
       "repeatable": true,
+      "minimum_frames": 24,
       "event_frame": 28,
-      "recommended_beats": 1.0,
+      "recommended_beats": 2.0,
       "default_anchor": "beat",
       "validator": {
         "type": "jump_phases",
@@ -130,8 +164,9 @@
       "travel_axis": null,
       "mirrorable": false,
       "repeatable": true,
+      "minimum_frames": 24,
       "event_frame": 31,
-      "recommended_beats": 1.0,
+      "recommended_beats": 2.0,
       "default_anchor": "beat",
       "validator": {
         "type": "jump_phases",
@@ -202,6 +237,11 @@
       "travel_axis": null,
       "mirrorable": true,
       "repeatable": true,
+      "direction": {
+        "mode": "mirror",
+        "supported": ["left", "right"],
+        "canonical": "right"
+      },
       "event_frame": 36,
       "recommended_beats": 2.0,
       "default_anchor": "center",
@@ -226,6 +266,11 @@
       "travel_axis": null,
       "mirrorable": true,
       "repeatable": false,
+      "direction": {
+        "mode": "mirror",
+        "supported": ["left", "right"],
+        "canonical": "right"
+      },
       "event_frame": 30,
       "recommended_beats": 1.0,
       "default_anchor": "beat",
@@ -299,6 +344,11 @@
       "travel_axis": null,
       "mirrorable": true,
       "repeatable": true,
+      "direction": {
+        "mode": "mirror",
+        "supported": ["left", "right"],
+        "canonical": "right"
+      },
       "event_frame": 26,
       "recommended_beats": 1.0,
       "default_anchor": "beat",
@@ -325,6 +375,11 @@
       "travel_axis": "x",
       "mirrorable": true,
       "repeatable": true,
+      "direction": {
+        "mode": "mirror",
+        "supported": ["left", "right"],
+        "canonical": "left"
+      },
       "event_frame": 41,
       "recommended_beats": 2.0,
       "default_anchor": "center",
@@ -351,6 +406,11 @@
       "travel_axis": "x",
       "mirrorable": true,
       "repeatable": true,
+      "direction": {
+        "mode": "mirror",
+        "supported": ["left", "right"],
+        "canonical": "left"
+      },
       "event_frame": 64,
       "recommended_beats": 2.0,
       "default_anchor": "center",
@@ -430,6 +490,11 @@
       "travel_axis": null,
       "mirrorable": true,
       "repeatable": true,
+      "direction": {
+        "mode": "mirror",
+        "supported": ["left", "right"],
+        "canonical": "left"
+      },
       "event_frame": 36,
       "recommended_beats": 2.0,
       "default_anchor": "center",
@@ -456,6 +521,11 @@
       "travel_axis": null,
       "mirrorable": true,
       "repeatable": true,
+      "direction": {
+        "mode": "mirror",
+        "supported": ["left", "right"],
+        "canonical": "left"
+      },
       "event_frame": 42,
       "recommended_beats": 2.0,
       "default_anchor": "center",

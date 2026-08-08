@@ -133,6 +133,13 @@ def test_committed_clips_match_the_procedural_authoring_source():
     for spec in bank.specs:
         expected = build_motion(spec.id, spec.frames)
         assert np.allclose(bank.load_clip(spec), expected, rtol=1e-6, atol=1e-6), spec.id
+        for direction, _path in spec.direction_clips:
+            expected = build_motion(spec.id, spec.frames, direction=direction)
+            actual = bank.load_clip(spec, direction=direction)
+            assert np.allclose(actual, expected, rtol=1e-6, atol=1e-6), (
+                spec.id,
+                direction,
+            )
 
 
 def test_every_wrist_owning_motion_has_an_explicit_hand_contract():
@@ -589,7 +596,8 @@ def test_mirroring_moves_composition_ownership_to_the_other_side(
     """Mirroring the clip without mirroring its ownership silently discarded the left action."""
     base = _base(180)
     out, _ = default_motion_bank().apply(
-        base, motion_id, mirror=True, beats=np.arange(0, 180, 15), anchor="beat",
+        base, motion_id, mirror=True,
+        beats=np.arange(0, 180, 15), anchor="beat",
     )
     for joint in mirrored_chain:
         channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
@@ -672,7 +680,13 @@ def test_every_motion_changes_only_the_channels_declared_in_its_composition(moti
     bank = default_motion_bank()
     spec = bank.resolve(motion_id)
     base = _base(180)
-    out, report = bank.apply(base, motion_id, beats=np.arange(0, 180, 15), anchor="beat")
+    out, report = bank.apply(
+        base,
+        motion_id,
+        beats=np.arange(0, 180, 15),
+        anchor="beat",
+        direction=spec.canonical_direction,
+    )
     a, b = report["action_range"]
 
     owned = set(spec.absolute_joints) | set(spec.additive_joints)
@@ -754,17 +768,21 @@ def test_real_output_clap_preserves_the_host_rhythm_and_reads_as_a_clap():
     base = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:120]
     out, report = default_motion_bank().apply(
         base, "clap_single", beats=np.arange(0, 120, 15), anchor="beat",
+        direction="forward",
     )
 
     assert np.array_equal(out[:, :3], base[:, :3])
     assert np.array_equal(out[:, 135:139], base[:, 135:139])
-    for joint in range(13):
+    spec = default_motion_bank().resolve("clap_single")
+    owned = set(spec.absolute_joints) | set(spec.additive_joints)
+    for joint in set(range(22)) - owned:
         channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
         assert np.array_equal(out[:, channels], base[:, channels]), joint
 
     before = compute_poses(base)["fk_joints"]
     after = compute_poses(out)["fk_joints"]
-    assert np.allclose(after[:, :16], before[:, :16], atol=1e-6)
+    assert np.allclose(after[:, (1, 2, 4, 5, 7, 8, 10, 11)],
+                       before[:, (1, 2, 4, 5, 7, 8, 10, 11)], atol=1e-6)
 
     event = int(report["event_frame"])
     gap = float(np.linalg.norm(after[event, 20] - after[event, 21]))
@@ -1014,7 +1032,7 @@ def test_direction_repeat_and_intensity_variants_are_data_driven():
     assert step.tool == "motion_bank"
     assert step.params == {
         "motion_id": "point_side", "mode": "replace", "anchor": "beat",
-        "mirror": True, "intensity": 0.8, "repeats": 2,
+        "mirror": False, "direction": "left", "intensity": 0.8, "repeats": 2,
     }
     # Point is intentionally non-repeatable. The request still lands as a single point with the
     # dropped repetition stated, rather than failing and leaving the window untouched.
@@ -1023,6 +1041,97 @@ def test_direction_repeat_and_intensity_variants_are_data_driven():
     assert result.log[0]["status"] != "failed"
     assert result.trace["final"]["checks"][0]["met"]
     assert "does not support repetition" in result.log[0]["note"]
+
+
+def test_directional_named_motions_publish_their_supported_choices():
+    bank = default_motion_bank()
+    clap = bank.resolve("clap_single")
+    assert clap.directions == ("forward", "left", "right")
+    assert clap.canonical_direction == "forward"
+    point = bank.resolve("point_side")
+    assert point.directions == ("left", "right")
+    assert point.canonical_direction == "right"
+    public = {motion["id"]: motion for motion in bank.list_public()}
+    assert public["clap_single"]["default_direction"] == "auto"
+    assert public["clap_single"]["directions"] == ["forward", "left", "right"]
+
+
+def test_auto_direction_follows_lateral_travel_and_turns():
+    from agentlodge.dance.transition import _matrix_to_sixd
+
+    bank = default_motion_bank()
+    base = _base(150)
+    identity = _matrix_to_sixd(np.eye(3, dtype=np.float32)).reshape(6)
+    base[:, 3:9] = identity
+    base[:, :3] = 0.0
+
+    left = base.copy()
+    left[:, 0] = np.linspace(0.0, 0.4, len(left), dtype=np.float32)
+    _out, report = bank.apply(left, "clap_single", direction="auto", anchor="center")
+    assert report["direction"] == "left"
+    assert report["direction_source"] == "dance_flow"
+
+    right = base.copy()
+    right[:, 0] = np.linspace(0.0, -0.4, len(right), dtype=np.float32)
+    _out, report = bank.apply(right, "clap_single", direction="auto", anchor="center")
+    assert report["direction"] == "right"
+
+    still = base.copy()
+    _out, report = bank.apply(still, "clap_single", direction="auto", anchor="center")
+    assert report["direction"] == "forward"
+
+    turning = base.copy()
+    yaw = np.linspace(0.0, 0.5, len(turning), dtype=np.float32)
+    turning[:, 3:9] = _matrix_to_sixd(
+        np.stack([
+            [[np.cos(v), -np.sin(v), 0.0],
+             [np.sin(v), np.cos(v), 0.0],
+             [0.0, 0.0, 1.0]]
+            for v in yaw
+        ], axis=0).astype(np.float32)
+    )
+    _out, report = bank.apply(turning, "clap_single", direction="auto", anchor="center")
+    assert report["direction"] == "left"
+
+
+@needs_fk
+@pytest.mark.parametrize("motion_id", ["clap_single", "clap_repeat", "clap_overhead"])
+def test_directional_claps_turn_to_the_requested_side_without_losing_contact(motion_id):
+    from server.fk import compute_poses
+
+    bank = default_motion_bank()
+    spec = bank.resolve(motion_id)
+    centers = {}
+    for direction in ("left", "right"):
+        clip = bank.load_clip(spec, direction=direction)
+        joints = compute_poses(clip)["fk_joints"]
+        hands = 0.5 * (joints[spec.event_frame, 20] + joints[spec.event_frame, 21])
+        centers[direction] = hands - joints[spec.event_frame, 0]
+        palm_dot, finger_dot = _clap_hand_alignment(clip, spec.event_frame)
+        assert palm_dot < -0.98, (motion_id, direction, palm_dot)
+        assert finger_dot > 0.98, (motion_id, direction, finger_dot)
+    assert centers["left"][0] > 0.12, (motion_id, centers["left"])
+    assert centers["right"][0] < -0.12, (motion_id, centers["right"])
+
+
+@pytest.mark.parametrize("motion_id", ["jump_two_foot", "jump_arms_up"])
+def test_jumps_keep_a_readable_real_dance_duration(motion_id):
+    bank = default_motion_bank()
+    for period in (10, 12, 15, 18):
+        _out, report = bank.apply(
+            _base(120),
+            motion_id,
+            beats=np.arange(0, 120, period),
+            anchor="beat",
+        )
+        assert report["action_frames"] >= 24, (motion_id, period, report)
+    with pytest.raises(ValueError, match="natural speed"):
+        bank.apply(
+            _base(26),
+            motion_id,
+            beats=np.arange(0, 26, 10),
+            anchor="beat",
+        )
 
 
 def test_unknown_motion_never_silently_resolves():
@@ -1262,7 +1371,12 @@ def test_authored_hand_plane_survives_composition_at_every_host_heading(motion_i
             if degrees:
                 base = _yaw_rotate(base, np.deg2rad(degrees), base[0, :3].copy())
             out, report = bank.apply(
-                base, motion_id, mode=mode, mirror=mirror, anchor="center",
+                base,
+                motion_id,
+                mode=mode,
+                mirror=mirror,
+                direction=None if mirror else spec.canonical_direction,
+                anchor="center",
             )
             event = int(report["event_frame"])
             for wrist in wrists:
@@ -1656,7 +1770,7 @@ def test_a_forward_punch_has_guard_strike_and_recoil_phases():
     base = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:180]
     beats = np.arange(0, 180, 15)
     out, report = default_motion_bank().apply(
-        base, "arm_punch", beats=beats,
+        base, "arm_punch", beats=beats, direction="right",
     )
     start, end = map(int, report["action_range"])
     joints = compute_poses(out[start:end])["fk_joints"]

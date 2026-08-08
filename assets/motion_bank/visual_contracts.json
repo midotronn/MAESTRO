@@ -3,28 +3,31 @@
   "acceptance_rule": "At normal speed, the motion added to the unlabeled edited render must be recognizable before its answer is revealed. A paired source render may distinguish host choreography from the edit, but numeric metrics cannot override a failed recognition or phase review.",
   "motions": {
     "clap_single": {
-      "recognizable_as": "one chest-level clap",
+      "recognizable_as": "one chest-level clap directed with the surrounding dance or to the requested side",
       "required_phases": [
         "hands begin apart",
         "both hands approach each other",
         "one palm-to-palm contact occurs at chest level",
+        "the upper body and clap plane face forward, left, or right as requested",
         "hands separate into the host dance"
       ]
     },
     "clap_repeat": {
-      "recognizable_as": "three chest-level claps",
+      "recognizable_as": "three chest-level claps directed with the surrounding dance or to the requested side",
       "required_phases": [
         "hands rise to a chest-level guard",
         "three distinct contacts occur with visible recoil",
+        "the upper body sustains the requested forward, left, or right direction",
         "hands stay near the guard between contacts",
         "arms return without flapping to the hips"
       ]
     },
     "clap_overhead": {
-      "recognizable_as": "one overhead clap",
+      "recognizable_as": "one directional overhead clap",
       "required_phases": [
         "both arms rise above the head",
         "palms meet above the head without intersecting it",
+        "the upper body turns toward the requested or inferred direction",
         "hands separate",
         "arms lower into the host dance"
       ]
@@ -36,6 +39,7 @@
         "hips and knees visibly load downward",
         "both feet push off and leave the floor",
         "the body reaches one clear apex",
+        "the load, flight, and landing remain individually readable at normal speed",
         "both feet land with bent-knee absorption"
       ]
     },
@@ -46,6 +50,7 @@
         "both feet push off and leave the floor",
         "both arms rise overhead during flight",
         "the body reaches one clear apex",
+        "the load, flight, and landing remain individually readable at normal speed",
         "both feet land with bent-knee absorption"
       ]
     },
