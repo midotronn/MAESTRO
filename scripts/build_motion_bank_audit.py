@@ -1004,7 +1004,6 @@ def _review_html(
         video.pause();
         video.playbackRate = 1;
         if (video.currentTime <= 0.01) {{
-          video.currentTime = 0;
           return Promise.resolve();
         }}
         return new Promise(resolve => {{

@@ -216,6 +216,10 @@ def test_blind_review_locks_every_guess_before_loading_the_separate_answer_key()
     assert 'acknowledgment.takeId === take' in page
     assert "pause_count" in page
     assert "maxSyncDrift > 0.12" in page
+    assert (
+        "if (video.currentTime <= 0.01) {\n"
+        "          return Promise.resolve();"
+    ) in page
     assert 'class="visual-verdict"' in page
     assert 'class="visual-evidence"' in page
     assert "phase-reviewed" in page
