@@ -97,6 +97,10 @@ Composition metadata makes the ownership explicit:
 - undeclared joints remain byte-identical, contacts change only when declared, and root
   translation changes only on declared axes.
 
+The release audit independently derives the three permitted upper-spine joints and 14-degree
+counter-flow turn from the source dance and explicit clap request. It does not trust report fields
+to expand channel ownership or relax the facing gate.
+
 The bank composes once. `run_agent_edit` must not treat the result as foreign generated motion and
 send it through `splice_window` again; that second splice was changing the already-composed root
 and contacts a second time. Temporal transforms run before the bank so its action range and event
@@ -198,9 +202,12 @@ Directional motions accept `direction=left`, `right`, or, where meaningful, `for
 explicit direction, `auto` reads the host's root travel in the dancer's local frame, then its turn
 direction, and uses the authored canonical side only when the phrase has no clear flow. The three
 claps use authored forward, left, and right clips. Their side variants move the shared contact point
-beside the chest while leaving the host root, torso, head, legs, and rhythm unchanged. This avoids
-the rejected shortcut where a directional clap rotated the chest about 40 degrees toward the
-camera and visually stopped the dance. Clap fingers now use a relaxed forward-up diagonal instead
+at least 14 cm away from the forward contact in dancer-local space, which keeps left and right
+readable at full-body scale. `auto` follows the host flow without changing torso facing. When the
+user explicitly requests the opposite side, the upper spine may turn up to 14 degrees into that
+counter-flow direction; root travel, feet, and lower-body rhythm remain source-identical. This
+avoids the rejected shortcut where every directional clap rotated the chest about 40 degrees
+toward the camera and visually stopped the dance. Clap fingers now use a relaxed forward-up diagonal instead
 of a nearly vertical hand pose, and hierarchy-aware arm IK pins every contact to a 6 mm wrist gap.
 Existing asymmetric
 motions such as waves, points, punches, lateral steps, and turns use their mirror capability behind

@@ -1260,8 +1260,8 @@ def test_directional_claps_move_contact_to_the_requested_side(motion_id):
         palm_dot, finger_dot = _clap_hand_alignment(clip, spec.event_frame)
         assert palm_dot < -0.98, (motion_id, direction, palm_dot)
         assert finger_dot > 0.98, (motion_id, direction, finger_dot)
-    assert centers["left"][0] > 0.07, (motion_id, centers["left"])
-    assert centers["right"][0] < -0.07, (motion_id, centers["right"])
+    assert centers["left"][0] > 0.14, (motion_id, centers["left"])
+    assert centers["right"][0] < -0.14, (motion_id, centers["right"])
 
 
 @needs_fk
@@ -1309,9 +1309,19 @@ def test_clap_regression_keeps_dancing_and_makes_visible_contact(motion_id):
         assert palm_dot < -0.98, (motion_id, direction, palm_dot)
         assert finger_dot > 0.98, (motion_id, direction, finger_dot)
         assert 0.20 < finger_up < 0.75, (motion_id, direction, finger_up)
-        assert np.rad2deg(np.max(np.abs(chest_delta[start:end]))) < 3.0
+        expected_turn = float(report["counterflow_turn_degrees"])
+        observed_turn = float(np.rad2deg(chest_delta[event]))
+        peak_turn = float(np.rad2deg(np.max(np.abs(chest_delta[start:end]))))
+        if expected_turn:
+            assert observed_turn == pytest.approx(expected_turn, abs=3.0)
+            assert peak_turn < abs(expected_turn) + 3.0
+        else:
+            assert peak_turn < 3.0
 
-        owned = set(bank.resolve(motion_id).absolute_joints)
+        owned = (
+            set(bank.resolve(motion_id).absolute_joints)
+            | set(report["counterflow_turn_joints"])
+        )
         for joint in set(range(22)) - owned:
             channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
             assert np.array_equal(out[:, channels], host[:, channels]), (
@@ -1327,8 +1337,8 @@ def test_clap_regression_keeps_dancing_and_makes_visible_contact(motion_id):
         hand_center = 0.5 * (joints[event, 20] + joints[event, 21]) - joints[event, 0]
         outputs[direction] = float(hand_center[:2] @ local_left)
 
-    assert outputs["left"] > outputs["forward"] + 0.07, (motion_id, outputs)
-    assert outputs["right"] < outputs["forward"] - 0.07, (motion_id, outputs)
+    assert outputs["left"] > outputs["forward"] + 0.14, (motion_id, outputs)
+    assert outputs["right"] < outputs["forward"] - 0.14, (motion_id, outputs)
 
 
 @needs_fk
@@ -1352,6 +1362,42 @@ def test_automatic_clap_direction_reproduces_the_live_left_flow_without_turning_
     after_yaw = np.arctan2(after_global[event, 9, 1, 0], after_global[event, 9, 0, 0])
     delta = np.arctan2(np.sin(after_yaw - before_yaw), np.cos(after_yaw - before_yaw))
     assert abs(np.rad2deg(delta)) < 3.0
+    assert report["natural_direction"] == "left"
+    assert report["counterflow_turn_degrees"] == 0.0
+
+    explicit_left, left_report = default_motion_bank().apply(
+        host,
+        "clap_single",
+        beats=case["beats"],
+        beat_strengths=case["beat_strengths"],
+        direction="left",
+    )
+    assert left_report["natural_direction"] == "left"
+    assert left_report["counterflow_turn_degrees"] == 0.0
+
+    explicit_right, right_report = default_motion_bank().apply(
+        host,
+        "clap_single",
+        beats=case["beats"],
+        beat_strengths=case["beat_strengths"],
+        direction="right",
+    )
+    assert right_report["natural_direction"] == "left"
+    assert right_report["counterflow_turn_degrees"] == -14.0
+    right_global = _global_joint_rotations(explicit_right)
+    right_yaw = np.arctan2(
+        right_global[event, 9, 1, 0],
+        right_global[event, 9, 0, 0],
+    )
+    right_delta = np.arctan2(
+        np.sin(right_yaw - before_yaw),
+        np.cos(right_yaw - before_yaw),
+    )
+    assert np.rad2deg(right_delta) == pytest.approx(-14.0, abs=3.0)
+    assert np.array_equal(explicit_left[:, :3], host[:, :3])
+    assert np.array_equal(explicit_right[:, :3], host[:, :3])
+    assert np.array_equal(explicit_left[:, 135:139], host[:, 135:139])
+    assert np.array_equal(explicit_right[:, 135:139], host[:, 135:139])
 
 
 @needs_fk
@@ -1466,20 +1512,89 @@ def test_visual_audit_independently_rejects_a_wrong_automatic_direction_report()
     assert "independently expected 'left'" in direction["detail"]
 
 
+@needs_fk
+def test_visual_audit_derives_counterflow_ownership_instead_of_trusting_the_report():
+    from scripts.build_motion_bank_audit import _machine_checks
+
+    case = np.load(_CLAP_REGRESSION)
+    host = case["host"].astype(np.float32)
+    bank = default_motion_bank()
+    spec = bank.resolve("clap_single")
+
+    automatic, auto_report = bank.apply(
+        host,
+        "clap_single",
+        beats=case["beats"],
+        beat_strengths=case["beat_strengths"],
+        direction="auto",
+    )
+    forged = dict(
+        auto_report,
+        counterflow_turn_joints=[3],
+        counterflow_turn_degrees=0.0,
+    )
+    changed = automatic.copy()
+    changed[int(auto_report["event_frame"]), 3 + 6 * 3] += np.float32(1e-4)
+    checks, status = _machine_checks(host, changed, spec, forged)
+    assert status == "fail"
+    assert not next(
+        check for check in checks if check["name"] == "counterflow_declaration"
+    )["passed"]
+    assert not next(
+        check for check in checks if check["name"] == "declared_channel_ownership"
+    )["passed"]
+
+    counterflow, counterflow_report = bank.apply(
+        host,
+        "clap_single",
+        beats=case["beats"],
+        beat_strengths=case["beat_strengths"],
+        direction="right",
+    )
+    checks, status = _machine_checks(host, counterflow, spec, counterflow_report)
+    assert status == "pass"
+    forged = dict(
+        counterflow_report,
+        counterflow_turn_joints=[],
+        counterflow_turn_degrees=0.0,
+    )
+    checks, status = _machine_checks(host, counterflow, spec, forged)
+    assert status == "fail"
+    assert not next(
+        check for check in checks if check["name"] == "counterflow_declaration"
+    )["passed"]
+    assert next(
+        check for check in checks if check["name"] == "host_facing_continuity"
+    )["passed"]
+
+
 def test_visual_audit_direction_matrix_rejects_indistinct_or_reversed_claps():
     from scripts.build_motion_bank_audit import _append_clap_direction_matrix_checks
 
     passing = {
         "clap_single": {
-            "left": {"lateral": 0.11, "checks": []},
+            "left": {"lateral": 0.18, "checks": []},
             "forward": {"lateral": 0.00, "checks": []},
-            "right": {"lateral": -0.11, "checks": []},
+            "right": {"lateral": -0.18, "checks": []},
         }
     }
     _append_clap_direction_matrix_checks(passing)
     assert all(
         record["checks"][-1]["passed"]
         for record in passing["clap_single"].values()
+    )
+
+    indistinct = {
+        "clap_single": {
+            "left": {"lateral": 0.11, "checks": []},
+            "forward": {"lateral": 0.00, "checks": []},
+            "right": {"lateral": -0.11, "checks": []},
+        }
+    }
+    _append_clap_direction_matrix_checks(indistinct)
+    assert not any(
+        record["checks"][-1]["passed"]
+        for record in indistinct["clap_single"].values()
     )
 
     reversed_directions = {

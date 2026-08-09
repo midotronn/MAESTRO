@@ -315,6 +315,10 @@ _CLAP_HALF_GAP = 0.003
 # y=+0.04 -- above the chest, level with the collarbones -- which renders as hands pressed
 # together under the chin, closer to a bow than a clap.
 _CLAP_POINT = (-0.045, 0.26)                        # (height, distance in front)
+_CLAP_SIDE_OFFSET = 0.20
+_CLAP_OVERHEAD_SIDE_OFFSET = 0.16
+_CLAP_OVERHEAD_POINT = (0.48, 0.20)
+_CLAP_OVERHEAD_SIDE_POINT = (0.42, 0.20)
 
 # Clapping hands are carried in front of the sternum, so the elbows hang DOWN and only a little
 # outward. Left to the default outward hint the solver lifts them to shoulder height and the
@@ -369,7 +373,11 @@ def _clap_arms(
     # Keep the overhead target above the head but inside both arms' reachable intersection.
     # The old (0.62, 0.18) target sat about 7 cm beyond full extension, so each arm stopped on
     # its own reach boundary and the palms could never meet.
-    y, z = (0.48, 0.20) if overhead else _CLAP_POINT
+    y, z = (
+        _CLAP_OVERHEAD_SIDE_POINT
+        if overhead and abs(center_x) > 1e-6
+        else (_CLAP_OVERHEAD_POINT if overhead else _CLAP_POINT)
+    )
     hint = _CLAP_ELBOW
     _solve_arm(aa, "left", _arm_targets(
         "left", signal, np.array([center_x + half, y, z], dtype=np.float32)),
@@ -410,7 +418,9 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         clap_signal = np.clip(hit - 0.22 * wind, 0.0, None)
         contact = 30 if overhead else 24
         clap_signal = _pin_signal_peaks(clap_signal, (contact,))
-        center_x = side * (0.08 if overhead else 0.11)
+        center_x = side * (
+            _CLAP_OVERHEAD_SIDE_OFFSET if overhead else _CLAP_SIDE_OFFSET
+        )
         _clap_arms(
             aa,
             clap_signal,
@@ -434,8 +444,8 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         ready = _smoothstep(t / 0.18) * _smoothstep((1.0 - t) / 0.18)
         clap_signal = ready * (_CLAP_GUARD + (1.0 - _CLAP_GUARD) * hit)
         clap_signal = _pin_signal_peaks(clap_signal, (20, 37, 55))
-        _clap_arms(aa, clap_signal, center_x=side * 0.11)
-        clap_recipe = (clap_signal, False, side * 0.11)
+        _clap_arms(aa, clap_signal, center_x=side * _CLAP_SIDE_OFFSET)
+        clap_recipe = (clap_signal, False, side * _CLAP_SIDE_OFFSET)
         trans[:, 2] += 0.025 * np.sin(6.0 * np.pi * t)
         aa[:, 3, 0] += 0.10 * hit
         aa[:, 0, 2] += 0.10 * np.sin(3.0 * np.pi * t)        # groove side to side across the claps

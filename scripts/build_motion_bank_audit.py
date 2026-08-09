@@ -32,6 +32,8 @@ from agentlodge.editor.motion_audit import (  # noqa: E402
 )
 from agentlodge.editor.motion_bank import (  # noqa: E402
     MotionBank,
+    _COUNTERFLOW_CLAP_JOINTS,
+    _COUNTERFLOW_CLAP_TURN_DEGREES,
     _MIRROR_JOINTS,
     _fit_event_frame,
     _root_yaw_series,
@@ -207,15 +209,38 @@ def _machine_checks(
     report: dict,
 ) -> tuple[list[dict], str]:
     """Evaluate visual invariants that previously passed generic motion metrics."""
+    requested_direction = report.get("direction_request")
+    resolved_direction = report.get("direction")
+    natural_direction = (
+        _audit_auto_direction(host, spec)
+        if spec.directions
+        else None
+    )
+    expected_counterflow_turn = 0.0
+    expected_counterflow_joints: tuple[int, ...] = ()
+    if (
+        spec.id.startswith("clap_")
+        and requested_direction in {"left", "right"}
+        and resolved_direction == requested_direction
+        and requested_direction != natural_direction
+    ):
+        expected_counterflow_turn = (
+            _COUNTERFLOW_CLAP_TURN_DEGREES
+            if requested_direction == "left"
+            else -_COUNTERFLOW_CLAP_TURN_DEGREES
+        )
+        expected_counterflow_joints = _COUNTERFLOW_CLAP_JOINTS
+
     checks = [{
         "name": "semantic_validator",
         "passed": bool(report["validation"]["ok"]),
         "detail": report["validation"]["detail"],
     }]
     owned = set(spec.absolute_joints) | set(spec.additive_joints)
+    owned.update(expected_counterflow_joints)
     if (
         spec.direction_mode == "mirror"
-        and report.get("direction") != spec.canonical_direction
+        and resolved_direction != spec.canonical_direction
     ):
         owned = {_MIRROR_JOINTS[joint] for joint in owned}
     unchanged = True
@@ -247,24 +272,50 @@ def _machine_checks(
     })
 
     if spec.directions:
-        requested = report.get("direction_request")
-        resolved = report.get("direction")
         expected = (
-            _audit_auto_direction(host, spec)
-            if requested == "auto"
-            else requested
+            natural_direction
+            if requested_direction == "auto"
+            else requested_direction
         )
-        valid = resolved in spec.directions and resolved == expected
+        valid = resolved_direction in spec.directions and resolved_direction == expected
         checks.append({
             "name": "direction_resolution",
             "passed": bool(valid),
             "detail": (
-                f"requested {requested!r}, independently expected {expected!r}, "
-                f"resolved {resolved!r}"
+                f"requested {requested_direction!r}, independently expected {expected!r}, "
+                f"resolved {resolved_direction!r}"
             ),
         })
 
     if spec.id.startswith("clap_"):
+        try:
+            reported_counterflow_turn = float(
+                report.get("counterflow_turn_degrees", 0.0)
+            )
+            reported_counterflow_joints = tuple(
+                int(joint)
+                for joint in report.get("counterflow_turn_joints", ())
+            )
+        except (TypeError, ValueError):
+            reported_counterflow_turn = float("nan")
+            reported_counterflow_joints = ()
+        declaration_passed = (
+            report.get("natural_direction") == natural_direction
+            and abs(reported_counterflow_turn - expected_counterflow_turn) < 1e-6
+            and reported_counterflow_joints == expected_counterflow_joints
+        )
+        checks.append({
+            "name": "counterflow_declaration",
+            "passed": bool(declaration_passed),
+            "detail": (
+                f"independently expected natural direction {natural_direction!r}, "
+                f"turn {expected_counterflow_turn:.2f} degrees on joints "
+                f"{list(expected_counterflow_joints)}; report declared "
+                f"{report.get('natural_direction')!r}, "
+                f"{reported_counterflow_turn:.2f} degrees on joints "
+                f"{list(reported_counterflow_joints)}"
+            ),
+        })
         start, end = map(int, report["action_range"])
         joints = compute_poses(edited)["fk_joints"]
         global_r = _global_joint_rotations(edited)
@@ -294,6 +345,22 @@ def _machine_checks(
             np.cos(edit_yaw - host_yaw),
         )
         peak_yaw = float(np.rad2deg(np.max(np.abs(yaw_delta[start:end]))))
+        event_yaw = float(np.rad2deg(yaw_delta[int(report["event_frame"])]))
+        if abs(expected_counterflow_turn) > 1e-6:
+            facing_passed = (
+                abs(event_yaw - expected_counterflow_turn) < 3.0
+                and peak_yaw < abs(expected_counterflow_turn) + 3.0
+            )
+            facing_detail = (
+                f"explicit counter-flow turn {event_yaw:.2f} degrees at contact "
+                f"versus expected {expected_counterflow_turn:.2f}; "
+                f"peak {peak_yaw:.2f} degrees"
+            )
+        else:
+            facing_passed = peak_yaw < 3.0
+            facing_detail = (
+                f"peak chest-heading change versus source {peak_yaw:.2f} degrees"
+            )
         checks.extend([
             {
                 "name": "visible_palm_contact",
@@ -326,8 +393,8 @@ def _machine_checks(
             },
             {
                 "name": "host_facing_continuity",
-                "passed": peak_yaw < 3.0,
-                "detail": f"peak chest-heading change versus source {peak_yaw:.2f} degrees",
+                "passed": facing_passed,
+                "detail": facing_detail,
             },
         ])
     return checks, ("pass" if all(check["passed"] for check in checks) else "fail")
@@ -341,10 +408,15 @@ def _append_clap_direction_matrix_checks(records: dict[str, dict[str, dict]]) ->
         forward = float(directions["forward"]["lateral"])
         left = float(directions["left"]["lateral"])
         right = float(directions["right"]["lateral"])
-        passed = left > forward + 0.07 and right < forward - 0.07
+        minimum_separation = 0.14
+        passed = (
+            left > forward + minimum_separation
+            and right < forward - minimum_separation
+        )
         detail = (
             f"local-left offsets: left={left:.4f}, forward={forward:.4f}, "
-            f"right={right:.4f} m; each side must separate by > 0.0700 m"
+            f"right={right:.4f} m; each side must separate by "
+            f"> {minimum_separation:.4f} m"
         )
         for direction in ("forward", "left", "right"):
             directions[direction]["checks"].append({

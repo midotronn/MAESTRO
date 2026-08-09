@@ -54,6 +54,9 @@ _CLOSE_MAX_RATIO = 0.35    # never spend more than this share of the window clos
 _INSERT_HOST_RATE = 0.75   # host choreography keeps moving while time is made for an insertion
 _MIRROR_JOINTS = (0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12, 14, 13, 15, 17, 16, 19, 18, 21, 20)
 _DIRECTIONS = {"forward", "left", "right"}
+_COUNTERFLOW_CLAP_JOINTS = (3, 6, 9)
+_COUNTERFLOW_CLAP_TURN_DEGREES = 14.0
+_COUNTERFLOW_CLAP_TURN_SHARES = (0.2, 0.3, 0.5)
 
 
 def normalize_name(value: str) -> str:
@@ -376,6 +379,7 @@ class MotionBank:
             spec,
             direction_request,
         )
+        natural_direction = _dance_flow_direction(base) if spec.directions else None
         raw = self.load_clip(spec, direction=resolved_direction)
         compose_spec = spec
         direction_mirror = bool(
@@ -493,6 +497,27 @@ class MotionBank:
             gain=1.0 + _POSE_INTENSITY_SHARE * (gain - 1.0),
             protected_frames=protected_frames,
         )
+        counterflow_turn = 0.0
+        counterflow_turn_joints: tuple[int, ...] = ()
+        if (
+            spec.id.startswith("clap_")
+            and direction_source == "explicit"
+            and resolved_direction in {"left", "right"}
+            and resolved_direction != natural_direction
+        ):
+            counterflow_turn = (
+                _COUNTERFLOW_CLAP_TURN_DEGREES
+                if resolved_direction == "left"
+                else -_COUNTERFLOW_CLAP_TURN_DEGREES
+            )
+            counterflow_turn_joints = _COUNTERFLOW_CLAP_JOINTS
+            fitted = _apply_counterflow_clap_turn(
+                fitted,
+                action_range,
+                actual_event,
+                counterflow_turn,
+                blend_frames=blend_frames,
+            )
 
         fitted = _close_root_residual(fitted, base, earliest=action_range[1])
         action = fitted[action_range[0]:action_range[1]]
@@ -514,6 +539,9 @@ class MotionBank:
             "direction_request": requested_direction,
             "direction": resolved_direction,
             "direction_source": direction_source,
+            "natural_direction": natural_direction,
+            "counterflow_turn_degrees": counterflow_turn,
+            "counterflow_turn_joints": list(counterflow_turn_joints),
             "intensity": resolved_intensity,
             "repeats": count,
             "source": spec.source,
@@ -1212,6 +1240,42 @@ def _composition_envelope(n: int, event: int, blend_frames: int) -> np.ndarray:
 def _fractional_rotation(delta: np.ndarray, weight: np.ndarray) -> np.ndarray:
     aa = _matrix_to_axis_angle(delta)
     return _axis_angle_to_matrix(aa * np.asarray(weight, dtype=np.float32)[..., None])
+
+
+def _apply_counterflow_clap_turn(
+    clip: np.ndarray,
+    action_range: tuple[int, int],
+    event_frame: int,
+    turn_degrees: float,
+    *,
+    blend_frames: int,
+) -> np.ndarray:
+    """Turn only the upper spine when an explicit clap opposes the host's natural flow."""
+    out = np.asarray(clip, dtype=np.float32).copy()
+    start, end = map(int, action_range)
+    if end <= start:
+        return out
+    local_event = int(np.clip(event_frame - start, 0, end - start - 1))
+    weight = _composition_envelope(end - start, local_event, blend_frames)
+    rotations = _sixd_to_matrix(out[start:end, _ROT].reshape(-1, 22, 6))
+    radians = np.deg2rad(float(turn_degrees))
+    parent_global = rotations[:, 0]
+    for joint, share in zip(
+        _COUNTERFLOW_CLAP_JOINTS,
+        _COUNTERFLOW_CLAP_TURN_SHARES,
+    ):
+        current_global = parent_global @ rotations[:, joint]
+        desired_global = (
+            _yaw_rotation(weight * np.float32(radians * share))
+            @ current_global
+        )
+        rotations[:, joint] = np.swapaxes(parent_global, -1, -2) @ desired_global
+        parent_global = desired_global
+    sixd = _matrix_to_sixd(rotations)
+    for joint in _COUNTERFLOW_CLAP_JOINTS:
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        out[start:end, channels] = sixd[:, joint]
+    return out
 
 
 def _rotate_translation_into_facing(

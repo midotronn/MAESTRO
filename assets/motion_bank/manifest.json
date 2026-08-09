@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "bank_version": "1.1.1",
+  "bank_version": "1.1.2",
   "motions": [
     {
       "id": "clap_single",
