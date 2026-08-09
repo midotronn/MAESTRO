@@ -43,6 +43,7 @@ _POSE_INTENSITY_SHARE = 0.65
 _INTENSITY_EDGE_FRAMES = 4
 _INTENSITY_LOCK_CORE = 1
 _INTENSITY_LOCK_RADIUS = 1
+_COMPOSITION_LOCK_SIGMA = 2.0
 
 _FPS = 30.0
 _CLOSE_YAW_RATE = 2.5      # rad/s the root may turn while giving an offset back
@@ -459,6 +460,16 @@ class MotionBank:
             )
             for frame in intensity_lock_frames
         )
+        protected_centers = tuple(
+            start + _fit_event_frame(
+                frame,
+                raw.shape[0],
+                source_event,
+                action_len,
+                local_event,
+            )
+            for frame in _lock_run_centers(intensity_lock_frames)
+        )
         host = (
             base
             if mode == "replace"
@@ -472,6 +483,7 @@ class MotionBank:
             action_len,
             compose_spec,
             blend_frames=blend_frames,
+            protected_frames=tuple(frame - start for frame in protected_centers),
         )
         fitted = _exaggerate_owned_delta(
             fitted,
@@ -884,6 +896,16 @@ def _intensity_release(n: int, locked_frames: tuple[int, ...]) -> np.ndarray:
     return release
 
 
+def _lock_run_centers(locked_frames: tuple[int, ...]) -> tuple[int, ...]:
+    runs: list[list[int]] = []
+    for frame in locked_frames:
+        if not runs or frame != runs[-1][-1] + 1:
+            runs.append([frame])
+        else:
+            runs[-1].append(frame)
+    return tuple((run[0] + run[-1] + 1) // 2 for run in runs)
+
+
 def _protect_intensity_frames(
     accented: np.ndarray,
     neutral: np.ndarray,
@@ -1230,6 +1252,7 @@ def _compose_beat_locked(
     spec: MotionSpec,
     *,
     blend_frames: int,
+    protected_frames: tuple[int, ...] = (),
 ) -> tuple[np.ndarray, list[int], int]:
     """Layer the named action onto the host instead of replacing its entire choreography.
 
@@ -1250,6 +1273,13 @@ def _compose_beat_locked(
     host = base[start:end]
     out = base.copy()
     weight = _composition_envelope(action_len, local_event, blend_frames)
+    if protected_frames:
+        positions = np.arange(action_len, dtype=np.float32)
+        for frame in protected_frames:
+            bump = np.exp(
+                -0.5 * ((positions - float(frame)) / _COMPOSITION_LOCK_SIGMA) ** 2
+            )
+            weight = np.maximum(weight, bump.astype(np.float32))
     phase_weight = weight
     if spec.phase_joints and spec.phase_blend_frames is not None:
         phase_weight = _composition_envelope(

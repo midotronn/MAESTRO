@@ -15,6 +15,7 @@ from agentlodge.dance.transition import (  # noqa: E402
     _axis_angle_to_matrix,
     _matrix_to_axis_angle,
     _matrix_to_sixd,
+    temporal_smooth,
     to_zup,
 )
 from agentlodge.editor.motion_bank import MotionBank  # noqa: E402
@@ -49,6 +50,15 @@ def _smoothstep(x):
 
 def _pulse(t, center=0.5, width=0.16):
     return np.exp(-0.5 * ((t - center) / width) ** 2)
+
+
+def _pin_signal_peaks(signal: np.ndarray, frames: tuple[int, ...]) -> np.ndarray:
+    """Give each contact a short full-closure plateau that survives retiming."""
+    out = np.asarray(signal, dtype=np.float32).copy()
+    for frame in frames:
+        frame = int(np.clip(frame, 0, len(out) - 1))
+        out[max(0, frame - 1):min(len(out), frame + 2)] = 1.0
+    return np.clip(out, 0.0, 1.0)
 
 
 def _identity_clip(n: int):
@@ -132,8 +142,8 @@ def _align_vector(source, target):
     return _axis_angle_to_matrix((axis * angle).astype(np.float32))
 
 
-def _native_joint_positions(axis_angles: np.ndarray) -> np.ndarray:
-    """Forward-kinematic joint positions in the native SMPL authoring frame."""
+def _native_joint_pose(axis_angles: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Forward-kinematic joint rotations and positions in the native authoring frame."""
     local = _axis_angle_to_matrix(np.asarray(axis_angles, dtype=np.float32))
     template = _template()[:22]
     global_r = np.empty_like(local)
@@ -147,6 +157,12 @@ def _native_joint_positions(axis_angles: np.ndarray) -> np.ndarray:
             + global_r[parent] @ (template[joint] - template[parent])
         )
         global_r[joint] = global_r[parent] @ local[joint]
+    return global_r, positions
+
+
+def _native_joint_positions(axis_angles: np.ndarray) -> np.ndarray:
+    """Forward-kinematic joint positions in the native SMPL authoring frame."""
+    _global_r, positions = _native_joint_pose(axis_angles)
     return positions
 
 
@@ -229,12 +245,13 @@ _ELBOW_OUT = np.array([1.0, 0.15, 0.0], dtype=np.float32)
 
 
 def _clap_wrist_rotation(side: str, forearm_global: np.ndarray) -> np.ndarray:
-    """Return a local wrist rotation with upright fingers and inward-facing palms."""
+    """Return a local wrist rotation with relaxed raised fingers and inward-facing palms."""
     sign = 1.0 if side == "left" else -1.0
     rest_finger = np.array([sign, 0.0, 0.0], dtype=np.float32)
     rest_palm = np.array([0.0, -1.0, 0.0], dtype=np.float32)
     rest_width = np.cross(rest_finger, rest_palm)
-    desired_finger = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    desired_finger = np.array([0.0, 0.55, 0.835], dtype=np.float32)
+    desired_finger /= np.linalg.norm(desired_finger)
     desired_palm = np.array([-sign, 0.0, 0.0], dtype=np.float32)
     desired_width = np.cross(desired_finger, desired_palm)
     rest_basis = np.stack([rest_finger, rest_palm, rest_width], axis=1)
@@ -250,6 +267,7 @@ def _solve_arm(
     *,
     elbow_hint=_ELBOW_OUT,
     clap_orientation: np.ndarray | None = None,
+    respect_parent_pose: bool = False,
 ):
     joints = (16, 18, 20) if side == "left" else (17, 19, 21)
     shoulder, elbow, wrist = joints
@@ -260,7 +278,13 @@ def _solve_arm(
     sign = 1.0 if side == "left" else -1.0
     elbow_hint = np.asarray(elbow_hint, dtype=np.float32)
     for frame, hand in enumerate(targets):
-        origin = J[shoulder]
+        if respect_parent_pose:
+            current_global, current_positions = _native_joint_pose(aa[frame])
+            parent_global = current_global[BODY_PARENTS[shoulder]]
+            origin = current_positions[shoulder]
+        else:
+            parent_global = np.eye(3, dtype=np.float32)
+            origin = J[shoulder]
         delta = hand - origin
         distance = float(np.clip(np.linalg.norm(delta), abs(l1 - l2) + 1e-4, l1 + l2 - 1e-4))
         direction = delta / (np.linalg.norm(delta) + 1e-9)
@@ -273,7 +297,7 @@ def _solve_arm(
         upper_global = _align_vector(upper, elbow_target - origin)
         fore_global = _align_vector(fore, hand - elbow_target)
         elbow_local = upper_global.T @ fore_global
-        aa[frame, shoulder] = _matrix_to_axis_angle(upper_global)
+        aa[frame, shoulder] = _matrix_to_axis_angle(parent_global.T @ upper_global)
         aa[frame, elbow] = _matrix_to_axis_angle(elbow_local)
         if clap_orientation is not None:
             wrist_local = _clap_wrist_rotation(side, fore_global)
@@ -281,10 +305,10 @@ def _solve_arm(
             aa[frame, wrist] = _matrix_to_axis_angle(wrist_local) * weight
 
 
-# Half the IK target separation at contact. Wrist rotation moves the rendered hand surfaces
-# inward from those targets, so a small positive separation produces palm contact without asking
-# the forearms to cross the body's midline.
-_CLAP_HALF_GAP = 0.004
+# Both wrist targets meet at contact. A positive separation left a visible gap after the arm pose
+# was composed onto asymmetric real choreography, even though the canonical stance still passed
+# its wrist-distance check.
+_CLAP_HALF_GAP = 0.003
 
 # Where the palms meet. In the template frame the shoulders sit at y=+0.083 and the chest
 # (spine3) at y=-0.057, so a clap belongs a little BELOW the chest line. This was authored at
@@ -303,12 +327,38 @@ _CLAP_ELBOW = np.array([0.55, -1.0, -0.1], dtype=np.float32)
 _CLAP_GUARD = 0.68
 
 
+def _smooth_clap_wrists(
+    clip: np.ndarray,
+    contacts: tuple[int, ...],
+    *,
+    amount: float = 0.5,
+) -> np.ndarray:
+    """Remove retiming-amplified wrist snaps without moving a clap's contact planes."""
+    out = np.asarray(clip, dtype=np.float32).copy()
+    smoothed = temporal_smooth(out, amount=amount)
+    wrists = slice(3 + 6 * 20, 3 + 6 * 22)
+    out[:, wrists] = smoothed[:, wrists]
+    locked = {0, 1, 2, len(out) - 3, len(out) - 2, len(out) - 1}
+    for contact in contacts:
+        locked.update(range(max(0, contact - 4), min(len(out), contact + 5)))
+    locked = sorted(frame for frame in locked if 0 <= frame < len(out))
+    out[locked, wrists] = clip[locked, wrists]
+    return out
+
+
 def _arm_targets(side: str, signal: np.ndarray, target: np.ndarray) -> np.ndarray:
     rest = _stance_wrist(side)
     return rest[None, :] + signal[:, None] * (np.asarray(target) - rest)[None, :]
 
 
-def _clap_arms(aa, signal, *, overhead=False):
+def _clap_arms(
+    aa,
+    signal,
+    *,
+    overhead=False,
+    center_x=0.0,
+    respect_parent_pose=False,
+):
     # The overhead variant has to clear the head to read as overhead, and reaching forward
     # costs height, so it trades a little of the forward travel back for lift.
     #
@@ -316,12 +366,19 @@ def _clap_arms(aa, signal, *, overhead=False):
     # hands at x=0 asks two wrists to occupy one point: the solver obliges, the forearms pass
     # through each other, and the clap reads as folded, tangled arms rather than a clap.
     half = _CLAP_HALF_GAP
-    y, z = (0.62, 0.18) if overhead else _CLAP_POINT
+    # Keep the overhead target above the head but inside both arms' reachable intersection.
+    # The old (0.62, 0.18) target sat about 7 cm beyond full extension, so each arm stopped on
+    # its own reach boundary and the palms could never meet.
+    y, z = (0.48, 0.20) if overhead else _CLAP_POINT
     hint = _CLAP_ELBOW
-    _solve_arm(aa, "left", _arm_targets("left", signal, np.array([half, y, z], dtype=np.float32)),
-               elbow_hint=hint, clap_orientation=signal)
-    _solve_arm(aa, "right", _arm_targets("right", signal, np.array([-half, y, z], dtype=np.float32)),
-               elbow_hint=hint, clap_orientation=signal)
+    _solve_arm(aa, "left", _arm_targets(
+        "left", signal, np.array([center_x + half, y, z], dtype=np.float32)),
+               elbow_hint=hint, clap_orientation=signal,
+               respect_parent_pose=respect_parent_pose)
+    _solve_arm(aa, "right", _arm_targets(
+        "right", signal, np.array([center_x - half, y, z], dtype=np.float32)),
+               elbow_hint=hint, clap_orientation=signal,
+               respect_parent_pose=respect_parent_pose)
 
 
 def _legs(aa, phase, amount=0.45):
@@ -342,13 +399,25 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
     t = np.linspace(0.0, 1.0, n, dtype=np.float32)
     phase = 2.0 * np.pi * t
     leg_targets = None
+    clap_recipe = None
+    side = 1.0 if direction == "left" else (-1.0 if direction == "right" else 0.0)
 
     if motion_id in {"clap_single", "clap_overhead"}:
         overhead = motion_id == "clap_overhead"
         hit = _pulse(t, 0.54, 0.15)
         wind = _pulse(t, 0.30, 0.11)                     # anticipation before the hit
         settle = _pulse(t, 0.80, 0.13)                   # follow-through after it
-        _clap_arms(aa, np.clip(hit - 0.22 * wind, 0.0, None), overhead=overhead)
+        clap_signal = np.clip(hit - 0.22 * wind, 0.0, None)
+        contact = 30 if overhead else 24
+        clap_signal = _pin_signal_peaks(clap_signal, (contact,))
+        center_x = side * (0.08 if overhead else 0.11)
+        _clap_arms(
+            aa,
+            clap_signal,
+            overhead=overhead,
+            center_x=center_x,
+        )
+        clap_recipe = (clap_signal, overhead, center_x)
         aa[:, 3, 0] += (0.20 if overhead else 0.13) * hit - 0.10 * wind
         aa[:, 9, 0] += (0.22 if overhead else 0.08) * hit
         aa[:, 12, 0] -= (0.26 if overhead else 0.06) * hit    # look up into an overhead clap
@@ -363,7 +432,10 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         # close the last of the gap. The envelope still vanishes at both ends, which is what
         # keeps the clip's first and last frame on the shared stance the splice hands over on.
         ready = _smoothstep(t / 0.18) * _smoothstep((1.0 - t) / 0.18)
-        _clap_arms(aa, ready * (_CLAP_GUARD + (1.0 - _CLAP_GUARD) * hit))
+        clap_signal = ready * (_CLAP_GUARD + (1.0 - _CLAP_GUARD) * hit)
+        clap_signal = _pin_signal_peaks(clap_signal, (20, 37, 55))
+        _clap_arms(aa, clap_signal, center_x=side * 0.11)
+        clap_recipe = (clap_signal, False, side * 0.11)
         trans[:, 2] += 0.025 * np.sin(6.0 * np.pi * t)
         aa[:, 3, 0] += 0.10 * hit
         aa[:, 0, 2] += 0.10 * np.sin(3.0 * np.pi * t)        # groove side to side across the claps
@@ -627,16 +699,16 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
     else:
         raise KeyError(f"no procedural authoring recipe for {motion_id}")
 
-    if motion_id.startswith("clap_") and direction != "forward":
-        # A side-directed clap is still palm-to-palm in front of the chest; the upper body turns
-        # into it instead of dragging one arm across a square torso. Spine1 owns the turn, so the
-        # legs and planted feet keep following the host dance.
-        side = 1.0 if direction == "left" else -1.0
-        turn = _smoothstep(t / 0.18) * _smoothstep((1.0 - t) / 0.18)
-        aa[:, 3, 1] += side * 0.62 * turn
-        aa[:, 9, 1] += side * 0.08 * turn
-
     _performance_layer(aa, trans, t)
+    if clap_recipe is not None:
+        signal, overhead, center_x = clap_recipe
+        _clap_arms(
+            aa,
+            signal,
+            overhead=overhead,
+            center_x=center_x,
+            respect_parent_pose=True,
+        )
     if leg_targets is not None:
         root_offset = np.zeros((n, 3), dtype=np.float32)
         root_offset[:, 0] = trans[:, 0]
@@ -647,7 +719,10 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
     # Z-up editing frame. ``trans`` above is expressed in desired Z-up coordinates.
     native_trans = np.stack([trans[:, 0], trans[:, 2], -trans[:, 1]], axis=1)
     native = np.concatenate([native_trans, rotations, contacts], axis=1).astype(np.float32)
-    return _ground(to_zup(native))
+    out = _ground(to_zup(native))
+    if motion_id == "clap_repeat":
+        out = _smooth_clap_wrists(out, (20, 37, 55))
+    return out
 
 
 def _standing_floor() -> float:

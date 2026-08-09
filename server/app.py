@@ -44,6 +44,7 @@ from agentlodge.editor.remote_generator import (
     LiveWindowGenerator,
     ResilientWindowGenerator,
 )
+from agentlodge.editor.motion_audit import validate_audit_receipt
 from agentlodge.editor.motion_bank import default_motion_bank
 from agentlodge.editor.session import EditSession, SongAssets
 from agentlodge.editor.window_edit import MockWindowGenerator, _window_beats, window_metrics
@@ -107,6 +108,19 @@ if _AUTH_USER and _AUTH_PASS:
 
 
 @app.on_event("startup")
+def _enforce_motion_audit() -> None:
+    """A live editor may not start with stale or incomplete visual evidence."""
+    if not _motion_audit_required():
+        return
+    receipt = validate_audit_receipt()
+    logging.getLogger("uvicorn.error").info(
+        "motion audit gate passed (%s, %d cases)",
+        receipt["motion_fingerprint"][:12],
+        len(receipt["cases"]),
+    )
+
+
+@app.on_event("startup")
 def _prewarm() -> None:
     # warm the pod's torch/scipy page cache so the first render's FK is fast (best-effort, async)
     try:
@@ -159,6 +173,11 @@ def _bank_or_mock(sid: str, d: Path):
 
 def _live_enabled() -> bool:
     return os.environ.get("AGENTLODGE_LIVE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _motion_audit_required() -> bool:
+    explicit = os.environ.get("MAESTRO_REQUIRE_MOTION_AUDIT", "").strip().lower()
+    return _live_enabled() or explicit in ("1", "true", "yes", "on")
 
 
 def _make_generator(sid: str, d: Path):

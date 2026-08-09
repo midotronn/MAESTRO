@@ -91,14 +91,15 @@ The editor routes each natural-language request through one or more agent tools:
 
 - deterministic levers for energy, beat alignment, smoothness, sharpness, mirror, and reverse;
 - a curated bank of 20 named actions for requests such as "add a clap here", "jump on the next
-  beat", or "insert a wave before the next move";
+  beat", or "wave here";
 - windowed LODGE or EDGE regeneration when the user asks for genuinely new choreography.
 
 Named actions are defined by `assets/motion_bank/manifest.json`. The manifest is the single source
 for names, aliases, capabilities, provenance, licensing, beat anchors, and semantic validation.
-Ordinary named-action requests replace the selected interval. Explicit insertion wording fits the
-action inside the selected interval and preserves the song duration, beat grid, and every frame
-outside the window. The bank is rebuilt deterministically with:
+Named-action requests replace motion inside the selected interval while preserving the timeline.
+Named-motion insertion requests are rejected with a clear error until a separate insert-specific
+visual audit exists; they are never silently coerced to replacement. The bank is rebuilt
+deterministically with:
 
 ```bash
 python scripts/build_motion_bank.py

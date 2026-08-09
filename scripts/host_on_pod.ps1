@@ -1,8 +1,9 @@
 <#
   Host the MAESTRO editor on a RunPod pod and point the project page at it. Makes switching pods a
-  one-command operation: syncs code + song data, launches the editor on port 8888 (RunPod's public
-  HTTPS proxy port), renders on the pod itself, protects the URL with a password, and rewrites
-  docs/static/data/config.json (so the GitHub Pages "Launch editor" button follows the new pod).
+  one-command operation: validates and syncs code + the exact audited motion-bank assets, launches
+  the editor on port 8888 (RunPod's public HTTPS proxy port), renders on the pod itself, protects the
+  URL with a password, and rewrites docs/static/data/config.json (so the GitHub Pages "Launch
+  editor" button follows the new pod).
 
   Usage:
     .\scripts\host_on_pod.ps1 -PodHost 213.173.109.111 -PodPort 41920 -PodId 2mliggkea7jgtt
@@ -34,12 +35,36 @@ if (-not $AuthPass) {
   Write-Host "Generated editor password: $AuthPass" -ForegroundColor Yellow
 }
 
-function PodSSH([string]$cmd, [int]$TimeoutMsg = 0) {
-  ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=20 -p $PodPort -i $PodKey $Target $cmd
+function PodSSH([string]$cmd) {
+  $output = & ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=20 `
+    -p $PodPort -i $PodKey $Target $cmd
+  if ($LASTEXITCODE -ne 0) { throw "pod command failed" }
+  return $output
 }
 
-Write-Host "1/5  Packing code + song data..." -ForegroundColor Cyan
-$tar = Join-Path $env:TEMP "maestro_sync.tgz"
+function PodSSHScript([string]$script) {
+  $output = $script | & ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=20 `
+    -p $PodPort -i $PodKey $Target "bash -s"
+  if ($LASTEXITCODE -ne 0) { throw "pod deployment command failed" }
+  return $output
+}
+
+Write-Host "1/6  Validating the required motion audit receipt..." -ForegroundColor Cyan
+$receipt = Join-Path $Repo "assets\motion_bank\audit_receipt.json"
+if (-not (Test-Path $receipt)) {
+  throw "required passing motion audit receipt is missing: $receipt"
+}
+$localPython = Join-Path $Repo ".venv\Scripts\python.exe"
+if (-not (Test-Path $localPython)) { $localPython = "python" }
+Push-Location $Repo
+try {
+  & $localPython -c "from agentlodge.editor.motion_audit import validate_audit_receipt; validate_audit_receipt()"
+  if ($LASTEXITCODE -ne 0) { throw "motion audit receipt is absent, stale, invalid, or not passing" }
+} finally { Pop-Location }
+Write-Host "    passing receipt validated locally." -ForegroundColor Green
+
+Write-Host "2/6  Packing code + exact motion-bank assets..." -ForegroundColor Cyan
+$tar = Join-Path $Repo ".maestro_sync.tgz"
 if (Test-Path $tar) { Remove-Item $tar -Force }
 Push-Location $Repo
 try {
@@ -47,23 +72,78 @@ try {
     --exclude="__pycache__" --exclude="*.pyc" --exclude=".git" --exclude=".venv" `
     --exclude="server/sessions" --exclude="server/media/*/_render*" --exclude="server/media/*/_cmp*" `
     --exclude="docs/static/videos" `
-    server agentlodge scripts docs requirements.txt README.md
+    server agentlodge scripts docs assets/motion_bank requirements.txt README.md
   if ($LASTEXITCODE -ne 0) { throw "tar failed" }
 } finally { Pop-Location }
 "{0:N1} MB packed" -f ((Get-Item $tar).Length / 1MB)
 
-Write-Host "2/5  Uploading to the pod..." -ForegroundColor Cyan
-scp -o StrictHostKeyChecking=no -P $PodPort -i $PodKey $tar "${Target}:$WS/maestro_sync.tgz"
-if ($LASTEXITCODE -ne 0) { throw "scp failed" }
+Write-Host "3/6  Uploading, staging, and validating on the pod..." -ForegroundColor Cyan
+try {
+  scp -o StrictHostKeyChecking=no -P $PodPort -i $PodKey $tar "${Target}:$WS/maestro_sync.tgz"
+  if ($LASTEXITCODE -ne 0) { throw "scp failed" }
+} finally {
+  if (Test-Path $tar) { Remove-Item $tar -Force }
+}
 
-Write-Host "3/5  Extracting + launching the editor on :8888..." -ForegroundColor Cyan
-PodSSH "mkdir -p $WS/AgentLODGE && tar xzf $WS/maestro_sync.tgz -C $WS/AgentLODGE && sed -i 's/\r$//' $WS/AgentLODGE/scripts/serve_on_pod.sh" | Out-Null
-$launch = "OPENAI_API_KEY='$OpenAIKey' MAESTRO_AUTH_USER='$AuthUser' MAESTRO_AUTH_PASS='$AuthPass' WORKSPACE='$WS' bash $WS/AgentLODGE/scripts/serve_on_pod.sh"
-$out = PodSSH $launch
+$deployScript = @'
+set -euo pipefail
+workspace="__WORKSPACE__"
+live="$workspace/AgentLODGE"
+stage="$workspace/maestro_stage"
+archive="$workspace/maestro_sync.tgz"
+backup="$workspace/.motion_bank.previous.$$"
+trap 'rm -rf "$stage" "$backup"; rm -f "$archive"' EXIT
+
+rm -rf "$stage"
+mkdir -p "$stage"
+tar xzf "$archive" -C "$stage"
+sed -i 's/\r$//' "$stage/scripts/serve_on_pod.sh"
+test -f "$stage/assets/motion_bank/audit_receipt.json"
+cd "$stage"
+PYTHONPATH="$stage" "$live/.venv/bin/python" -c 'from pathlib import Path; from agentlodge.editor.motion_audit import validate_audit_receipt; validate_audit_receipt(Path("assets/motion_bank/audit_receipt.json"), root=Path(".")); print("MOTION_AUDIT_RECEIPT_OK")'
+
+mkdir -p "$live/assets"
+if [ -e "$live/assets/motion_bank" ]; then
+  mv "$live/assets/motion_bank" "$backup"
+fi
+if ! mv "$stage/assets/motion_bank" "$live/assets/motion_bank"; then
+  [ ! -e "$backup" ] || mv "$backup" "$live/assets/motion_bank"
+  exit 1
+fi
+rm -rf "$backup" "$stage/assets"
+tar -C "$stage" -cf - . | tar -C "$live" -xf -
+'@.Replace("__WORKSPACE__", $WS)
+$deployOut = PodSSHScript $deployScript
+if (-not (($deployOut -join "`n") -match "MOTION_AUDIT_RECEIPT_OK")) {
+  throw "staged motion audit validation did not complete"
+}
+Write-Host "    staged receipt passed; exact assets/motion_bank tree replaced." -ForegroundColor Green
+
+Write-Host "4/6  Launching the editor on :8888..." -ForegroundColor Cyan
+$openAI64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($OpenAIKey))
+$authUser64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($AuthUser))
+$authPass64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($AuthPass))
+$launchScript = @'
+set -e
+export OPENAI_API_KEY="$(printf '%s' '__OPENAI64__' | base64 -d)"
+export MAESTRO_AUTH_USER="$(printf '%s' '__AUTHUSER64__' | base64 -d)"
+export MAESTRO_AUTH_PASS="$(printf '%s' '__AUTHPASS64__' | base64 -d)"
+export WORKSPACE="__WORKSPACE__"
+bash "$WORKSPACE/AgentLODGE/scripts/serve_on_pod.sh"
+'@
+$launchScript = $launchScript.Replace("__OPENAI64__", $openAI64)
+$launchScript = $launchScript.Replace("__AUTHUSER64__", $authUser64)
+$launchScript = $launchScript.Replace("__AUTHPASS64__", $authPass64)
+$launchScript = $launchScript.Replace("__WORKSPACE__", $WS)
+$out = PodSSHScript $launchScript
+$launchScript = $null
+$openAI64 = $null
+$authUser64 = $null
+$authPass64 = $null
 $out | ForEach-Object { Write-Host "    $_" }
 if (-not (($out -join "`n") -match "MAESTRO_EDITOR_UP")) { throw "editor did not start on the pod (see log above)" }
 
-Write-Host "4/5  Verifying the public URL..." -ForegroundColor Cyan
+Write-Host "5/6  Verifying the public URL..." -ForegroundColor Cyan
 $pair = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${AuthUser}:${AuthPass}"))
 $ok = $false
 for ($i = 0; $i -lt 6; $i++) {
@@ -76,7 +156,7 @@ for ($i = 0; $i -lt 6; $i++) {
 if ($ok) { Write-Host "    reachable: $ProxyUrl" -ForegroundColor Green }
 else { Write-Host "    WARNING: not reachable yet (the RunPod proxy can take a minute)." -ForegroundColor Yellow }
 
-Write-Host "5/5  Pointing the project page at this pod..." -ForegroundColor Cyan
+Write-Host "6/6  Pointing the project page at this pod..." -ForegroundColor Cyan
 $cfgPath = Join-Path $Repo "docs\static\data\config.json"
 $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
 $cfg.editorUrl = $ProxyUrl

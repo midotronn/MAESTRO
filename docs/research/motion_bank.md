@@ -1,7 +1,7 @@
 # Named motion bank
 
 MAESTRO includes a manifest-driven bank of 20 common actions for semantic requests such as
-"add a clap here", "jump on the next beat", or "insert a wave before the next move". The bank
+"add a clap here", "jump on the next beat", or "wave here". The bank
 complements the existing deterministic metric levers and diffusion regeneration:
 
 | Request type | Agent route |
@@ -73,17 +73,11 @@ a selection with no feasible beat reports a nonzero event error instead of claim
 An absent or empty beat grid means the song has no usable timing map and does not fail an otherwise
 valid action; only a nonempty grid with no reachable beat is an alignment failure.
 
-Explicit wording such as "insert", "before", "after", or "between" selects fixed-duration
-in-window insertion. MAESTRO allocates part of the selected interval to the named action and fits
-the original in-window prefix and suffix around it. This preserves:
-
-- the complete dance frame count;
-- source audio duration and timing;
-- the beat grid and downstream timestamps;
-- byte-identical motion outside the selected window.
-
-MAESTRO does not lengthen the global timeline for named-motion insertion because that would
-desynchronize the source audio, beat map, cached previews, and comparison renders.
+The production planner and executor currently reject named-motion wording such as "insert",
+"before", "after", or "between". The low-level fixed-duration insertion implementation remains
+covered by engineering tests, but it is not reachable from the live named-motion path because the
+43-case release audit covers replacement only. Insertion will remain blocked, with a surfaced
+error rather than silent replacement, until it has its own complete visual audit matrix.
 
 ### Channel ownership
 
@@ -203,9 +197,12 @@ such as before, after, start, center, or end still overrides the motion default.
 Directional motions accept `direction=left`, `right`, or, where meaningful, `forward`. With no
 explicit direction, `auto` reads the host's root travel in the dancer's local frame, then its turn
 direction, and uses the authored canonical side only when the phrase has no clear flow. The three
-claps use authored forward, left, and right clips. Their side variants turn the upper body into the
-clap while keeping the legs and feet in the host choreography; the manifest now preserves the
-authored spine and head support that composition previously discarded. Existing asymmetric
+claps use authored forward, left, and right clips. Their side variants move the shared contact point
+beside the chest while leaving the host root, torso, head, legs, and rhythm unchanged. This avoids
+the rejected shortcut where a directional clap rotated the chest about 40 degrees toward the
+camera and visually stopped the dance. Clap fingers now use a relaxed forward-up diagonal instead
+of a nearly vertical hand pose, and hierarchy-aware arm IK pins every contact to a 6 mm wrist gap.
+Existing asymmetric
 motions such as waves, points, punches, lateral steps, and turns use their mirror capability behind
 the semantic direction parameter. The planner cannot invent a side when the user did not request
 one because post-planning defaults force `auto`.
@@ -274,9 +271,9 @@ require their wrist data to remain host-identical. The other ten have explicit c
 - `wave`, `point_side`, `arm_punch`, `jump_arms_up`, `celebrate_hands_up`, and `rise_reach`
   keep the rigid open hand anatomically continuous with the forearm, with wave as the only
   deliberate local wrist oscillation;
-- all ten are checked for abrupt local wrist steps on several phases of real LODGE output in both
-  replacement and insertion modes, while authored hand planes are checked across eight headings
-  and mirrored variants.
+- all ten are checked for abrupt local wrist steps on several phases of real LODGE output in
+  replacement and the dormant low-level insertion implementation, while authored hand planes are
+  checked across eight headings and mirrored variants.
 
 These tests intentionally measure local wrist rotation. A global wrist-frame delta also contains
 the shoulder and elbow motion that carried the hand through space, so treating it as wrist bend
@@ -464,15 +461,61 @@ recognition controls. The renderer resolves the repository from its own script p
 worktree cannot accidentally audit stale production code, and the builder refuses to continue if a
 committed clip differs from its procedural recipe. Build the separate production-camera input with
 `--preserve-heading`, then render it with `AUDIT_FIXED_CAMERA=0`. The final release gate still
-requires one full-bank shuffle.
+requires one full-bank shuffle. Directional motions expand into separate `auto` and explicit
+direction cases, so the current bank requires 43 reviewed source/edit pairs rather than one
+canonical take per motion.
 
-Open `review.html` through the local HTTP server, play each source/edit pair before scrubbing, write
-every guess, and lock all takes before revealing any name or required phase. The UI does not fetch
-the answer key until every take has a non-empty locked guess. Locked guesses persist in browser
-storage and can be exported as JSON. Each generated audit receives a fresh storage nonce, so
-rebuilding a reused output directory cannot restore answers revealed by an earlier run. The answer
-text is not embedded in the review page, and shuffled take ids prevent the manifest order or
-filename from giving away the answer.
+Open `review.html` through the local HTTP server. For every take, use the paired-play button and let
+the source and edit finish together from frame zero at 1.0x. Pausing, seeking, changing speed,
+insufficient duration, or more than 120 ms of source/edit drift invalidates that run. Open the
+synchronized source/edit/difference page for that take before locking its action and dancer-relative
+direction guess. The lock remains disabled until both requirements are complete. The exported result
+records playback start and completion times, elapsed and video durations, seek and pause counts,
+maximum synchronization drift, comparison access, and lock time for every take. This per-take proof
+replaces the old global review checkboxes.
+
+The UI does not fetch the answer key until every take has a non-empty locked guess. Locked guesses
+persist in browser storage and can be exported as JSON. Each generated audit receives a fresh
+storage nonce, so rebuilding a reused output directory cannot restore answers revealed by an earlier
+run. The supported 20-motion vocabulary is visible to the reviewer, but no take-to-answer mapping is
+embedded in the page. Shuffled take ids prevent the manifest order or filename from giving away the
+answer.
+
+Protocol version 6 also runs machine visual invariants on the exact composed host motion. Claps
+cannot enter review unless palm contact is below 1 cm, palm planes oppose, fingers are not vertical,
+the torso heading stays within 3 degrees of the source, and every unowned source channel remains
+unchanged. Left and right clap contacts must also separate visibly from the forward contact. These
+checks diagnose known failures but do not replace the human verdict. Before reveal, the reviewer
+locks both the action name and observed direction. After reveal, the reviewer must mark every visual
+phase as reviewed and record pass or fail plus an evidence note for every take. Finalize that
+exported result with:
+
+```bash
+python scripts/finalize_motion_audit.py \
+  --audit /workspace/visual_audit/current \
+  --review-result /path/to/current-review-result.json
+```
+
+The finalizer rejects missed blind guesses, failed phases, failed machine checks, missing direction
+variants, empty evidence, incomplete per-take playback or comparison proof, invalid timestamp order,
+stale audit artifacts, or a fingerprint mismatch. The render step clears old videos and frame
+directories first, then writes an atomic receipt containing hashes for every pose input,
+front/side/combined video, and review sheet. A partial render or any artifact modified after
+rendering therefore cannot be finalized. It writes
+`assets/motion_bank/audit_receipt.json`, which hashes the motion authoring, composition, planner,
+renderer and camera dependencies, FK template, audit code, manifest, contracts, and every clip.
+Text files are line-ending normalized so the same audited content has the same fingerprint on
+Windows and Linux. A live MAESTRO server validates that receipt during startup, so a changed or
+unaudited motion bank cannot be deployed accidentally.
+`scripts/host_on_pod.ps1` also validates the receipt locally and again from a staged pod extraction
+before touching the running deployment. Only after that succeeds does it replace the remote
+`assets/motion_bank` directory as a complete tree, including `audit_receipt.json`, so files left by
+an older deployment cannot satisfy or contaminate the live gate.
+Every review video and comparison-page URL carries the audit ID, motion fingerprint, and take ID as
+a cache-busting identity. Opening a comparison link is not proof by itself: the loaded same-origin
+child page must successfully load its evidence and acknowledge those exact three values to the
+parent with `postMessage`. Only that acknowledgment records comparison completion and enables
+locking; stale or mismatched acknowledgments are ignored and rejected again by the finalizer.
 The render step also writes `phase_sheets/`: readable front and side playback strips that interleave
 the edited take with its exact source at the full 30 FPS and force the action boundaries and event
 frame into view, plus a cropped front detail for hands and upper-body articulation. A synchronized
@@ -489,11 +532,16 @@ use one giant all-bank contact sheet for acceptance: scaling dozens of rows into
 airborne feet, palm contacts, and repeated cadence, which can turn a good jump into an apparent clap
 or collapse three claps into one.
 
-The final unseen full-bank audit used seed `84593` and the paged synchronized difference workflow.
-All 20 motions were identified correctly before the answer key was accessed, and every required
-phase passed after reveal. A separate full-bank pass preserved the source heading and used the
-following production camera; all bodies, overhead hands, lateral gestures, jumps, rises, crouches,
-and locomotion remained fully framed and readable.
+The protocol-v4 full-bank audit used seed `84593`, covered all 43 motion and direction variants, and
+locked every blind guess before the answer key was accessed. It scored 23/43, so the release gate
+correctly produced no production receipt. The misses included confusion between the two jump
+variants and rise or bounce motions, quarter turns and step touches, punches and side points, plus
+several dancer-relative direction reversals. That result is not proof that all 20 misses are motion
+defects: some reviews relied on edit-only temporal strips or viewer-relative direction assumptions.
+The detailed source/edit/difference pages must separate genuine action ambiguity from review-method
+errors before clips are changed. Because protocol-v5 code changes the motion fingerprint, the
+revealed v4 render is stale and cannot be reused as a blind pass. Release requires a fresh output
+directory, nonce, render, and 43-case review.
 
 The earlier unpaired review protocol itself produced misleading failures. A chest pop inherited a
 small hop from the host and was guessed as a jump, while the actual jump was assigned the remaining
@@ -562,8 +610,9 @@ real LODGE choreography.
 2. Add a deterministic authoring or import recipe.
 3. Generate the canonical clip with `scripts/build_motion_bank.py`.
 4. Choose a validator type and threshold that the canonical clip passes for the intended reason.
-5. Add the action to the table-driven planner, fitting, insertion, and adversarial tests by relying
-   on manifest enumeration rather than writing a new executor branch.
+5. Add the action to the table-driven planner, replacement fitting, dormant low-level insertion,
+   and adversarial tests by relying on manifest enumeration rather than writing a new executor
+   branch.
 6. Run the blind real-host visual acceptance gate before publishing. The action must be recognizable
    without its label, satisfy every required phase from front and side, preserve travel under a fixed
    camera, and remain well framed under the production camera. The labeled canonical reel remains a

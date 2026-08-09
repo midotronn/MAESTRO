@@ -95,6 +95,8 @@ def test_llm_prompt_carries_the_critical_routing_rules(monkeypatch):
     assert "reshape" in prompt or "resize" in prompt                   # lever-vs-regenerate distinction
     assert "beat-hit motions" in prompt and "clap_single" in prompt
     assert "direction=auto" in prompt and "dance" in prompt and "flow" in prompt
+    assert "insert mode is unavailable" in prompt
+    assert "never silently reinterpret" in prompt
 
 
 def test_llm_cannot_move_a_default_beat_hit_off_the_beat(monkeypatch):
@@ -127,16 +129,91 @@ def test_llm_cannot_invent_a_direction_but_explicit_direction_wins(monkeypatch):
     assert explicit.steps[0].params["direction"] == "left"
 
 
-def test_explicit_named_motion_placement_overrides_its_default(monkeypatch):
-    captured: dict = {}
-    _fake_openai(
-        monkeypatch,
-        '{"summary":"late clap","steps":[{"tool":"motion_bank","params":'
-        '{"motion_id":"clap_single","anchor":"center"},"why":"add clap"}],"goals":[]}',
-        captured,
+def test_explicit_named_motion_insert_request_is_rejected_before_llm_planning(monkeypatch):
+    monkeypatch.setattr(
+        AE,
+        "_llm_plan",
+        lambda *args, **kwargs: pytest.fail("insert request reached the LLM planner"),
     )
-    plan = AE.plan_edit("add a clap after the next move", {}, 1.0, 6.0, api_key="sk-x")
-    assert plan.steps[0].params["anchor"] == "late"
+    with pytest.raises(ValueError, match="insert mode is unavailable"):
+        AE.plan_edit("add a clap after the next move", {}, 1.0, 6.0, api_key="sk-x")
+
+
+def test_llm_cannot_send_named_motion_to_unaudited_insert_mode(monkeypatch):
+    monkeypatch.setattr(
+        AE,
+        "_llm_plan",
+        lambda *args, **kwargs: AE.AgentPlan(
+            "clap",
+            [
+                AE.PlanStep(
+                    "motion_bank",
+                    {"motion_id": "clap_single", "mode": "insert"},
+                    "add clap",
+                )
+            ],
+            goals=[],
+        ),
+    )
+    with pytest.raises(ValueError, match="insert mode is unavailable"):
+        AE.plan_edit("add a clap here", {}, 1.0, 6.0, api_key="sk-x")
+
+
+def test_llm_cannot_silently_coerce_insert_to_replace(monkeypatch):
+    monkeypatch.setattr(
+        AE,
+        "_llm_plan",
+        lambda *args, **kwargs: AE.AgentPlan(
+            "late clap",
+            [
+                AE.PlanStep(
+                    "motion_bank",
+                    {"motion_id": "clap_single", "mode": "insert", "anchor": "late"},
+                    "add clap",
+                )
+            ],
+            goals=[],
+        ),
+    )
+    with pytest.raises(ValueError, match="insert mode is unavailable"):
+        AE.plan_edit("add a clap here", {}, 1.0, 6.0, api_key="sk-x")
+
+
+def test_llm_replace_mode_remains_available(monkeypatch):
+    monkeypatch.setattr(
+        AE,
+        "_llm_plan",
+        lambda *args, **kwargs: AE.AgentPlan(
+            "clap",
+            [
+                AE.PlanStep(
+                    "motion_bank",
+                    {"motion_id": "clap_single", "mode": "replace"},
+                    "add clap",
+                )
+            ],
+            goals=[],
+        ),
+    )
+    plan = AE.plan_edit("add a clap here", {}, 1.0, 6.0, api_key="sk-x")
+    assert plan.steps[0].params["mode"] == "replace"
+
+
+def test_named_motion_executor_rejects_insert_before_bank_apply(monkeypatch):
+    bank = AE.default_motion_bank()
+    monkeypatch.setattr(AE, "default_motion_bank", lambda: bank)
+    monkeypatch.setattr(
+        bank,
+        "apply",
+        lambda *args, **kwargs: pytest.fail("unaudited insert reached MotionBank.apply"),
+    )
+    with pytest.raises(ValueError, match="insert mode is unavailable"):
+        AE._tool_motion_bank(
+            _base(120),
+            {"wbeats": None},
+            motion_id="wave",
+            mode="insert",
+        )
 
 
 def test_explicit_named_motion_intensity_overrides_the_default(monkeypatch):

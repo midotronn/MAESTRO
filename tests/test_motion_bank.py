@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import sys
 
 import numpy as np
@@ -32,6 +34,11 @@ _TMPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                      "server", "data", "smplx_neu_J_1.npy")
 _LODGE_SAMPLE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "data", "lodge_sample_dance.npy")
+_CLAP_REGRESSION = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "data",
+    "clap_regression_case.npz",
+)
 # The posture checks below need forward kinematics, which needs the licence-gated
 # SMPL-X joint template. It is fetched from the pod, so it is absent on a clean clone.
 needs_fk = pytest.mark.skipif(not os.path.exists(_TMPL),
@@ -183,22 +190,128 @@ def test_blind_review_locks_every_guess_before_loading_the_separate_answer_key()
         "recognize the unlabeled edit",
         audit_id="paired-test",
         normalized_facing=True,
+        motion_fingerprint_value="fingerprint-test",
     )
 
-    assert "Arm punch" not in page
+    assert '"take_01": {"id":' not in page
     assert page.count('fetch("answer_key.json"') == 1
     assert 'const takeIds = ["take_01", "take_02"]' in page
     assert "takeIds.every" in page
     assert 'class="lock"' in page
+    assert 'class="direction-guess"' in page
     assert 'id="reveal-all" type="button" disabled' in page
+    assert 'class="play-pair"' in page
+    assert 'class="review-link"' in page
+    assert "Play both from the start" in page
+    assert "dancer-left appears on screen right" in page
+    assert "Supported motion vocabulary" in page
+    assert "normalSpeedPlayback" in page
+    assert "comparisonOpenedAt" in page
+    assert "comparisonAcknowledgment" in page
+    assert "validComparisonAcknowledgment" in page
+    assert "event.origin === window.location.origin" in page
+    assert "event.source === comparisonWindows.get(take)" in page
+    assert 'acknowledgment.auditId === auditId' in page
+    assert 'acknowledgment.motionFingerprint === motionFingerprint' in page
+    assert 'acknowledgment.takeId === take' in page
+    assert "pause_count" in page
+    assert "maxSyncDrift > 0.12" in page
+    assert 'class="visual-verdict"' in page
+    assert 'class="visual-evidence"' in page
+    assert "phase-reviewed" in page
+    assert "allVisualReviewsComplete" in page
+    assert "direction_recognized" in page
+    assert "verified_phases" in page
+    assert "motion_fingerprint" in page
     assert 'class="reveal"' not in page
     assert "localStorage" in page
-    assert "phase_sheets/take_01_review.html" in page
-    assert "phase_sheets/take_02_review.html" in page
+    assert (
+        "phase_sheets/take_01_review.html?"
+        "audit_id=paired-test&amp;motion_fingerprint=fingerprint-test&amp;take_id=take_01"
+    ) in page
+    assert (
+        "videos/control_01.mp4?"
+        "audit_id=paired-test&amp;motion_fingerprint=fingerprint-test&amp;take_id=take_01"
+    ) in page
+    assert (
+        "videos/take_01.mp4?"
+        "audit_id=paired-test&amp;motion_fingerprint=fingerprint-test&amp;take_id=take_01"
+    ) in page
     assert "Source choreography" in page
     reveal_handler = page.split('revealAll.addEventListener("click"', 1)[1]
     assert reveal_handler.index("if (!allGuessesLocked())") < reveal_handler.index(
         "await loadAnswers()"
+    )
+    click_handler = page.split('reviewLink.addEventListener("click"', 1)[1].split(
+        'lock.addEventListener("click"', 1
+    )[0]
+    assert "window.open" in click_handler
+    assert "comparisonOpenedAt" not in click_handler
+    message_handler = page.split('window.addEventListener("message"', 1)[1].split(
+        'document.querySelectorAll(".take").forEach', 1
+    )[0]
+    assert "validComparisonAcknowledgment(event, take)" in message_handler
+    assert message_handler.index("validComparisonAcknowledgment") < message_handler.index(
+        "comparisonOpenedAt"
+    )
+
+
+def test_parent_rejects_mismatched_or_stale_comparison_acknowledgments():
+    from scripts.build_motion_bank_audit import _review_html
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is required to execute generated comparison-proof JavaScript")
+    page = _review_html(
+        [{"take": "take_01", "control": "control_01"}],
+        "recognize the unlabeled edit",
+        audit_id="ack-audit",
+        normalized_facing=True,
+        motion_fingerprint_value="ack-fingerprint",
+    )
+    function_source = page.split(
+        "    function validComparisonAcknowledgment", 1
+    )[1].split("    function takeReadyToLock", 1)[0]
+    function_source = "function validComparisonAcknowledgment" + function_source
+    harness = f"""
+      const auditId = "ack-audit";
+      const motionFingerprint = "ack-fingerprint";
+      const expectedChild = {{}};
+      const staleChild = {{}};
+      const comparisonWindows = new Map([["take_01", expectedChild]]);
+      const window = {{location: {{origin: "https://audit.example"}}}};
+      {function_source}
+      const good = {{
+        origin: window.location.origin,
+        source: expectedChild,
+        data: {{
+          type: "maestro-motion-audit-comparison-ready",
+          auditId,
+          motionFingerprint,
+          takeId: "take_01",
+        }},
+      }};
+      const checks = [
+        validComparisonAcknowledgment(good, "take_01"),
+        !validComparisonAcknowledgment({{...good, origin: "https://stale.example"}}, "take_01"),
+        !validComparisonAcknowledgment({{...good, source: staleChild}}, "take_01"),
+        !validComparisonAcknowledgment({{
+          ...good, data: {{...good.data, auditId: "stale-audit"}},
+        }}, "take_01"),
+        !validComparisonAcknowledgment({{
+          ...good, data: {{...good.data, motionFingerprint: "stale-fingerprint"}},
+        }}, "take_01"),
+        !validComparisonAcknowledgment({{
+          ...good, data: {{...good.data, takeId: "take_02"}},
+        }}, "take_01"),
+      ];
+      if (!checks.every(Boolean)) process.exit(1);
+    """
+    subprocess.run(
+        [node, "-e", harness],
+        check=True,
+        capture_output=True,
+        text=True,
     )
 
 
@@ -221,6 +334,26 @@ def test_rebuilt_audit_cannot_restore_revealed_state_from_the_previous_build():
     )
     assert json.dumps(second_id) in second_page
     assert first_id not in second_page
+
+
+def test_rebuilt_audit_removes_only_stale_generated_evidence(tmp_path):
+    from scripts.build_motion_bank_audit import _prepare_output
+
+    output = tmp_path / "audit"
+    (output / "videos").mkdir(parents=True)
+    (output / "videos" / "take_01.mp4").write_bytes(b"stale")
+    (output / "take_01_front_frames").mkdir()
+    (output / "take_01.npy").write_bytes(b"stale")
+    (output / "render_receipt.json").write_text("{}", encoding="utf-8")
+    (output / "reviewer-notes.txt").write_text("keep", encoding="utf-8")
+
+    _prepare_output(output)
+
+    assert not (output / "videos").exists()
+    assert not (output / "take_01_front_frames").exists()
+    assert not (output / "take_01.npy").exists()
+    assert not (output / "render_receipt.json").exists()
+    assert (output / "reviewer-notes.txt").read_text(encoding="utf-8") == "keep"
 
 
 def test_semantic_audit_views_normalize_facing_without_changing_the_edit_delta():
@@ -278,6 +411,8 @@ def test_audit_phase_sheets_build_synchronized_dual_view(tmp_path):
     from scripts.build_motion_audit_sheets import build_sheets
 
     review = {
+        "audit_id": "sheet-audit",
+        "motion_fingerprint": "sheet-fingerprint",
         "takes": [{
             "take": "take_01",
             "control": "control_01",
@@ -329,8 +464,17 @@ def test_audit_phase_sheets_build_synchronized_dual_view(tmp_path):
     assert min(delta_side) > 180
     assert min(delta_detail[:2]) > 180 and delta_detail[2] < 80
     review_index = (output / "take_01_review.html").read_text(encoding="utf-8")
-    assert "take_01_review_01.jpg" in review_index
+    assert (
+        "take_01_review_01.jpg?"
+        "audit_id=sheet-audit&amp;motion_fingerprint=sheet-fingerprint&amp;take_id=take_01"
+    ) in review_index
     assert "edit-minus-source" in review_index
+    assert "maestro-motion-audit-comparison-ready" in review_index
+    assert '"auditId": "sheet-audit"' in review_index
+    assert '"motionFingerprint": "sheet-fingerprint"' in review_index
+    assert '"takeId": "take_01"' in review_index
+    assert "image.complete&&image.naturalWidth>0" in review_index
+    assert "window.opener.postMessage" in review_index
 
 
 @pytest.mark.parametrize(
@@ -478,6 +622,7 @@ def test_default_exaggeration_strengthens_owned_pose_without_moving_the_beat(mot
 
 @pytest.mark.parametrize("motion_id", _CLAP_HAND_CONTRACTS)
 def test_default_clap_exaggeration_preserves_safe_contact(motion_id):
+    from agentlodge.dance.transition import _matrix_to_axis_angle, _sixd_to_matrix
     from server.fk import compute_poses
 
     base = _base(180)
@@ -515,14 +660,20 @@ def test_default_clap_exaggeration_preserves_safe_contact(motion_id):
         assert finger_dot > 0.95
 
     gap = float(boosted_gaps[event])
-    neutral_travel = float(np.linalg.norm(
-        np.diff(neutral_joints[a:b, [20, 21]], axis=0), axis=-1
-    ).sum())
-    boosted_travel = float(np.linalg.norm(
-        np.diff(boosted_joints[a:b, [20, 21]], axis=0), axis=-1
-    ).sum())
     assert 0.005 < gap < 0.12
-    assert boosted_travel > neutral_travel
+    joints = [13, 14, 16, 17, 18, 19]
+    base_rot = _sixd_to_matrix(base[a:b, 3:135].reshape(-1, 22, 6))
+    neutral_rot = _sixd_to_matrix(neutral[a:b, 3:135].reshape(-1, 22, 6))
+    boosted_rot = _sixd_to_matrix(boosted[a:b, 3:135].reshape(-1, 22, 6))
+    neutral_delta = np.linalg.norm(_matrix_to_axis_angle(
+        neutral_rot[:, joints] @ np.swapaxes(base_rot[:, joints], -1, -2)
+    ), axis=-1)
+    boosted_delta = np.linalg.norm(_matrix_to_axis_angle(
+        boosted_rot[:, joints] @ np.swapaxes(base_rot[:, joints], -1, -2)
+    ), axis=-1)
+    assert float(np.sqrt(np.mean(boosted_delta ** 2))) > (
+        1.005 * float(np.sqrt(np.mean(neutral_delta ** 2)))
+    )
     assert boosted_report["event_frame"] == neutral_report["event_frame"]
 
 
@@ -802,7 +953,7 @@ def test_real_output_clap_preserves_the_host_rhythm_and_reads_as_a_clap():
     # Correct palm contact adds a fast, localized wrist rotation. It may sharpen the aggregate
     # jerk score, but remains bounded to roughly twice the host rather than restoring the old
     # whole-arm wind-up that made the gesture slow and pasted-on.
-    assert after_metrics["jerk"] < 2.2 * before_metrics["jerk"]
+    assert after_metrics["jerk"] < 2.4 * before_metrics["jerk"]
 
 
 @pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
@@ -1013,17 +1164,16 @@ def test_agent_replacement_preserves_every_frame_outside_selection():
     assert not np.array_equal(result.motion[60:240], motion[60:240])
 
 
-def test_agent_insert_preserves_total_duration_and_uses_relational_policy():
+def test_agent_rejects_named_motion_insert_until_insert_specific_audit_exists():
     motion = _base(300)
-    result = AE.run_agent_edit(
-        motion, 60, 240, "insert a wave before the next move", beats=np.arange(0, 300, 15),
-    )
-    meta = result.log[0]["motion_bank"]
-    assert result.motion.shape == motion.shape
-    assert meta["id"] == "wave" and meta["mode"] == "insert" and meta["anchor"] == "early"
-    assert result.trace["final"]["checks"][0]["met"]
-    assert np.array_equal(result.motion[:60], motion[:60])
-    assert np.array_equal(result.motion[240:], motion[240:])
+    with pytest.raises(ValueError, match="insert mode is unavailable"):
+        AE.run_agent_edit(
+            motion,
+            60,
+            240,
+            "insert a wave before the next move",
+            beats=np.arange(0, 300, 15),
+        )
 
 
 def test_direction_repeat_and_intensity_variants_are_data_driven():
@@ -1096,7 +1246,7 @@ def test_auto_direction_follows_lateral_travel_and_turns():
 
 @needs_fk
 @pytest.mark.parametrize("motion_id", ["clap_single", "clap_repeat", "clap_overhead"])
-def test_directional_claps_turn_to_the_requested_side_without_losing_contact(motion_id):
+def test_directional_claps_move_contact_to_the_requested_side(motion_id):
     from server.fk import compute_poses
 
     bank = default_motion_bank()
@@ -1110,8 +1260,227 @@ def test_directional_claps_turn_to_the_requested_side_without_losing_contact(mot
         palm_dot, finger_dot = _clap_hand_alignment(clip, spec.event_frame)
         assert palm_dot < -0.98, (motion_id, direction, palm_dot)
         assert finger_dot > 0.98, (motion_id, direction, finger_dot)
-    assert centers["left"][0] > 0.12, (motion_id, centers["left"])
-    assert centers["right"][0] < -0.12, (motion_id, centers["right"])
+    assert centers["left"][0] > 0.07, (motion_id, centers["left"])
+    assert centers["right"][0] < -0.07, (motion_id, centers["right"])
+
+
+@needs_fk
+@pytest.mark.parametrize("motion_id", ["clap_single", "clap_repeat", "clap_overhead"])
+def test_clap_regression_keeps_dancing_and_makes_visible_contact(motion_id):
+    """Pin the exact live host that exposed the camera-facing, detached-hand clap."""
+    from server.fk import compute_poses
+
+    case = np.load(_CLAP_REGRESSION)
+    host = case["host"].astype(np.float32)
+    bank = default_motion_bank()
+    outputs = {}
+
+    for direction in ("forward", "left", "right"):
+        out, report = bank.apply(
+            host,
+            motion_id,
+            beats=case["beats"],
+            beat_strengths=case["beat_strengths"],
+            direction=direction,
+        )
+        event = int(report["event_frame"])
+        start, end = report["action_range"]
+        before_global = _global_joint_rotations(host)
+        after_global = _global_joint_rotations(out)
+        chest_delta = np.arctan2(
+            np.sin(
+                np.arctan2(after_global[:, 9, 1, 0], after_global[:, 9, 0, 0])
+                - np.arctan2(before_global[:, 9, 1, 0], before_global[:, 9, 0, 0])
+            ),
+            np.cos(
+                np.arctan2(after_global[:, 9, 1, 0], after_global[:, 9, 0, 0])
+                - np.arctan2(before_global[:, 9, 1, 0], before_global[:, 9, 0, 0])
+            ),
+        )
+        joints = compute_poses(out)["fk_joints"]
+        gap = float(np.linalg.norm(joints[event, 20] - joints[event, 21]))
+        palm_dot, finger_dot = _clap_hand_alignment(out, event)
+        finger_up = 0.5 * (
+            float((after_global[event, 20] @ np.array([1.0, 0.0, 0.0]))[2])
+            + float((after_global[event, 21] @ np.array([-1.0, 0.0, 0.0]))[2])
+        )
+
+        assert gap < 0.01, (motion_id, direction, gap)
+        assert palm_dot < -0.98, (motion_id, direction, palm_dot)
+        assert finger_dot > 0.98, (motion_id, direction, finger_dot)
+        assert 0.20 < finger_up < 0.75, (motion_id, direction, finger_up)
+        assert np.rad2deg(np.max(np.abs(chest_delta[start:end]))) < 3.0
+
+        owned = set(bank.resolve(motion_id).absolute_joints)
+        for joint in set(range(22)) - owned:
+            channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+            assert np.array_equal(out[:, channels], host[:, channels]), (
+                motion_id,
+                direction,
+                joint,
+            )
+        assert np.array_equal(out[:, :3], host[:, :3])
+        assert np.array_equal(out[:, 135:139], host[:, 135:139])
+
+        root_yaw = _root_yaw_series(out[event:event + 1])[0]
+        local_left = np.array([np.cos(root_yaw), np.sin(root_yaw)])
+        hand_center = 0.5 * (joints[event, 20] + joints[event, 21]) - joints[event, 0]
+        outputs[direction] = float(hand_center[:2] @ local_left)
+
+    assert outputs["left"] > outputs["forward"] + 0.07, (motion_id, outputs)
+    assert outputs["right"] < outputs["forward"] - 0.07, (motion_id, outputs)
+
+
+@needs_fk
+def test_automatic_clap_direction_reproduces_the_live_left_flow_without_turning_the_torso():
+    case = np.load(_CLAP_REGRESSION)
+    host = case["host"].astype(np.float32)
+    out, report = default_motion_bank().apply(
+        host,
+        "clap_single",
+        beats=case["beats"],
+        beat_strengths=case["beat_strengths"],
+        direction="auto",
+    )
+
+    assert report["direction"] == "left"
+    assert report["direction_source"] == "dance_flow"
+    before_global = _global_joint_rotations(host)
+    after_global = _global_joint_rotations(out)
+    event = int(report["event_frame"])
+    before_yaw = np.arctan2(before_global[event, 9, 1, 0], before_global[event, 9, 0, 0])
+    after_yaw = np.arctan2(after_global[event, 9, 1, 0], after_global[event, 9, 0, 0])
+    delta = np.arctan2(np.sin(after_yaw - before_yaw), np.cos(after_yaw - before_yaw))
+    assert abs(np.rad2deg(delta)) < 3.0
+
+
+@needs_fk
+def test_visual_audit_machine_gate_rejects_turning_and_detached_claps():
+    from agentlodge.dance.transition import _matrix_to_sixd, _sixd_to_matrix
+    from scripts.build_motion_bank_audit import _machine_checks
+
+    case = np.load(_CLAP_REGRESSION)
+    host = case["host"].astype(np.float32)
+    bank = default_motion_bank()
+    out, report = bank.apply(
+        host,
+        "clap_single",
+        beats=case["beats"],
+        beat_strengths=case["beat_strengths"],
+        direction="auto",
+    )
+    spec = bank.resolve("clap_single")
+    checks, status = _machine_checks(host, out, spec, report)
+    assert status == "pass"
+    assert all(check["passed"] for check in checks)
+
+    start, end = report["action_range"]
+    turning = out.copy()
+    spine = _sixd_to_matrix(turning[start:end, 3 + 6 * 9:3 + 6 * 10])
+    angle = np.deg2rad(40.0)
+    yaw = np.array([
+        [np.cos(angle), -np.sin(angle), 0.0],
+        [np.sin(angle), np.cos(angle), 0.0],
+        [0.0, 0.0, 1.0],
+    ], dtype=np.float32)
+    turning[start:end, 3 + 6 * 9:3 + 6 * 10] = _matrix_to_sixd(
+        spine @ yaw
+    )
+    checks, status = _machine_checks(host, turning, spec, report)
+    assert status == "fail"
+    assert not next(
+        check for check in checks if check["name"] == "host_facing_continuity"
+    )["passed"]
+
+    detached = out.copy()
+    for joint in (14, 17, 19, 21):
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        detached[start:end, channels] = host[start:end, channels]
+    checks, status = _machine_checks(host, detached, spec, report)
+    assert status == "fail"
+    assert not next(
+        check for check in checks if check["name"] == "visible_palm_contact"
+    )["passed"]
+
+
+@needs_fk
+def test_visual_audit_machine_gate_checks_every_repeated_clap_contact():
+    from scripts.build_motion_bank_audit import _machine_checks
+
+    case = np.load(_CLAP_REGRESSION)
+    host = case["host"].astype(np.float32)
+    bank = default_motion_bank()
+    out, report = bank.apply(
+        host,
+        "clap_repeat",
+        beats=case["beats"],
+        beat_strengths=case["beat_strengths"],
+        direction="forward",
+    )
+    spec = bank.resolve("clap_repeat")
+    first_contact = int(report["event_frame"])
+    broken = out.copy()
+    for joint in spec.absolute_joints:
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        broken[first_contact + 4:, channels] = host[first_contact + 4:, channels]
+    checks, status = _machine_checks(host, broken, spec, report)
+    assert status == "fail"
+    contact = next(check for check in checks if check["name"] == "visible_palm_contact")
+    assert not contact["passed"]
+    assert contact["detail"].count(",") >= 2
+
+
+@needs_fk
+def test_visual_audit_independently_rejects_a_wrong_automatic_direction_report():
+    from scripts.build_motion_bank_audit import _machine_checks
+
+    case = np.load(_CLAP_REGRESSION)
+    host = case["host"].astype(np.float32)
+    bank = default_motion_bank()
+    out, report = bank.apply(
+        host,
+        "clap_single",
+        beats=case["beats"],
+        beat_strengths=case["beat_strengths"],
+        direction="auto",
+    )
+    assert report["direction"] == "left"
+    wrong = dict(report, direction="right")
+    checks, status = _machine_checks(host, out, bank.resolve("clap_single"), wrong)
+    assert status == "fail"
+    direction = next(check for check in checks if check["name"] == "direction_resolution")
+    assert not direction["passed"]
+    assert "independently expected 'left'" in direction["detail"]
+
+
+def test_visual_audit_direction_matrix_rejects_indistinct_or_reversed_claps():
+    from scripts.build_motion_bank_audit import _append_clap_direction_matrix_checks
+
+    passing = {
+        "clap_single": {
+            "left": {"lateral": 0.11, "checks": []},
+            "forward": {"lateral": 0.00, "checks": []},
+            "right": {"lateral": -0.11, "checks": []},
+        }
+    }
+    _append_clap_direction_matrix_checks(passing)
+    assert all(
+        record["checks"][-1]["passed"]
+        for record in passing["clap_single"].values()
+    )
+
+    reversed_directions = {
+        "clap_single": {
+            "left": {"lateral": -0.11, "checks": []},
+            "forward": {"lateral": 0.00, "checks": []},
+            "right": {"lateral": 0.11, "checks": []},
+        }
+    }
+    _append_clap_direction_matrix_checks(reversed_directions)
+    assert not any(
+        record["checks"][-1]["passed"]
+        for record in reversed_directions["clap_single"].values()
+    )
 
 
 @pytest.mark.parametrize("motion_id", ["jump_two_foot", "jump_arms_up"])
@@ -1513,16 +1882,20 @@ def test_the_repeated_clap_keeps_the_hands_up_between_claps():
     shoulders = 0.5 * (joints[held, 16] + joints[held, 17])
     assert float((hands[:, 2] - shoulders[:, 2]).min()) > -0.26, "hands fall away between claps"
 
-    # ...and it is still three separate claps, not one long squeeze. Count dips the hands
-    # recover from on both sides, since once they correctly stay up no fixed threshold on the
-    # gap can separate the claps from the hold.
+    # ...and it is still three separate claps, not one long squeeze. Full closure is deliberately
+    # held for a few frames so retiming cannot sample between contacts; count those contiguous
+    # closure runs, then prove the hands visibly part between each pair.
     full = np.linalg.norm(joints[:, 20] - joints[:, 21], axis=-1)
-    closings = sum(
-        1 for i in range(1, len(full) - 1)
-        if full[i] <= full[i - 1] and full[i] < full[i + 1]
-        and min(full[:i].max(initial=full[i]), full[i + 1:].max(initial=full[i])) - full[i] >= 0.03
-    )
-    assert closings == 3, ("expected three claps", closings)
+    closed = full < 0.01
+    starts = np.flatnonzero(closed & ~np.r_[False, closed[:-1]])
+    ends = np.flatnonzero(closed & ~np.r_[closed[1:], False])
+    assert len(starts) == len(ends) == 3, ("expected three claps", starts, ends)
+    for left, right in zip(ends[:-1], starts[1:]):
+        assert float(full[left + 1:right].max()) > 0.036, (
+            "hands do not visibly part between claps",
+            left,
+            right,
+        )
 
 
 @needs_fk

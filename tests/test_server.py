@@ -20,6 +20,8 @@ from agentlodge.editor.window_edit import MockWindowGenerator  # noqa: E402
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     import server.app as A
+    monkeypatch.delenv("AGENTLODGE_LIVE", raising=False)
+    monkeypatch.delenv("MAESTRO_REQUIRE_MOTION_AUDIT", raising=False)
     # point the server at a temp media/sessions tree with one synthetic song
     media = tmp_path / "media" / "sng"
     media.mkdir(parents=True)
@@ -37,6 +39,16 @@ def client(tmp_path, monkeypatch):
     return TestClient(A.app)
 
 
+def test_live_editor_enables_the_blocking_motion_audit(monkeypatch):
+    import server.app as A
+
+    monkeypatch.delenv("AGENTLODGE_LIVE", raising=False)
+    monkeypatch.delenv("MAESTRO_REQUIRE_MOTION_AUDIT", raising=False)
+    assert not A._motion_audit_required()
+    monkeypatch.setenv("AGENTLODGE_LIVE", "1")
+    assert A._motion_audit_required()
+
+
 def test_lists_songs_and_opens_session(client):
     songs = client.get("/api/songs").json()["songs"]
     assert any(s["sid"] == "sng" for s in songs)
@@ -47,7 +59,7 @@ def test_lists_songs_and_opens_session(client):
 
 def test_lists_named_motions_from_the_shared_manifest(client):
     data = client.get("/api/motions").json()
-    assert data["version"] == "1.1.0"
+    assert data["version"] == "1.1.1"
     assert len(data["motions"]) == 20
     clap = next(m for m in data["motions"] if m["id"] == "clap_single")
     assert clap["name"] == "Single clap"
@@ -142,7 +154,7 @@ def test_editor_review_actions_explain_the_user_flow():
     assert "20 supported common motions" in html
     assert "/api/motions" in js
     assert "clap to the right" in js
-    assert "insert a wave before the next move" in js
+    assert "insertion is unavailable until it has its own visual audit" in js
     assert "follows the dance flow" in js
 
     tour = js[js.index("const TOUR_STEPS"):js.index("let tourIdx")]

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 from pathlib import Path
+from urllib.parse import urlencode
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
@@ -335,6 +337,8 @@ def _build_review_pages(
     selected: list[int],
     output: Path,
     size: int,
+    audit_id: str,
+    motion_fingerprint: str,
     page_frames: int = 4,
 ) -> None:
     take = item["take"]
@@ -438,20 +442,54 @@ def _build_review_pages(
         page_name = f"{take}_review_{page_index:02d}.jpg"
         canvas.save(output / page_name, quality=95)
         page_names.append(page_name)
+    cache_query = html.escape(
+        urlencode({
+            "audit_id": str(audit_id),
+            "motion_fingerprint": str(motion_fingerprint),
+            "take_id": str(take),
+        }),
+        quote=True,
+    )
     page_images = "\n".join(
-        f'<img src="{page_name}" alt="{take} review page {index}">'
+        f'<img src="{page_name}?{cache_query}" alt="{take} review page {index}">'
         for index, page_name in enumerate(page_names, start=1)
     )
+    acknowledgment = json.dumps({
+        "type": "maestro-motion-audit-comparison-ready",
+        "auditId": str(audit_id),
+        "motionFingerprint": str(motion_fingerprint),
+        "takeId": str(take),
+    })
     (output / f"{take}_review.html").write_text(
         (
             "<!doctype html><meta charset=\"utf-8\">"
             f"<title>{take} synchronized review</title>"
             "<style>body{margin:0;background:#111;color:#eee;font-family:system-ui,sans-serif}"
-            "h1{padding:12px 18px;margin:0}img{display:block;width:100%;height:auto;margin:0 0 12px}"
+            "h1,p{padding:12px 18px;margin:0}img{display:block;width:100%;height:auto;margin:0 0 12px}"
             "</style>"
             f"<h1>{take}: synchronized front, side, upper-body, "
             "and edit-minus-source review</h1>"
+            "<p id=\"comparison-status\">Loading comparison evidence...</p>"
             f"{page_images}"
+            "<script>"
+            f"const acknowledgment={acknowledgment};"
+            "window.addEventListener('load',()=>{"
+            "const status=document.querySelector('#comparison-status');"
+            "const query=new URLSearchParams(window.location.search);"
+            "const queryMatches="
+            "query.get('audit_id')===acknowledgment.auditId&&"
+            "query.get('motion_fingerprint')===acknowledgment.motionFingerprint&&"
+            "query.get('take_id')===acknowledgment.takeId;"
+            "const imagesLoaded=[...document.images].every(image=>"
+            "image.complete&&image.naturalWidth>0);"
+            "if(!queryMatches){status.textContent='Comparison identity mismatch; review not recorded.';return;}"
+            "if(!imagesLoaded){status.textContent='Comparison evidence failed to load; review not recorded.';return;}"
+            "if(!window.opener){status.textContent='Parent audit page is unavailable; review not recorded.';return;}"
+            "const targetOrigin=window.location.origin==='null'?'*':window.location.origin;"
+            "window.opener.postMessage(acknowledgment,targetOrigin);"
+            "status.textContent='Comparison evidence loaded; acknowledgment sent to the audit page.';"
+            "});"
+            "</script>"
         ),
         encoding="utf-8",
     )
@@ -504,6 +542,8 @@ def build_sheets(
             selected=selected,
             output=output,
             size=max(96, int(size)),
+            audit_id=str(review["audit_id"]),
+            motion_fingerprint=str(review["motion_fingerprint"]),
         )
     return output
 

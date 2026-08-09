@@ -163,6 +163,11 @@ def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
                       anchor: str | None = None, mirror: bool = False,
                       direction: str | None = None,
                       intensity: float | None = None, repeats: int = 1):
+    if str(mode).lower() != "replace":
+        raise ValueError(
+            "named-motion insert mode is unavailable until it has its own passing visual audit; "
+            "use replace mode"
+        )
     bank = default_motion_bank()
     spec = bank.resolve(motion_id)
     dropped = []
@@ -239,7 +244,7 @@ TOOLS: dict[str, ToolSpec] = {
         "retrieve a specific common action from the curated named-motion bank, then fit it to this "
         "window while preserving the song duration. Use for clap, jump, wave, point, punch, steps, "
         "turns, body roll, crouch, rise, and other listed named actions",
-        'params: {"motion_id": "<bank id>", "mode": "replace"|"insert", '
+        'params: {"motion_id": "<bank id>", "mode": "replace", '
         '"anchor": optional "early"|"center"|"late"|"beat" (omit for the motion default), "mirror": bool, '
         '"direction": optional "auto"|"forward"|"left"|"right", '
         '"intensity": optional 0..1 (omit for the slightly exaggerated default), "repeats": 1..8}'),
@@ -712,6 +717,13 @@ def _apply_motion_defaults(plan: AgentPlan, instruction: str) -> AgentPlan:
         except (TypeError, ValueError):
             continue
         step.params = dict(step.params)
+        mode = str(step.params.get("mode", "replace")).lower()
+        if mode != "replace":
+            raise ValueError(
+                "named-motion insert mode is unavailable until it has its own passing visual audit; "
+                "use replace mode"
+            )
+        step.params["mode"] = "replace"
         step.params["anchor"] = requested or spec.default_anchor
         step.params["intensity"] = (
             DEFAULT_MOTION_INTENSITY
@@ -726,6 +738,15 @@ def _apply_motion_defaults(plan: AgentPlan, instruction: str) -> AgentPlan:
     return plan
 
 
+def _named_motion_insert_requested(instruction: str) -> bool:
+    if default_motion_bank().match_instruction(instruction) is None:
+        return False
+    text = f" {normalize_name(instruction)} "
+    return any(phrase in text for phrase in (
+        " insert ", " before ", " after ", " between ", " ahead of ", " following ",
+    ))
+
+
 def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
     """Offline planner: compose one tool per requested metric (multi-goal aware).
 
@@ -736,9 +757,11 @@ def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
     bank_spec = default_motion_bank().match_instruction(instruction)
     if bank_spec is not None:
         text = f" {normalize_name(instruction)} "
-        explicit_insert = any(phrase in text for phrase in (
-            " insert ", " before ", " after ", " between ", " ahead of ", " following ",
-        ))
+        if _named_motion_insert_requested(instruction):
+            raise ValueError(
+                "named-motion insert mode is unavailable until it has its own passing visual audit; "
+                "use replace wording such as 'add a wave here'"
+            )
         anchor = _requested_motion_anchor(instruction) or bank_spec.default_anchor
         repeats = 3 if any(x in text for x in (" three times ", " thrice ")) else (
             2 if any(x in text for x in (" twice ", " two times ")) else 1
@@ -747,7 +770,7 @@ def _keyword_plan(instruction: str, feedback: dict | None = None) -> AgentPlan:
         intensity = _requested_motion_intensity(instruction)
         if intensity is None:
             intensity = DEFAULT_MOTION_INTENSITY
-        mode = "insert" if explicit_insert else "replace"
+        mode = "replace"
         params = {
             "motion_id": bank_spec.id, "mode": mode, "anchor": anchor,
             "mirror": False, "direction": direction or ("auto" if bank_spec.directions else None),
@@ -853,10 +876,10 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         f"foot_contact(0-1, higher=less sliding): {ctx_metrics.get('foot')}.\n\n"
         "Compose 1-3 of these tools, in order, to satisfy the request:\n" + tool_lines + "\n\n"
         "Named-motion vocabulary for motion_bank:\n" + bank_lines + "\n"
-        "For a recognized named action, use motion_bank instead of regenerate. Use mode=replace for "
-        "ordinary requests such as 'add a clap here'. Use mode=insert only for explicit relational "
-        "wording such as insert/before/after/between. Insert still preserves the selected window and "
-        "song duration. Never invent a motion_id outside this vocabulary.\n"
+        "For a recognized named action, use motion_bank instead of regenerate and use mode=replace. "
+        "Named-motion insert mode is unavailable until it has a separate passing visual audit; never "
+        "return mode=insert and never silently reinterpret insert/before/after/between as replace. "
+        "Never invent a motion_id outside this vocabulary.\n"
         f"Only these accept repeats>1: {repeatable}. Only these accept mirror=true: {mirrorable}. "
         "Asking for either outside those lists is dropped and the action simply plays once, so "
         "prefer a motion that supports repetition when the user asks for something twice.\n"
@@ -867,7 +890,7 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
         "over the low-level mirror flag.\n"
         f"These named actions are beat-hit motions and default to anchor=beat: {beat_default}. "
         "Their clap, impact, accent, or arrival pose must land on the strongest feasible musical beat "
-        "unless the user explicitly asks for early, late, before, after, start, center, or end. "
+        "unless the user explicitly asks for start, center, or end placement. "
         "For every named action, omit anchor when the user gives no placement; MAESTRO applies the "
         "motion's manifest default deterministically. Named motions are slightly exaggerated by "
         f"default (intensity {DEFAULT_MOTION_INTENSITY:.2f}); omit intensity unless the user asks "
@@ -992,13 +1015,15 @@ def plan_edit(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
     must fix. ``feedback`` (from a failed prior attempt) drives Self-Refine: the LLM is told which
     goals it missed and by how much; the keyword planner escalates magnitude.
     """
+    if _named_motion_insert_requested(instruction):
+        raise ValueError(
+            "named-motion insert mode is unavailable until it has its own passing visual audit; "
+            "use replace wording such as 'add a wave here'"
+        )
     if api_key:
         try:
             p = _llm_plan(instruction, ctx_metrics, a_sec, b_sec, api_key,
                           feedback=feedback, goals=goals)
-            p = _apply_motion_defaults(p, instruction)
-            p.planner, p.planner_note = "llm", "AI agent (LLM reasoning)"
-            return p
         except Exception as exc:  # noqa: BLE001 - robust offline fallback
             logger.warning("agent plan via LLM failed (%s); using keyword plan", exc)
             p = _keyword_plan(instruction, feedback=feedback)
@@ -1006,6 +1031,9 @@ def plan_edit(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
             p.planner = "keyword_fallback"
             p.planner_note = f"offline keyword planner (LLM call failed: {str(exc)[:120]})"
             return p
+        p = _apply_motion_defaults(p, instruction)
+        p.planner, p.planner_note = "llm", "AI agent (LLM reasoning)"
+        return p
     p = _apply_motion_defaults(_keyword_plan(instruction, feedback=feedback), instruction)
     p.planner, p.planner_note = "keyword", "offline keyword planner (no API key configured)"
     return p

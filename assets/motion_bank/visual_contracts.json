@@ -1,14 +1,15 @@
 {
-  "version": 2,
-  "acceptance_rule": "At normal speed, the motion added to the unlabeled edited render must be recognizable before its answer is revealed. A paired source render may distinguish host choreography from the edit, but numeric metrics cannot override a failed recognition or phase review.",
+  "version": 3,
+  "acceptance_rule": "At normal speed, both the motion and its observed direction must be recognizable in the unlabeled edited render before its answer is revealed. Every automatic and explicit direction variant must compare the exact source and edit, review and pass all required phases, and include a written evidence note. Numeric metrics cannot override a failed recognition or phase review, and any failure blocks the production audit receipt.",
   "motions": {
     "clap_single": {
       "recognizable_as": "one chest-level clap directed with the surrounding dance or to the requested side",
       "required_phases": [
         "hands begin apart",
         "both hands approach each other",
-        "one palm-to-palm contact occurs at chest level",
-        "the upper body and clap plane face forward, left, or right as requested",
+        "one visibly closed palm-to-palm contact occurs at chest level with relaxed diagonal fingers",
+        "the contact point moves forward, left, or right as requested without turning the torso to face the camera",
+        "the source root, torso, legs, and dance rhythm continue through the arm gesture",
         "hands separate into the host dance"
       ]
     },
@@ -16,8 +17,9 @@
       "recognizable_as": "three chest-level claps directed with the surrounding dance or to the requested side",
       "required_phases": [
         "hands rise to a chest-level guard",
-        "three distinct contacts occur with visible recoil",
-        "the upper body sustains the requested forward, left, or right direction",
+        "three visibly closed contacts occur with relaxed diagonal fingers and clear recoil",
+        "the contact point stays on the requested forward, left, or right side without resetting body facing",
+        "the source root, torso, legs, and dance rhythm continue throughout",
         "hands stay near the guard between contacts",
         "arms return without flapping to the hips"
       ]
@@ -26,8 +28,9 @@
       "recognizable_as": "one directional overhead clap",
       "required_phases": [
         "both arms rise above the head",
-        "palms meet above the head without intersecting it",
-        "the upper body turns toward the requested or inferred direction",
+        "palms visibly meet above the head without intersecting it",
+        "the overhead contact shifts toward the requested or inferred direction without a whole-body turn",
+        "the source root, torso, legs, and dance rhythm continue through the arm gesture",
         "hands separate",
         "arms lower into the host dance"
       ]
