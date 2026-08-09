@@ -1374,6 +1374,19 @@ def test_visual_audit_machine_gate_rejects_turning_and_detached_claps():
     assert status == "pass"
     assert all(check["passed"] for check in checks)
 
+    round_tripped = out.copy()
+    round_tripped[0, 3] += np.float32(1e-7)
+    checks, status = _machine_checks(host, round_tripped, spec, report)
+    assert status == "pass"
+
+    unowned_drift = out.copy()
+    unowned_drift[0, 3] += np.float32(1e-4)
+    checks, status = _machine_checks(host, unowned_drift, spec, report)
+    assert status == "fail"
+    assert not next(
+        check for check in checks if check["name"] == "declared_channel_ownership"
+    )["passed"]
+
     start, end = report["action_range"]
     turning = out.copy()
     spine = _sixd_to_matrix(turning[start:end, 3 + 6 * 9:3 + 6 * 10])

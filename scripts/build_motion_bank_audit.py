@@ -219,21 +219,31 @@ def _machine_checks(
     ):
         owned = {_MIRROR_JOINTS[joint] for joint in owned}
     unchanged = True
+    max_unowned_drift = 0.0
     for joint in set(range(22)) - owned:
         channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
-        unchanged = unchanged and np.array_equal(edited[:, channels], host[:, channels])
+        drift = float(np.max(np.abs(edited[:, channels] - host[:, channels])))
+        max_unowned_drift = max(max_unowned_drift, drift)
+        unchanged = unchanged and drift <= 5e-7
     owned_axes = set(spec.translation_axes)
     if owned_axes.intersection({0, 1}):
         # Authored horizontal travel is dancer-local and rotates into both world-plane axes.
         owned_axes.update({0, 1})
     for axis in set(range(3)) - owned_axes:
-        unchanged = unchanged and np.array_equal(edited[:, axis], host[:, axis])
+        drift = float(np.max(np.abs(edited[:, axis] - host[:, axis])))
+        max_unowned_drift = max(max_unowned_drift, drift)
+        unchanged = unchanged and drift <= 5e-7
     if not spec.replace_contacts:
-        unchanged = unchanged and np.array_equal(edited[:, 135:139], host[:, 135:139])
+        drift = float(np.max(np.abs(edited[:, 135:139] - host[:, 135:139])))
+        max_unowned_drift = max(max_unowned_drift, drift)
+        unchanged = unchanged and drift <= 5e-7
     checks.append({
         "name": "declared_channel_ownership",
         "passed": bool(unchanged),
-        "detail": "all unowned pose, root, and contact channels remain source-identical",
+        "detail": (
+            "all unowned pose, root, and contact channels remain source-identical "
+            f"within float32 round-trip tolerance; max drift {max_unowned_drift:.2e}"
+        ),
     })
 
     if spec.directions:
