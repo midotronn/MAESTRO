@@ -9,6 +9,7 @@ import pytest
 from agentlodge.editor import motion_audit
 from agentlodge.editor.motion_audit import (
     REVIEW_PROTOCOL_VERSION,
+    REVIEWER_ATTESTATION_STATEMENT,
     motion_fingerprint,
     record_audit_render_receipt,
     required_audit_cases,
@@ -23,13 +24,26 @@ def _passing_receipt() -> dict:
     bank = MotionBank()
     phases = required_phases()
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "pass",
         "motion_fingerprint": motion_fingerprint(),
         "bank_version": bank.version,
+        "audit_id": "test-audit",
         "review_protocol_version": REVIEW_PROTOCOL_VERSION,
         "normal_speed_reviewed": True,
         "source_edit_compared": True,
+        "reviewer_attestation": {
+            "audit_id": "test-audit",
+            "motion_fingerprint": motion_fingerprint(),
+            "reviewer": "Independent Reviewer",
+            "signed_at": "2026-03-26T12:00:04+00:00",
+            "independent_visual_review": True,
+            "answers_hidden_until_lock": True,
+            "normal_speed_reviewed": True,
+            "source_edit_compared": True,
+            "statement": REVIEWER_ATTESTATION_STATEMENT,
+        },
+        "verification_nonce": "0123456789abcdef0123456789abcdef",
         "cases": {
             case_id: {
                 "blind_recognition": "pass",
@@ -117,6 +131,24 @@ def test_required_matrix_includes_automatic_and_explicit_direction_variants():
             lambda receipt: next(iter(receipt["cases"].values())).update(evidence=""),
             "evidence note",
         ),
+        (
+            lambda receipt: receipt.pop("reviewer_attestation"),
+            "independent reviewer attestation",
+        ),
+        (
+            lambda receipt: receipt["reviewer_attestation"].update(reviewer=None),
+            "no named reviewer",
+        ),
+        (
+            lambda receipt: receipt["reviewer_attestation"].update(
+                independent_visual_review=1
+            ),
+            "missing, stale, or incomplete",
+        ),
+        (
+            lambda receipt: receipt.update(verification_nonce=""),
+            "verification nonce",
+        ),
     ],
 )
 def test_receipt_cannot_bypass_required_visual_evidence(tmp_path, mutation, match):
@@ -172,6 +204,9 @@ def test_pod_deployment_validates_before_replacing_exact_motion_bank_tree():
     ).read_text(encoding="utf-8")
 
     assert "validate_audit_receipt()" in script
+    assert "LOCAL_AUDIT_ATTESTATION_OK" in script
+    assert "origin/feature/named-motion-bank" in script
+    assert "assert subprocess" not in script
     assert "assets/motion_bank requirements.txt" in script
     assert 'test -f "$stage/assets/motion_bank/audit_receipt.json"' in script
     staged_validation = script.index("MOTION_AUDIT_RECEIPT_OK")
@@ -257,6 +292,18 @@ def _complete_audit_export(tmp_path):
         "normalized_facing": True,
         "normal_speed_reviewed": True,
         "source_edit_compared": True,
+        "exported_at": "2026-03-26T12:00:04+00:00",
+        "reviewer_attestation": {
+            "audit_id": "test-audit",
+            "motion_fingerprint": fingerprint,
+            "reviewer": "Independent Reviewer",
+            "signed_at": "2026-03-26T12:00:04+00:00",
+            "independent_visual_review": True,
+            "answers_hidden_until_lock": True,
+            "normal_speed_reviewed": True,
+            "source_edit_compared": True,
+            "statement": REVIEWER_ATTESTATION_STATEMENT,
+        },
         "takes": decisions,
     }
     (audit_dir / "review.json").write_text(json.dumps(review), encoding="utf-8")
@@ -307,6 +354,51 @@ def test_finalizer_rejects_skipped_visual_phases_even_when_marked_pass(tmp_path)
     first["verified_phases"] = first["verified_phases"][:-1]
     result_path.write_text(json.dumps(result), encoding="utf-8")
     with pytest.raises(ValueError, match="every required visual phase"):
+        finalize(audit_dir, result_path, tmp_path / "receipt.json")
+
+
+@pytest.mark.parametrize(
+    "mutation,match",
+    [
+        (
+            lambda result: result.pop("reviewer_attestation"),
+            "no reviewer attestation",
+        ),
+        (
+            lambda result: result["reviewer_attestation"].update(
+                independent_visual_review=False
+            ),
+            "missing, stale, or incomplete",
+        ),
+        (
+            lambda result: result["reviewer_attestation"].update(reviewer=""),
+            "named independent reviewer",
+        ),
+        (
+            lambda result: result["reviewer_attestation"].update(reviewer=None),
+            "named independent reviewer",
+        ),
+        (
+            lambda result: result["reviewer_attestation"].update(
+                answers_hidden_until_lock=1
+            ),
+            "missing, stale, or incomplete",
+        ),
+        (
+            lambda result: result["reviewer_attestation"].update(
+                signed_at="2026-03-26T11:59:59+00:00"
+            ),
+            "attestation predates",
+        ),
+    ],
+)
+def test_finalizer_rejects_missing_or_forged_reviewer_attestation(
+    tmp_path, mutation, match
+):
+    audit_dir, result_path, result = _complete_audit_export(tmp_path)
+    mutation(result)
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    with pytest.raises(ValueError, match=match):
         finalize(audit_dir, result_path, tmp_path / "receipt.json")
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import secrets
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 from agentlodge.editor.motion_audit import (  # noqa: E402
     DEFAULT_RECEIPT,
     REVIEW_PROTOCOL_VERSION,
+    REVIEWER_ATTESTATION_STATEMENT,
     motion_fingerprint,
     required_audit_cases,
     validate_audit_render_receipt,
@@ -49,6 +51,7 @@ def _validate_review_proof(
     *,
     audit_id: str,
     motion_fingerprint_value: str,
+    attested_at: datetime,
 ) -> None:
     take_id = str(take["take"])
     playback = decision.get("normal_speed_playback")
@@ -137,6 +140,53 @@ def _validate_review_proof(
         raise ValueError(
             f"{take_id}: playback and synchronized comparison must occur before locking"
         )
+    if attested_at < locked:
+        raise ValueError(f"{take_id}: reviewer attestation predates the locked blind guess")
+
+
+def _validate_reviewer_attestation(
+    result: dict,
+    *,
+    audit_id: str,
+    motion_fingerprint_value: str,
+) -> tuple[dict, datetime]:
+    attestation = result.get("reviewer_attestation")
+    if not isinstance(attestation, dict):
+        raise ValueError("review result has no reviewer attestation")
+    expected = {
+        "audit_id": audit_id,
+        "motion_fingerprint": motion_fingerprint_value,
+        "statement": REVIEWER_ATTESTATION_STATEMENT,
+    }
+    if any(attestation.get(key) != value for key, value in expected.items()):
+        raise ValueError("reviewer attestation is missing, stale, or incomplete")
+    for key in (
+        "independent_visual_review",
+        "answers_hidden_until_lock",
+        "normal_speed_reviewed",
+        "source_edit_compared",
+    ):
+        if attestation.get(key) is not True:
+            raise ValueError("reviewer attestation is missing, stale, or incomplete")
+    reviewer = attestation.get("reviewer")
+    if not isinstance(reviewer, str) or not reviewer.strip():
+        raise ValueError("reviewer attestation needs a named independent reviewer")
+    reviewer = reviewer.strip()
+    signed_at = _timestamp(
+        attestation.get("signed_at"),
+        label="reviewer attestation timestamp",
+    )
+    return {
+        "audit_id": audit_id,
+        "motion_fingerprint": motion_fingerprint_value,
+        "reviewer": reviewer,
+        "signed_at": signed_at.isoformat(),
+        "independent_visual_review": True,
+        "answers_hidden_until_lock": True,
+        "normal_speed_reviewed": True,
+        "source_edit_compared": True,
+        "statement": REVIEWER_ATTESTATION_STATEMENT,
+    }, signed_at
 
 
 def finalize(audit_dir: Path, review_result: Path, output: Path) -> dict:
@@ -171,6 +221,11 @@ def finalize(audit_dir: Path, review_result: Path, output: Path) -> dict:
         raise ValueError("reviewer did not confirm normal-speed playback")
     if result.get("source_edit_compared") is not True:
         raise ValueError("reviewer did not confirm source-versus-edit comparison")
+    attestation, attested_at = _validate_reviewer_attestation(
+        result,
+        audit_id=str(review["audit_id"]),
+        motion_fingerprint_value=fingerprint,
+    )
 
     decisions = result.get("takes")
     if not isinstance(decisions, dict):
@@ -193,6 +248,7 @@ def finalize(audit_dir: Path, review_result: Path, output: Path) -> dict:
             decision,
             audit_id=str(review["audit_id"]),
             motion_fingerprint_value=fingerprint,
+            attested_at=attested_at,
         )
         accepted = {
             normalize_name(value)
@@ -241,7 +297,7 @@ def finalize(audit_dir: Path, review_result: Path, output: Path) -> dict:
         raise ValueError("audit does not cover the complete required motion-variant matrix")
 
     receipt = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "pass",
         "motion_fingerprint": fingerprint,
         "bank_version": bank.version,
@@ -249,6 +305,8 @@ def finalize(audit_dir: Path, review_result: Path, output: Path) -> dict:
         "review_protocol_version": REVIEW_PROTOCOL_VERSION,
         "normal_speed_reviewed": True,
         "source_edit_compared": True,
+        "reviewer_attestation": attestation,
+        "verification_nonce": secrets.token_hex(16),
         "reviewed_at": datetime.now(timezone.utc).isoformat(),
         "cases": cases,
     }

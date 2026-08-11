@@ -565,7 +565,7 @@ The result was a host pose floating upward, not a jump. Jumps now take absolute 
 legs, use a three-frame lower-body phase blend so the load and landing survive beat retiming
 without snapping the arms, and validate a ground-load-air-apex-land sequence with explicit knee
 flexion. The later live review showed that retaining the phases was not enough when all of them were
-compressed into one beat. Both jumps now use two beats with a 24-frame floor, preserving the same
+compressed into one beat. Both jumps now use two beats with a 36-frame floor, preserving the same
 strongest-feasible-beat apex while making the full cycle readable at normal dance speed.
 
 The first complete blind pass found four more defects that the numeric contracts had accepted:
@@ -580,8 +580,9 @@ The first complete blind pass found four more defects that the numeric contracts
   crouch could sink below the floor. Vertical deltas now layer onto each host frame and use the
   lower-body phase envelope. `rise_reach` also begins from the shared stance, visibly loads, then
   rises with both feet planted.
-- The corrected chest isolation was still subtle at full-body scale. Its chest drive and supporting
-  shoulder and knee accents were increased while the head-isolation bound remained intact.
+- The corrected chest isolation was still subtle at full-body scale. Its chest drive and shoulder
+  opening were increased while knee motion was reduced so the accent could not borrow a squat or
+  jump silhouette; the head-isolation bound remained intact.
 
 A focused blind re-audit then exposed three more integration defects:
 
@@ -610,6 +611,40 @@ second weight transfer. Their event poses are intentionally opposite: the side-s
 while the touch feet are close. Regression tests pin those event gaps, the trailing-foot clearance,
 the paused root at the touch, planted-foot sliding, and the same distinction after composition on
 real LODGE choreography.
+
+The protocol-6 full-bank audit at commit `0eb053a`, seed `48217`, completed all 43 synchronized
+playback and comparison proofs but scored 35/43 in the locked blind review. It correctly refused to
+write a production receipt. The failures were all three `side_step` directions, both jumps,
+`chest_pop`, `rise_reach`, and the dancer-right overhead clap. This exposed a second class of audit
+gap: valid contacts and displacement were not sufficient when normal-speed silhouettes remained
+ambiguous.
+
+The remediation keeps each motion's musical recommendation while adding a minimum readable frame
+floor. Beat fitting advances by whole beats until the floor is met: overhead clap uses 24 frames,
+both jumps and `rise_reach` use 36, and `chest_pop` uses 18. On the audit's 15-frame beat grid this
+produces 30-frame overhead and chest actions and 45-frame jump and rise actions. The side step now
+travels farther into a wider stance and carries a same-side arm and head cue that mirrors with the
+requested dancer-relative direction. `jump_arms_up` uses a wide airborne V rather than converging
+hands. `rise_reach` holds a deeper planted load and reaches upward with one hand clearly leading.
+The chest pop keeps the pelvis quiet while the ribcage drives forward and the head remains level.
+Its overlay no longer owns either knee, so an asymmetric source phrase such as a raised dancer-right
+knee remains intact instead of being flattened into a symmetric stance.
+
+The overhead clap also received a composition correction rather than another larger target offset.
+Its arm pose uses a 14-frame full-phase blend, preserving a visible approach, exact contact, and
+recoil. Relative rotations are temporally unwrapped before fractional blending so a host-relative
+rotation crossing 180 degrees cannot flip a wrist between adjacent frames. The release builder now
+blocks unreadable action duration, reversed side-step root/arm cues, compressed jump phases, a
+closed-arm jump silhouette, head-led chest motion, airborne rise contacts, and overhead claps
+without separation or smooth recoil. These machine gates can reject a known failure earlier, but
+the fresh 43-case blind review remains the authority for release.
+
+Review protocol 7 also makes that authority explicit. A receipt now requires a named independent
+reviewer attestation bound to the audit ID and motion fingerprint, confirmation that answers stayed
+hidden until every guess was locked, and a fresh verification nonce. Pod deployment additionally
+refuses a receipt that is not committed or whose exact local commit has not been pushed to
+`origin/feature/named-motion-bank`; a locally manufactured or stale receipt therefore cannot be used
+as a deployment waiver.
 
 ## Adding a motion
 

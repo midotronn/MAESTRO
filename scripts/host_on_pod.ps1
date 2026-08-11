@@ -58,10 +58,12 @@ $localPython = Join-Path $Repo ".venv\Scripts\python.exe"
 if (-not (Test-Path $localPython)) { $localPython = "python" }
 Push-Location $Repo
 try {
-  & $localPython -c "from agentlodge.editor.motion_audit import validate_audit_receipt; validate_audit_receipt()"
-  if ($LASTEXITCODE -ne 0) { throw "motion audit receipt is absent, stale, invalid, or not passing" }
+  $receiptValidation = & $localPython -c "import subprocess,sys; from agentlodge.editor.motion_audit import validate_audit_receipt; validate_audit_receipt(); path='assets/motion_bank/audit_receipt.json'; checks=[(subprocess.run(['git','ls-files','--error-unmatch',path],capture_output=True).returncode == 0,'receipt must be committed'),(subprocess.run(['git','diff','--quiet','HEAD','--',path]).returncode == 0,'receipt has uncommitted changes'),(subprocess.run(['git','merge-base','--is-ancestor','HEAD','origin/feature/named-motion-bank']).returncode == 0,'exact audited commit is not pushed')]; failures=[message for passed,message in checks if not passed]; failures and sys.exit('; '.join(failures)); print('LOCAL_AUDIT_ATTESTATION_OK')"
+  if ($LASTEXITCODE -ne 0 -or -not (($receiptValidation -join "`n") -match "LOCAL_AUDIT_ATTESTATION_OK")) {
+    throw "motion audit receipt is absent, stale, uncommitted, unpushed, unattested, or not passing"
+  }
 } finally { Pop-Location }
-Write-Host "    passing receipt validated locally." -ForegroundColor Green
+Write-Host "    passing receipt, independent attestation, and pushed commit validated locally." -ForegroundColor Green
 
 Write-Host "2/6  Packing code + exact motion-bank assets..." -ForegroundColor Cyan
 $tar = Join-Path $Repo ".maestro_sync.tgz"

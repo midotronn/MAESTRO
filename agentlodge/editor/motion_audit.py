@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
 
 from agentlodge.editor.motion_bank import MotionBank, MotionSpec
@@ -12,7 +13,11 @@ from agentlodge.editor.motion_bank import MotionBank, MotionSpec
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RECEIPT = ROOT / "assets" / "motion_bank" / "audit_receipt.json"
 RENDER_RECEIPT_NAME = "render_receipt.json"
-REVIEW_PROTOCOL_VERSION = 6
+REVIEW_PROTOCOL_VERSION = 7
+REVIEWER_ATTESTATION_STATEMENT = (
+    "I independently reviewed every source/edit pair at normal speed with answers hidden "
+    "until all guesses were locked, and I did not waive any failed or ambiguous case."
+)
 _TEXT_SUFFIXES = {".json", ".py", ".sh"}
 _AUDITED_FILES = (
     "agentlodge/dance/format.py",
@@ -233,7 +238,7 @@ def validate_audit_receipt(
     if not receipt_path.is_file():
         raise RuntimeError(f"motion audit receipt is missing: {receipt_path}")
     payload = json.loads(receipt_path.read_text(encoding="utf-8"))
-    if int(payload.get("schema_version", 0)) != 1:
+    if int(payload.get("schema_version", 0)) != 2:
         raise RuntimeError("motion audit receipt has an unsupported schema")
     if payload.get("status") != "pass":
         raise RuntimeError("motion audit receipt is not passing")
@@ -248,6 +253,38 @@ def validate_audit_receipt(
         raise RuntimeError("motion audit did not compare source and edit")
     if int(payload.get("review_protocol_version", 0)) < REVIEW_PROTOCOL_VERSION:
         raise RuntimeError("motion audit receipt predates the blocking review protocol")
+    attestation = payload.get("reviewer_attestation")
+    if not isinstance(attestation, dict):
+        raise RuntimeError("motion audit receipt has no independent reviewer attestation")
+    expected_attestation = {
+        "audit_id": payload.get("audit_id"),
+        "motion_fingerprint": payload.get("motion_fingerprint"),
+        "statement": REVIEWER_ATTESTATION_STATEMENT,
+    }
+    if any(attestation.get(key) != value for key, value in expected_attestation.items()):
+        raise RuntimeError("motion audit reviewer attestation is missing, stale, or incomplete")
+    for key in (
+        "independent_visual_review",
+        "answers_hidden_until_lock",
+        "normal_speed_reviewed",
+        "source_edit_compared",
+    ):
+        if attestation.get(key) is not True:
+            raise RuntimeError("motion audit reviewer attestation is missing, stale, or incomplete")
+    reviewer = attestation.get("reviewer")
+    if not isinstance(reviewer, str) or not reviewer.strip():
+        raise RuntimeError("motion audit reviewer attestation has no named reviewer")
+    try:
+        signed_at = datetime.fromisoformat(
+            str(attestation.get("signed_at", "")).replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise RuntimeError("motion audit reviewer attestation timestamp is invalid") from exc
+    if signed_at.tzinfo is None:
+        raise RuntimeError("motion audit reviewer attestation timestamp has no timezone")
+    nonce = str(payload.get("verification_nonce", ""))
+    if len(nonce) != 32 or any(character not in "0123456789abcdef" for character in nonce):
+        raise RuntimeError("motion audit receipt has no valid verification nonce")
 
     cases = payload.get("cases")
     if not isinstance(cases, dict):

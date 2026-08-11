@@ -23,9 +23,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from agentlodge.dance.format import to_editor139  # noqa: E402
-from agentlodge.dance.transition import _sixd_to_matrix  # noqa: E402
+from agentlodge.dance.transition import (  # noqa: E402
+    _matrix_to_axis_angle,
+    _sixd_to_matrix,
+)
 from agentlodge.editor.motion_audit import (  # noqa: E402
     REVIEW_PROTOCOL_VERSION,
+    REVIEWER_ATTESTATION_STATEMENT,
     audit_case_id,
     audit_variants,
     motion_fingerprint,
@@ -202,6 +206,27 @@ def _declared_clap_contacts(spec, report: dict, gaps: np.ndarray) -> tuple[int, 
     return tuple(contacts)
 
 
+def _dancer_axes(
+    motion: np.ndarray,
+    joints: np.ndarray,
+    frame: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return dancer-local left and forward axes in the world horizontal plane."""
+    frame = int(np.clip(frame, 0, len(motion) - 1))
+    toe = (joints[frame, 10] - joints[frame, 7]) + (
+        joints[frame, 11] - joints[frame, 8]
+    )
+    forward = np.asarray(toe[:2], dtype=np.float32)
+    norm = float(np.linalg.norm(forward))
+    if norm < 1e-6:
+        yaw = float(_root_yaw_series(motion[frame:frame + 1])[0])
+        forward = np.array([np.sin(yaw), -np.cos(yaw)], dtype=np.float32)
+    else:
+        forward /= norm
+    left = np.array([-forward[1], forward[0]], dtype=np.float32)
+    return left, forward
+
+
 def _machine_checks(
     host: np.ndarray,
     edited: np.ndarray,
@@ -284,6 +309,194 @@ def _machine_checks(
             "detail": (
                 f"requested {requested_direction!r}, independently expected {expected!r}, "
                 f"resolved {resolved_direction!r}"
+            ),
+        })
+
+    if spec.minimum_frames > 1:
+        action_frames = int(report["action_range"][1] - report["action_range"][0])
+        checks.append({
+            "name": "readable_action_duration",
+            "passed": action_frames >= spec.minimum_frames,
+            "detail": (
+                f"{action_frames} action frames; minimum readable duration "
+                f"{spec.minimum_frames} frames"
+            ),
+        })
+
+    if spec.id == "side_step":
+        start, end = map(int, report["action_range"])
+        event = int(report["event_frame"])
+        joints = compute_poses(edited)["fk_joints"]
+        left_axis, _forward_axis = _dancer_axes(edited, joints, start)
+        direction_sign = 1.0 if resolved_direction == "left" else -1.0
+        root_lateral = (edited[start:end, :2] - edited[start, :2]) @ left_axis
+        signed_root = float(np.max(direction_sign * root_lateral))
+        lead_wrist = 20 if direction_sign > 0.0 else 21
+        trail_wrist = 21 if direction_sign > 0.0 else 20
+        lead_lateral = direction_sign * float(
+            (joints[event, lead_wrist, :2] - joints[event, 9, :2]) @ left_axis
+        )
+        trail_lateral = direction_sign * float(
+            (joints[event, trail_wrist, :2] - joints[event, 9, :2]) @ left_axis
+        )
+        stance_width = abs(float(
+            (joints[event, 7, :2] - joints[event, 8, :2]) @ left_axis
+        ))
+        direction_passed = (
+            resolved_direction in {"left", "right"}
+            and signed_root > 0.24
+            and lead_lateral > 0.45
+            and lead_lateral - trail_lateral > 0.35
+            and stance_width > 0.40
+        )
+        checks.append({
+            "name": "side_step_direction_signature",
+            "passed": bool(direction_passed),
+            "detail": (
+                f"{resolved_direction} signed root travel {signed_root:.4f} m, "
+                f"lead/trailing hand offsets {lead_lateral:.4f}/{trail_lateral:.4f} m, "
+                f"stance width {stance_width:.4f} m"
+            ),
+        })
+
+    if spec.id in {"jump_two_foot", "jump_arms_up"}:
+        start, end = map(int, report["action_range"])
+        event = int(report["event_frame"])
+        joints = compute_poses(edited)["fk_joints"]
+        host_joints = compute_poses(host)["fk_joints"]
+        grounded = np.asarray(edited[start:end, 135:139]).sum(axis=1) > 0.5
+        airborne = np.flatnonzero(~grounded)
+        if airborne.size:
+            takeoff = int(airborne[0])
+            landing = int(airborne[-1])
+            air_frames = int(airborne.size)
+        else:
+            takeoff = landing = air_frames = 0
+        event_lift = float(
+            np.min(joints[event, (7, 8, 10, 11), 2])
+            - np.min(host_joints[event, (7, 8, 10, 11), 2])
+        )
+        phase_passed = (
+            airborne.size > 0
+            and takeoff >= 8
+            and end - start - 1 - landing >= 8
+            and air_frames >= 12
+            and event_lift > 0.18
+        )
+        checks.append({
+            "name": "readable_jump_phases",
+            "passed": bool(phase_passed),
+            "detail": (
+                f"takeoff at local frame {takeoff}, airborne through {landing} "
+                f"({air_frames} frames), event foot lift {event_lift:.4f} m"
+            ),
+        })
+        wrist_gap = float(np.linalg.norm(joints[event, 20] - joints[event, 21]))
+        hands_above_head = float(
+            min(joints[event, 20, 2], joints[event, 21, 2]) - joints[event, 15, 2]
+        )
+        if spec.id == "jump_arms_up":
+            arm_passed = wrist_gap > 0.65 and hands_above_head > 0.15
+            arm_detail = (
+                f"airborne V wrist separation {wrist_gap:.4f} m, "
+                f"lower hand {hands_above_head:.4f} m above head"
+            )
+        else:
+            wrist_channels = slice(3 + 6 * 20, 3 + 6 * 22)
+            wrist_drift = float(np.max(np.abs(
+                edited[:, wrist_channels] - host[:, wrist_channels]
+            )))
+            arm_passed = wrist_drift <= 5e-7
+            arm_detail = (
+                f"plain jump preserves host wrist channels with maximum drift "
+                f"{wrist_drift:.2e}"
+            )
+        checks.append({
+            "name": "jump_arm_signature",
+            "passed": bool(arm_passed),
+            "detail": arm_detail,
+        })
+
+    if spec.id == "chest_pop":
+        event = int(report["event_frame"])
+        joints = compute_poses(edited)["fk_joints"]
+        host_joints = compute_poses(host)["fk_joints"]
+        _left_axis, forward_axis = _dancer_axes(host, host_joints, event)
+
+        def relative_delta(joint: int) -> np.ndarray:
+            return (
+                (joints[event, joint] - joints[event, 0])
+                - (host_joints[event, joint] - host_joints[event, 0])
+            )
+
+        chest_delta = relative_delta(9)
+        head_delta = relative_delta(15)
+        chest_forward = float(chest_delta[:2] @ forward_axis)
+        head_forward = float(head_delta[:2] @ forward_axis)
+        local_host = _sixd_to_matrix(host[event, 3:135].reshape(22, 6))
+        local_edit = _sixd_to_matrix(edited[event, 3:135].reshape(22, 6))
+        local_delta = local_edit @ np.swapaxes(local_host, -1, -2)
+        knee_delta = float(np.max(
+            np.linalg.norm(_matrix_to_axis_angle(local_delta[[4, 5]]), axis=-1)
+        ))
+        start, end = map(int, report["action_range"])
+        knee_channels = slice(3 + 6 * 4, 3 + 6 * 6)
+        knee_channel_drift = float(np.max(np.abs(
+            edited[start:end, knee_channels] - host[start:end, knee_channels]
+        )))
+        isolation_passed = (
+            chest_forward > 0.08
+            and abs(head_forward) < 0.65 * chest_forward
+            and float(head_delta[2]) > -0.07
+            and knee_delta < 0.20
+            and knee_channel_drift <= 5e-7
+        )
+        checks.append({
+            "name": "chest_pop_isolation",
+            "passed": bool(isolation_passed),
+            "detail": (
+                f"chest/head forward deltas {chest_forward:.4f}/{head_forward:.4f} m, "
+                f"head vertical delta {float(head_delta[2]):.4f} m, "
+                f"maximum knee rotation delta {knee_delta:.4f} rad, "
+                f"source knee-channel drift {knee_channel_drift:.2e}"
+            ),
+        })
+
+    if spec.id == "rise_reach":
+        start, end = map(int, report["action_range"])
+        event = int(report["event_frame"])
+        joints = compute_poses(edited)["fk_joints"]
+        host_joints = compute_poses(host)["fk_joints"]
+        _left_axis, forward_axis = _dancer_axes(edited, joints, event)
+        chest = joints[event, 9]
+        reach = [
+            float((joints[event, hand, :2] - chest[:2]) @ forward_axis)
+            for hand in (20, 21)
+        ]
+        lift = [
+            float(joints[event, hand, 2] - chest[2])
+            for hand in (20, 21)
+        ]
+        pelvis_delta = joints[start:end, 0, 2] - host_joints[start:end, 0, 2]
+        contacts = np.asarray(edited[start:end, 135:139]).sum(axis=1)
+        lead_advantage = abs(reach[0] - reach[1])
+        rise_passed = (
+            float(np.min(pelvis_delta)) < -0.18
+            and float(pelvis_delta[event - start]) > -0.05
+            and float(np.min(contacts)) >= 4.0
+            and min(reach) > 0.08
+            and lead_advantage > 0.08
+            and min(lift) > 0.35
+        )
+        checks.append({
+            "name": "planted_rise_reach_signature",
+            "passed": bool(rise_passed),
+            "detail": (
+                f"pelvis load/recovery {float(np.min(pelvis_delta)):.4f}/"
+                f"{float(pelvis_delta[event - start]):.4f} m, "
+                f"hand reach {reach[0]:.4f}/{reach[1]:.4f} m, "
+                f"lift {lift[0]:.4f}/{lift[1]:.4f} m, "
+                f"minimum contact sum {float(np.min(contacts)):.1f}"
             ),
         })
 
@@ -397,6 +610,44 @@ def _machine_checks(
                 "detail": facing_detail,
             },
         ])
+        if spec.id == "clap_overhead":
+            event = int(report["event_frame"])
+            pre = max(start, event - 6)
+            post = min(end - 1, event + 6)
+            above_head = float(
+                min(joints[event, 20, 2], joints[event, 21, 2])
+                - joints[event, 15, 2]
+            )
+            local = _sixd_to_matrix(edited[start:end, 3:135].reshape(-1, 22, 6))
+            wrist_step = 0.0
+            for wrist in (20, 21):
+                step = (
+                    local[1:, wrist]
+                    @ np.swapaxes(local[:-1, wrist], -1, -2)
+                )
+                wrist_step = max(
+                    wrist_step,
+                    float(np.max(np.linalg.norm(
+                        _matrix_to_axis_angle(step),
+                        axis=-1,
+                    ))),
+                )
+            overhead_passed = (
+                gaps[pre] > 0.10
+                and gaps[post] > 0.10
+                and above_head > 0.12
+                and wrist_step < 0.80
+            )
+            checks.append({
+                "name": "overhead_clap_approach_recoil",
+                "passed": bool(overhead_passed),
+                "detail": (
+                    f"wrist gaps {float(gaps[pre]):.4f}/{float(gaps[event]):.4f}/"
+                    f"{float(gaps[post]):.4f} m before/contact/after, "
+                    f"lower hand {above_head:.4f} m above head, "
+                    f"maximum wrist step {wrist_step:.4f} rad"
+                ),
+            })
     return checks, ("pass" if all(check["passed"] for check in checks) else "fail")
 
 
@@ -606,6 +857,19 @@ def _review_html(
       <li>After revealing, inspect every required phase from both front and side.</li>
     </ol>
     <p id="playback-progress" class="status" aria-live="polite"></p>
+    <label>Independent reviewer name
+      <input id="reviewer-name" type="text" autocomplete="name"
+             placeholder="Name of the person who performed this visual review">
+    </label>
+    <label>
+      <input id="independent-review" type="checkbox">
+      I independently reviewed every source/edit pair and did not inherit another reviewer's
+      guesses or verdicts.
+    </label>
+    <label>
+      <input id="answers-hidden" type="checkbox">
+      I confirm the answer key stayed hidden until every action and direction guess was locked.
+    </label>
     <button id="export" type="button" disabled>Export blocking review result</button>
     <button id="reveal-all" type="button" disabled>Lock every guess before reveal</button>
     <span id="reveal-status" class="status" aria-live="polite"></span>
@@ -618,6 +882,7 @@ def _review_html(
     const takeIds = {take_ids_json};
     const normalizedFacing = {normalized_json};
     const motionFingerprint = {json.dumps(str(motion_fingerprint_value))};
+    const reviewerStatement = {json.dumps(REVIEWER_ATTESTATION_STATEMENT)};
     const storageKey = `maestro-motion-audit:${{auditId}}`;
     let state = JSON.parse(localStorage.getItem(storageKey) || "{{}}");
     let answersPromise = null;
@@ -716,12 +981,22 @@ def _review_html(
       );
     }}
 
+    function reviewerAttestationComplete() {{
+      const reviewer = state.__reviewer || {{}};
+      return Boolean(
+        String(reviewer.name || "").trim()
+        && reviewer.independentVisualReview === true
+        && reviewer.answersHiddenUntilLock === true
+      );
+    }}
+
     function refreshExportAvailability() {{
       document.querySelector("#export").disabled = !(
         allAnswersRevealed()
         && allVisualReviewsComplete()
         && allTakePlaybackComplete()
         && allTakeComparisonsOpened()
+        && reviewerAttestationComplete()
       );
     }}
 
@@ -1149,10 +1424,30 @@ def _review_html(
     }}
 
     document.querySelectorAll(".take").forEach(refreshCardReadiness);
+    const reviewerName = document.querySelector("#reviewer-name");
+    const independentReview = document.querySelector("#independent-review");
+    const answersHidden = document.querySelector("#answers-hidden");
+    const savedReviewer = state.__reviewer || {{}};
+    reviewerName.value = savedReviewer.name || "";
+    independentReview.checked = savedReviewer.independentVisualReview === true;
+    answersHidden.checked = savedReviewer.answersHiddenUntilLock === true;
+    function saveReviewerAttestation() {{
+      state.__reviewer = {{
+        name: reviewerName.value.trim(),
+        independentVisualReview: independentReview.checked,
+        answersHiddenUntilLock: answersHidden.checked,
+      }};
+      save();
+      refreshExportAvailability();
+    }}
+    reviewerName.addEventListener("input", saveReviewerAttestation);
+    independentReview.addEventListener("change", saveReviewerAttestation);
+    answersHidden.addEventListener("change", saveReviewerAttestation);
     refreshPlaybackProgress();
     refreshExportAvailability();
 
     document.querySelector("#export").addEventListener("click", () => {{
+      const signedAt = new Date().toISOString();
       const payload = {{
         audit_id: auditId,
         motion_fingerprint: motionFingerprint,
@@ -1160,6 +1455,17 @@ def _review_html(
         normal_speed_reviewed: allTakePlaybackComplete(),
         source_edit_compared: allTakeComparisonsOpened(),
         exported_at: new Date().toISOString(),
+        reviewer_attestation: {{
+          audit_id: auditId,
+          motion_fingerprint: motionFingerprint,
+          reviewer: state.__reviewer.name,
+          signed_at: signedAt,
+          independent_visual_review: state.__reviewer.independentVisualReview === true,
+          answers_hidden_until_lock: state.__reviewer.answersHiddenUntilLock === true,
+          normal_speed_reviewed: allTakePlaybackComplete(),
+          source_edit_compared: allTakeComparisonsOpened(),
+          statement: reviewerStatement,
+        }},
         takes: Object.fromEntries(takeIds.map(take => [take, {{
           guess: state[take].guess,
           recognized: state[take].recognized === true,

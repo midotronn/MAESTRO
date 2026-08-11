@@ -453,10 +453,10 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         aa[:, 5, 0] += 0.14 * (1.0 - hit)
     elif motion_id in {"jump_two_foot", "jump_arms_up"}:
         air = np.sin(np.pi * _smoothstep((t - 0.22) / 0.58))
-        air = np.maximum(air, 0.0)
-        trans[:, 2] += (0.30 if motion_id == "jump_two_foot" else 0.36) * air
-        load = _pulse(t, 0.18, 0.09)
-        land = _pulse(t, 0.82, 0.09)
+        air = np.maximum(air, 0.0) ** 0.78
+        trans[:, 2] += (0.38 if motion_id == "jump_two_foot" else 0.42) * air
+        load = _pulse(t, 0.18, 0.11)
+        land = _pulse(t, 0.82, 0.11)
         crouch = load + 0.72 * land
         aa[:, 1, 0] -= 0.58 * crouch
         aa[:, 2, 0] -= 0.58 * crouch
@@ -468,8 +468,10 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         aa[:, 12, 0] -= 0.18 * air
         contacts[air > 0.12] = 0.0
         if motion_id == "jump_arms_up":
-            left = np.array([0.25, 0.48, 0.04], dtype=np.float32)
-            right = np.array([-0.25, 0.48, 0.04], dtype=np.float32)
+            # Keep a wide airborne V. Hands converging above the head turn the silhouette into
+            # an overhead clap, especially after the action is composed onto a moving host.
+            left = np.array([0.46, 0.52, 0.08], dtype=np.float32)
+            right = np.array([-0.46, 0.52, 0.08], dtype=np.float32)
             _solve_arm(aa, "left", _arm_targets("left", air, left))
             _solve_arm(aa, "right", _arm_targets("right", air, right))
         else:
@@ -540,24 +542,24 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         # forward and 0.13 m down: a pigeon peck, not a pop. The forward drive now lives at
         # pelvis/spine1/spine2, and spine3 plus the neck give back that same total so the
         # shoulders open and the head arrives level instead of leading.
-        pop_scale = 1.65
+        pop_scale = 1.72
         base = pop_scale * 0.07 * drive                      # hips stay under the ribcage
         lower = pop_scale * 0.26 * drive
         mid = pop_scale * 0.23 * drive                       # the chest travels off these three
         # Cancelling only the rotation is not enough to hold the head: the chain below has
         # already carried it forward, so the counter has to over-rotate to bring it back. The
-        # extra 0.34 is the arcsin of that leftover head travel over the spine3->head length.
-        counter = base + lower + mid + pop_scale * 0.34 * drive
+        # extra term compensates for that leftover head travel over the spine3->head length.
+        counter = base + lower + mid + pop_scale * 0.20 * drive
         aa[:, 0, 0] += base
         aa[:, 3, 0] += lower
         aa[:, 6, 0] += mid
-        aa[:, 9, 0] -= 0.58 * counter                        # shoulders open rather than dive
-        aa[:, 12, 0] -= 0.42 * counter                       # head holds its place
-        aa[:, 16, 2] -= 0.48 * hit
-        aa[:, 17, 2] += 0.48 * hit
-        aa[:, 4, 0] += 0.30 * hit
-        aa[:, 5, 0] += 0.30 * hit
-        _travel(trans, -0.055 * drive)                       # hips settle back off the chest
+        aa[:, 9, 0] -= 0.74 * counter                        # shoulders open rather than dive
+        aa[:, 12, 0] -= 0.26 * counter                       # head holds its place
+        aa[:, 16, 2] -= 0.62 * hit
+        aa[:, 17, 2] += 0.62 * hit
+        aa[:, 4, 0] += 0.08 * hit
+        aa[:, 5, 0] += 0.08 * hit
+        _travel(trans, -0.015 * drive)                       # keep the pelvis under the pop
     elif motion_id == "arm_punch":
         ready = _smoothstep(t / 0.24) * _smoothstep((1.0 - t) / 0.18)
         wind = _pulse(t, 0.34, 0.09)
@@ -592,20 +594,40 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         left_start = _stance_ankle("left")
         right_start = _stance_ankle("right")
         left_end = left_start.copy()
-        left_end[0] += 0.34
-        trans[:, 0] += 0.24 * _phase_ease(t, 0.30, 0.64)
+        left_end[0] += 0.42
+        trans[:, 0] += 0.30 * _phase_ease(t, 0.30, 0.64)
         left_targets = _foot_swing(
-            t, 0.05, 0.45, left_start, left_end, lift=0.09,
+            t, 0.05, 0.45, left_start, left_end, lift=0.11,
         )
         right_targets = np.repeat(right_start[None, :], n, axis=0)
         leg_targets = (left_targets, right_targets)
 
         settle = _phase_ease(t, 0.25, 0.62)
-        aa[:, 0, 2] += 0.18 * settle
-        aa[:, 9, 2] -= 0.15 * settle
-        reach = np.sin(np.pi * t)
-        aa[:, 16, 2] -= 0.25 * reach
-        aa[:, 17, 2] -= 0.25 * reach
+        aa[:, 0, 2] += 0.24 * settle
+        aa[:, 9, 2] -= 0.20 * settle
+        directional = (
+            _smoothstep(t / 0.28)
+            * (1.0 - _smoothstep(np.clip((t - 0.76) / 0.24, 0.0, 1.0)))
+        )
+        _solve_arm(
+            aa,
+            "left",
+            _arm_targets(
+                "left",
+                directional,
+                np.array([0.70, 0.18, 0.14], dtype=np.float32),
+            ),
+        )
+        _solve_arm(
+            aa,
+            "right",
+            _arm_targets(
+                "right",
+                directional,
+                np.array([-0.16, 0.08, 0.24], dtype=np.float32),
+            ),
+        )
+        aa[:, 12, 1] += 0.30 * directional
         contacts[:, 0:2] = ((t <= 0.05) | (t >= 0.42))[:, None]
         contacts[:, 2:4] = 1.0
     elif motion_id == "step_touch":
@@ -689,8 +711,8 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         aa[:, 18, 1] += 0.30 * down
         aa[:, 19, 1] -= 0.30 * down
     elif motion_id == "rise_reach":
-        load = _smoothstep(t / 0.24)
-        rise = _smoothstep(np.clip((t - 0.28) / 0.44, 0.0, 1.0))
+        load = _smoothstep(t / 0.18)
+        rise = _smoothstep(np.clip((t - 0.40) / 0.40, 0.0, 1.0))
         crouch = load * (1.0 - rise)
         aa[:, 1, 0] -= 0.95 * crouch
         aa[:, 2, 0] -= 0.95 * crouch
@@ -700,10 +722,10 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         # so it reads as a rise rather than the symmetric held V of celebrate_hands_up. Both
         # targets stay dominantly vertical -- the forward term only keeps the hands off the back.
         _solve_arm(aa, "left", _arm_targets(
-            "left", rise, np.array([0.14, 0.55, 0.44], dtype=np.float32)))
+            "left", rise, np.array([0.18, 0.58, 0.42], dtype=np.float32)))
         _solve_arm(aa, "right", _arm_targets(
-            "right", _smoothstep(np.clip((t - 0.12) / 0.72, 0.0, 1.0)),
-            np.array([-0.20, 0.47, 0.30], dtype=np.float32)))
+            "right", _smoothstep(np.clip((t - 0.30) / 0.58, 0.0, 1.0)),
+            np.array([-0.24, 0.52, 0.20], dtype=np.float32)))
         aa[:, 3, 0] -= 0.26 * rise                           # spine extends through the rise
         aa[:, 12, 0] -= 0.24 * rise
     else:

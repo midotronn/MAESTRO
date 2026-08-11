@@ -1237,8 +1237,32 @@ def _composition_envelope(n: int, event: int, blend_frames: int) -> np.ndarray:
     return weight
 
 
-def _fractional_rotation(delta: np.ndarray, weight: np.ndarray) -> np.ndarray:
+def _fractional_rotation(
+    delta: np.ndarray,
+    weight: np.ndarray,
+    *,
+    continuous: bool = False,
+) -> np.ndarray:
     aa = _matrix_to_axis_angle(delta)
+    if continuous and aa.shape[0] > 1:
+        flat = np.asarray(aa, dtype=np.float32).reshape(aa.shape[0], -1, 3).copy()
+        for frame in range(1, flat.shape[0]):
+            current = flat[frame]
+            angle = np.linalg.norm(current, axis=-1, keepdims=True)
+            axis = np.divide(
+                current,
+                angle,
+                out=np.zeros_like(current),
+                where=angle > 1e-6,
+            )
+            candidates = np.stack(
+                [current, current - 2.0 * np.pi * axis, current + 2.0 * np.pi * axis],
+                axis=1,
+            )
+            distance = np.linalg.norm(candidates - flat[frame - 1, :, None, :], axis=-1)
+            choice = np.argmin(distance, axis=1)
+            flat[frame] = candidates[np.arange(candidates.shape[0]), choice]
+        aa = flat.reshape(aa.shape)
     return _axis_angle_to_matrix(aa * np.asarray(weight, dtype=np.float32)[..., None])
 
 
@@ -1346,10 +1370,12 @@ def _compose_beat_locked(
             weight = np.maximum(weight, bump.astype(np.float32))
     phase_weight = weight
     if spec.phase_joints and spec.phase_blend_frames is not None:
+        # This is an authored semantic ramp, not the generic seam blend. It may deliberately
+        # span more frames so a long action keeps a readable approach and recoil.
         phase_weight = _composition_envelope(
             action_len,
             local_event,
-            min(int(blend_frames), spec.phase_blend_frames),
+            spec.phase_blend_frames,
         )
     phase_joints = set(spec.phase_joints)
     base_r = _sixd_to_matrix(host[:, _ROT].reshape(action_len, 22, 6))
@@ -1375,7 +1401,12 @@ def _compose_beat_locked(
             offset = absolute_r @ np.swapaxes(base_r[:, joint], -1, -2)
             joint_weight = phase_weight if joint in phase_joints else weight
             composed[:, joint] = (
-                _fractional_rotation(offset, joint_weight) @ base_r[:, joint]
+                _fractional_rotation(
+                    offset,
+                    joint_weight,
+                    continuous=joint in event_pose_joints,
+                )
+                @ base_r[:, joint]
             )
 
     if spec.additive_joints:

@@ -30,6 +30,16 @@ def _base(n=240):
     return MockWindowGenerator().generate("edge", 0, n, 4, energy=0.5, beats=None)
 
 
+def _declared_action_frames(spec, beat_period):
+    """Apply the readable-duration floor without changing the motion's musical recommendation."""
+    beats_wide = float(spec.recommended_beats)
+    frames = int(round(beats_wide * beat_period))
+    while frames < spec.minimum_frames:
+        beats_wide += 1.0
+        frames = int(round(beats_wide * beat_period))
+    return frames
+
+
 _TMPL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                      "server", "data", "smplx_neu_J_1.npy")
 _LODGE_SAMPLE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -52,6 +62,7 @@ _FOREARM_HAND_CONTRACTS = (
     "point_side",
     "celebrate_hands_up",
     "arm_punch",
+    "side_step",
     "rise_reach",
 )
 _WRIST_STEP_LIMITS = {
@@ -542,7 +553,26 @@ def test_named_motions_default_to_a_slight_exaggeration():
 
 def test_rise_reach_has_time_to_read_as_a_planted_level_change():
     """Compressing load, extension, and reach into one beat makes the rise look like a jump."""
-    assert default_motion_bank().resolve("rise_reach").recommended_beats == 2.0
+    spec = default_motion_bank().resolve("rise_reach")
+    assert spec.recommended_beats == 2.0
+    assert spec.minimum_frames == 36
+
+
+@pytest.mark.parametrize(
+    "motion_id,minimum_frames",
+    [
+        ("clap_overhead", 24),
+        ("jump_two_foot", 36),
+        ("jump_arms_up", 36),
+        ("chest_pop", 18),
+        ("rise_reach", 36),
+    ],
+)
+def test_blind_failure_actions_keep_their_readable_duration_floor(
+    motion_id,
+    minimum_frames,
+):
+    assert default_motion_bank().resolve(motion_id).minimum_frames == minimum_frames
 
 
 @pytest.mark.parametrize(
@@ -864,7 +894,7 @@ def test_every_motion_changes_only_the_channels_declared_in_its_composition(moti
         assert np.array_equal(out[:, 135:139], base[:, 135:139]), motion_id
 
     assert report["beat_error_frames"] <= 0.5, motion_id
-    assert report["action_frames"] == round(spec.recommended_beats * 15), motion_id
+    assert report["action_frames"] == _declared_action_frames(spec, 15), motion_id
 
 
 def test_editor_does_not_send_a_composed_named_motion_through_a_second_splice(monkeypatch):
@@ -1572,6 +1602,115 @@ def test_visual_audit_derives_counterflow_ownership_instead_of_trusting_the_repo
     )["passed"]
 
 
+@needs_fk
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+def test_visual_audit_rejects_every_protocol_six_failure_signature():
+    from agentlodge.dance.format import to_editor139
+    from scripts.build_motion_bank_audit import _machine_checks
+
+    host = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:180]
+    beats = np.arange(0, 180, 15)
+    bank = default_motion_bank()
+
+    side, side_report = bank.apply(host, "side_step", beats=beats, direction="left")
+    checks, status = _machine_checks(
+        host,
+        side,
+        bank.resolve("side_step"),
+        dict(side_report, direction="right"),
+    )
+    assert status == "fail"
+    assert not next(
+        check for check in checks if check["name"] == "side_step_direction_signature"
+    )["passed"]
+
+    jump, jump_report = bank.apply(host, "jump_arms_up", beats=beats)
+    start, end = jump_report["action_range"]
+    collapsed_jump = jump.copy()
+    for joint in (13, 14, 16, 17, 18, 19, 20, 21):
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        collapsed_jump[start:end, channels] = host[start:end, channels]
+    checks, status = _machine_checks(
+        host,
+        collapsed_jump,
+        bank.resolve("jump_arms_up"),
+        jump_report,
+    )
+    assert status == "fail"
+    assert not next(
+        check for check in checks if check["name"] == "jump_arm_signature"
+    )["passed"]
+
+    plain_jump, plain_jump_report = bank.apply(host, "jump_two_foot", beats=beats)
+    start, end = plain_jump_report["action_range"]
+    event = int(plain_jump_report["event_frame"])
+    compressed_jump = plain_jump.copy()
+    compressed_jump[start:end, 135:139] = 1.0
+    compressed_jump[event - 1:event + 2, 135:139] = 0.0
+    checks, status = _machine_checks(
+        host,
+        compressed_jump,
+        bank.resolve("jump_two_foot"),
+        plain_jump_report,
+    )
+    assert status == "fail"
+    assert not next(
+        check for check in checks if check["name"] == "readable_jump_phases"
+    )["passed"]
+
+    chest, chest_report = bank.apply(host, "chest_pop", beats=beats)
+    start, end = chest_report["action_range"]
+    flat_chest = chest.copy()
+    chest_spec = bank.resolve("chest_pop")
+    for joint in set(chest_spec.absolute_joints) | set(chest_spec.additive_joints):
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        flat_chest[start:end, channels] = host[start:end, channels]
+    checks, status = _machine_checks(host, flat_chest, chest_spec, chest_report)
+    assert status == "fail"
+    assert not next(
+        check for check in checks if check["name"] == "chest_pop_isolation"
+    )["passed"]
+
+    rise, rise_report = bank.apply(host, "rise_reach", beats=beats)
+    start, end = rise_report["action_range"]
+    airborne_rise = rise.copy()
+    airborne_rise[start:end, 135:139] = 0.0
+    checks, status = _machine_checks(
+        host,
+        airborne_rise,
+        bank.resolve("rise_reach"),
+        rise_report,
+    )
+    assert status == "fail"
+    assert not next(
+        check for check in checks if check["name"] == "planted_rise_reach_signature"
+    )["passed"]
+
+    overhead, overhead_report = bank.apply(
+        host,
+        "clap_overhead",
+        beats=beats,
+        direction="right",
+    )
+    start, end = overhead_report["action_range"]
+    event = int(overhead_report["event_frame"])
+    held_clap = overhead.copy()
+    for frame in (max(start, event - 6), min(end - 1, event + 6)):
+        for joint in (13, 14, 16, 17, 18, 19, 20, 21):
+            channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+            held_clap[frame, channels] = overhead[event, channels]
+    checks, status = _machine_checks(
+        host,
+        held_clap,
+        bank.resolve("clap_overhead"),
+        overhead_report,
+    )
+    assert status == "fail"
+    assert not next(
+        check for check in checks if check["name"] == "overhead_clap_approach_recoil"
+    )["passed"]
+
+
 def test_visual_audit_direction_matrix_rejects_indistinct_or_reversed_claps():
     from scripts.build_motion_bank_audit import _append_clap_direction_matrix_checks
 
@@ -1625,7 +1764,7 @@ def test_jumps_keep_a_readable_real_dance_duration(motion_id):
             beats=np.arange(0, 120, period),
             anchor="beat",
         )
-        assert report["action_frames"] >= 24, (motion_id, period, report)
+        assert report["action_frames"] >= 36, (motion_id, period, report)
     with pytest.raises(ValueError, match="natural speed"):
         bank.apply(
             _base(26),
@@ -1771,6 +1910,40 @@ def test_lateral_step_signatures_survive_real_host_composition():
     assert gaps["side_step"] > 0.32, gaps
     assert gaps["step_touch"] < 0.16, gaps
     assert gaps["side_step"] > gaps["step_touch"] + 0.16, gaps
+
+
+@needs_fk
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+def test_side_step_root_and_lead_arm_agree_on_dancer_relative_direction():
+    from agentlodge.dance.format import to_editor139
+    from server.fk import compute_poses
+
+    base = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:180]
+    bank = default_motion_bank()
+    for direction, sign in (("left", 1.0), ("right", -1.0)):
+        out, report = bank.apply(
+            base,
+            "side_step",
+            beats=np.arange(0, 180, 15),
+            direction=direction,
+        )
+        start, end = report["action_range"]
+        event = int(report["event_frame"])
+        joints = compute_poses(out)["fk_joints"]
+        forward = _body_forward(joints, start)
+        left = np.array([-forward[1], forward[0], 0.0])
+        root = (out[start:end, :2] - out[start, :2]) @ left[:2]
+        lead = 20 if direction == "left" else 21
+        trail = 21 if direction == "left" else 20
+        lead_offset = sign * float((joints[event, lead] - joints[event, 9]) @ left)
+        trail_offset = sign * float((joints[event, trail] - joints[event, 9]) @ left)
+        assert float(np.max(sign * root)) > 0.24, (direction, root)
+        assert lead_offset > 0.45, (direction, lead_offset)
+        assert lead_offset > trail_offset + 0.35, (
+            direction,
+            lead_offset,
+            trail_offset,
+        )
 
 
 # The manifest validators are generic shape checks -- joint_activity only asks that the arms
@@ -2087,6 +2260,44 @@ def test_the_overhead_clap_actually_clears_the_head():
 
 
 @needs_fk
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+def test_jump_arms_up_is_a_wide_v_not_an_overhead_clap_on_the_real_host():
+    from agentlodge.dance.format import to_editor139
+    from server.fk import compute_poses
+
+    base = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:180]
+    bank = default_motion_bank()
+    jump, jump_report = bank.apply(
+        base,
+        "jump_arms_up",
+        beats=np.arange(0, 180, 15),
+    )
+    clap, clap_report = bank.apply(
+        base,
+        "clap_overhead",
+        beats=np.arange(0, 180, 15),
+        direction="forward",
+    )
+    jump_joints = compute_poses(jump)["fk_joints"]
+    clap_joints = compute_poses(clap)["fk_joints"]
+    jump_event = int(jump_report["event_frame"])
+    clap_event = int(clap_report["event_frame"])
+    jump_gap = float(np.linalg.norm(
+        jump_joints[jump_event, 20] - jump_joints[jump_event, 21]
+    ))
+    clap_gap = float(np.linalg.norm(
+        clap_joints[clap_event, 20] - clap_joints[clap_event, 21]
+    ))
+    assert jump_gap > 0.65, jump_gap
+    assert clap_gap < 0.01, clap_gap
+    assert jump_gap > clap_gap + 0.60
+    assert float(
+        min(jump_joints[jump_event, 20, 2], jump_joints[jump_event, 21, 2])
+        - jump_joints[jump_event, 15, 2]
+    ) > 0.15
+
+
+@needs_fk
 def test_pointing_to_the_side_reaches_sideways_rather_than_forward():
     """A target only slightly off the forward axis renders as a forward reach, not a side point."""
     from server.fk import compute_poses
@@ -2112,6 +2323,9 @@ def test_a_chest_pop_moves_the_chest_and_not_the_head():
     from server.fk import compute_poses
     bank = default_motion_bank()
     spec = bank.resolve("chest_pop")
+    assert not ({4, 5} & set(spec.additive_joints)), (
+        "a chest isolation must preserve the host dance's knee cadence"
+    )
     joints = compute_poses(bank.load_clip("chest_pop"))["fk_joints"]
     fwd = np.array([0.0, -1.0, 0.0])
 
@@ -2126,6 +2340,38 @@ def test_a_chest_pop_moves_the_chest_and_not_the_head():
     assert abs(head_fwd) < 0.6 * chest_fwd, (
         "the head travels as far as the chest, so this reads as a nod", head_fwd, chest_fwd)
     assert float(head[2]) > -0.06, ("the head dives instead of staying level", float(head[2]))
+
+
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+def test_composed_chest_pop_preserves_source_knee_cadence():
+    from agentlodge.dance.format import to_editor139
+    from scripts.build_motion_bank_audit import _machine_checks
+
+    host = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:180]
+    bank = default_motion_bank()
+    spec = bank.resolve("chest_pop")
+    edited, report = bank.apply(host, "chest_pop", beats=np.arange(0, 180, 15))
+    start, end = report["action_range"]
+    knee_channels = slice(3 + 6 * 4, 3 + 6 * 6)
+    np.testing.assert_allclose(
+        edited[start:end, knee_channels],
+        host[start:end, knee_channels],
+        atol=5e-7,
+        rtol=0,
+    )
+    checks, status = _machine_checks(host, edited, spec, report)
+    assert status == "pass"
+    assert next(
+        check for check in checks if check["name"] == "chest_pop_isolation"
+    )["passed"]
+
+    damaged = edited.copy()
+    damaged[start:end, 3 + 6 * 4] += np.float32(0.01)
+    checks, status = _machine_checks(host, damaged, spec, report)
+    assert status == "fail"
+    assert not next(
+        check for check in checks if check["name"] == "chest_pop_isolation"
+    )["passed"]
 
 
 @needs_fk
@@ -2601,7 +2847,7 @@ def test_a_motion_uses_its_declared_musical_duration_however_wide_the_selection(
     bank = default_motion_bank()
     spec = bank.resolve(motion_id)
     beats = np.arange(0, 480, 16)                    # a steady 112.5 BPM grid
-    expected = int(round(spec.recommended_beats * 16))
+    expected = _declared_action_frames(spec, 16)
     for n in (max(96, expected * 3), 480):           # selections far wider than the action
         base = np.concatenate([_base(240)] * 2, axis=0)[:n]
         _window, report = bank.apply(base, motion_id, mode="replace", anchor="center",

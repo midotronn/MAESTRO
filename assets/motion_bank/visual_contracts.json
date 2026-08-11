@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "acceptance_rule": "At normal speed, both the motion and its observed direction must be recognizable in the unlabeled edited render before its answer is revealed. Every automatic and explicit direction variant must compare the exact source and edit, review and pass all required phases, and include a written evidence note. Numeric metrics cannot override a failed recognition or phase review, and any failure blocks the production audit receipt.",
   "motions": {
     "clap_single": {
@@ -31,8 +31,8 @@
         "palms visibly meet above the head without intersecting it",
         "the overhead contact shifts unmistakably toward the requested or inferred direction; only an explicit counter-flow side may add a bounded upper-torso turn",
         "the source root, torso, legs, and dance rhythm continue through the arm gesture",
-        "hands separate",
-        "arms lower into the host dance"
+        "hands separate through a smooth recoil without a wrist flip",
+        "arms lower into the host dance at a readable normal-speed duration"
       ]
     },
     "jump_two_foot": {
@@ -51,7 +51,7 @@
       "required_phases": [
         "hips and knees visibly load downward",
         "both feet push off and leave the floor",
-        "both arms rise overhead during flight",
+        "both arms rise into a wide overhead V during flight and the hands never converge like a clap",
         "the body reaches one clear apex",
         "the load, flight, and landing remain individually readable at normal speed",
         "both feet land with bent-knee absorption"
@@ -98,6 +98,7 @@
       "required_phases": [
         "the chest drives forward sharply",
         "the pelvis remains comparatively stable",
+        "the source lower-body cadence, including any raised knee, remains intact without a squat or jump cue",
         "the head does not turn the action into a nod",
         "the chest recoils to the host pose"
       ]
@@ -116,6 +117,7 @@
       "required_phases": [
         "the lead foot lifts and opens laterally",
         "the root travels sideways over the lead leg",
+        "the lead-side arm and head make the dancer-relative direction unmistakable",
         "weight settles into a visibly wide stance",
         "the feet do not close into a trailing-foot touch"
       ]
@@ -188,7 +190,7 @@
       "required_phases": [
         "the action begins from a visibly low level",
         "the legs extend while the torso rises",
-        "the arms reach upward with one hand leading",
+        "both arms reach upward with one hand visibly leading forward",
         "the feet remain planted so the action does not become a jump"
       ]
     }
