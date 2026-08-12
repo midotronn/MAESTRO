@@ -19,6 +19,7 @@ import numpy as np
 
 from agentlodge.editor.checkpoints import Checkpoint, CheckpointStore
 from agentlodge.editor.agent_edit import run_agent_edit
+from agentlodge.editor.motion_bank import default_motion_bank
 from agentlodge.editor.window_edit import (
     WindowEditResult,
     WindowGenerator,
@@ -26,6 +27,7 @@ from agentlodge.editor.window_edit import (
 )
 
 _ASSETS = "assets.json"
+_NAMED_MOTION_HANDOFF_FRAMES = 8
 
 
 def _edit_label(instruction: str, a: int, b: int) -> str:
@@ -34,6 +36,28 @@ def _edit_label(instruction: str, a: int, b: int) -> str:
     if len(text) > 42:
         text = text[:41] + "\u2026"
     return f"{text} [{a // 30}-{b // 30}s]"
+
+
+def _expand_named_motion_window(
+    motion: np.ndarray,
+    a: int,
+    b: int,
+    instruction: str,
+) -> tuple[int, int]:
+    """Give a recognized named action its authored duration plus room to hand back to the dance."""
+    spec = default_motion_bank().match_instruction(instruction)
+    if spec is None:
+        return int(a), int(b)
+
+    n = int(np.asarray(motion).shape[0])
+    target = min(n, int(spec.frames) + _NAMED_MOTION_HANDOFF_FRAMES)
+    if int(b) - int(a) >= target:
+        return int(a), int(b)
+
+    center = 0.5 * (int(a) + int(b) - 1)
+    start = int(round(center - 0.5 * target))
+    start = max(0, min(start, n - target))
+    return start, start + target
 
 
 @dataclass
@@ -136,8 +160,10 @@ class EditSession:
     def edit(self, a: int, b: int, instruction: str, *, k: int | None = None,
              max_cycles: int | None = None, progress_cb=None) -> WindowEditResult:
         """Apply an NL window edit to the current dance and commit it as a new checkpoint."""
+        base = self.current_motion()
+        a, b = _expand_named_motion_window(base, a, b, instruction)
         res = run_agent_edit(
-            self.current_motion(), a, b, instruction, self.generator,
+            base, a, b, instruction, self.generator,
             beats=self.assets.beats, beat_strengths=self.assets.beat_strengths,
             api_key=self.api_key,
             k=k or self.k, max_cycles=max_cycles or self.max_cycles,
@@ -153,6 +179,7 @@ class EditSession:
                   max_cycles: int | None = None, progress_cb=None) -> WindowEditResult:
         """Branch: apply an edit to an ARBITRARY earlier checkpoint, forking history."""
         base = self.store.motion(from_id)
+        a, b = _expand_named_motion_window(base, a, b, instruction)
         res = run_agent_edit(
             base, a, b, instruction, self.generator, beats=self.assets.beats,
             beat_strengths=self.assets.beat_strengths, api_key=self.api_key,

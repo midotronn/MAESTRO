@@ -200,6 +200,29 @@ def test_named_beat_action_uses_the_strongest_window_beat(client):
     assert result["ok"]
 
 
+@pytest.mark.parametrize("motion_id", [spec.id for spec in MotionBank().specs])
+def test_every_named_motion_accepts_a_natural_command_on_a_collapsed_window(
+    client,
+    motion_id,
+):
+    client.post("/api/session/sng")
+    spec = MotionBank().resolve(motion_id)
+    result = client.post(
+        "/api/session/sng/edit",
+        json={
+            "a_sec": 5.0,
+            "b_sec": 5.0,
+            "instruction": f"add {spec.name.lower()} here",
+        },
+    ).json()["result"]
+
+    assert result["ok"], (motion_id, result["feedback"], result["log"])
+    assert result["window"][1] - result["window"][0] == spec.frames + 8
+    step = next(item for item in result["log"] if item["tool"] == "motion_bank")
+    assert step["status"] == "applied"
+    assert step["motion_bank"]["id"] == motion_id
+
+
 def test_edit_commits_and_moves_metrics(client):
     client.post("/api/session/sng")
     r = client.post("/api/session/sng/edit",
