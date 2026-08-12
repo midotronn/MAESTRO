@@ -123,11 +123,24 @@ if [ -L "$VENV" ]; then echo "  replacing $VENV symlink -> real venv (persist ac
 "$PIP" install -q -U pip wheel setuptools
 # CRITICAL: uninstall any pre-existing torch first. A leftover '2.13.0+cpu' has a higher version
 # string than every cu128 wheel, so 'pip install torch --index-url .../cu128' becomes a no-op.
-"$PIP" uninstall -y torch torchvision torchaudio >/dev/null 2>&1 || true
-if [ "$TORCH_INDEX" = "cpu" ]; then
-  "$PIP" install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-else
-  "$PIP" install -q torch torchvision torchaudio --index-url "https://download.pytorch.org/whl/$TORCH_INDEX"
+torch_ready=0
+if [ "$TORCH_INDEX" != "cpu" ] && "$PY" - <<'PY' >/dev/null 2>&1; then
+import torch
+assert torch.cuda.is_available()
+value = torch.ones(1, device="cuda") + 1
+torch.cuda.synchronize()
+assert value.item() == 2
+PY
+  torch_ready=1
+  echo "  existing CUDA torch is usable; keeping it"
+fi
+if [ "$torch_ready" -ne 1 ]; then
+  "$PIP" uninstall -y torch torchvision torchaudio >/dev/null 2>&1 || true
+  if [ "$TORCH_INDEX" = "cpu" ]; then
+    "$PIP" install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+  else
+    "$PIP" install -q torch torchvision torchaudio --index-url "https://download.pytorch.org/whl/$TORCH_INDEX"
+  fi
 fi
 
 # ---- 6. python deps (pyrender is REQUIRED: LODGE render.py imports it at load) -------------
@@ -171,6 +184,11 @@ else
   gunzip -c pretrained_models.tar.gz | tar --no-same-owner -xf - || die "LODGE weights extract"
 fi
 [ -f "$WORK/LODGE/data/smplx_neu_J_1.npy" ] || echo "  WARNING: missing LODGE/data/smplx_neu_J_1.npy (FK/render)"
+mkdir -p "$AL/server/data"
+if [ ! -f "$AL/server/data/smplx_neu_J_1.npy" ]; then
+  cp "$WORK/LODGE/data/smplx_neu_J_1.npy" "$AL/server/data/smplx_neu_J_1.npy" \
+    || die "FK template install"
+fi
 
 step "EDGE weights"
 cd "$WORK/EDGE"
