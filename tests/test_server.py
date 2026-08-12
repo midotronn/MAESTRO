@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -101,6 +102,73 @@ def test_uploaded_song_pipeline_uses_configured_pod_python(tmp_path, monkeypatch
     process_command = next(c for c in commands if "scripts/process_song.sh" in c)
     assert "AL_PY=/workspace/AgentLODGE/.venv/bin/python" in process_command
     assert P.get_job("test_song")["status"] == "done"
+
+
+def test_uploaded_song_pipeline_scripts_are_packaged():
+    root = Path(__file__).resolve().parents[1]
+    required = {
+        "preprocess_song.py",
+        "make_song_bestofk.py",
+        "build_window_bank.py",
+        "process_song.sh",
+    }
+    assert required <= {path.name for path in (root / "scripts").iterdir()}
+
+
+def test_packaged_song_generator_writes_expected_outputs(tmp_path, monkeypatch):
+    import scripts.make_song_bestofk as M
+
+    sid = "smoke"
+    wav = tmp_path / f"LODGE/data/finedance/music_wav/{sid}.wav"
+    wav.parent.mkdir(parents=True)
+    wav.write_bytes(b"wav")
+    np.save(tmp_path / f"lodge_fd_{sid}_feats.npy", np.zeros((600, 35), dtype=np.float32))
+    np.save(tmp_path / f"edge{sid}_slices.npy", np.zeros((2, 4, 8), dtype=np.float32))
+    lodge = np.zeros((600, 139), dtype=np.float32)
+    edge = np.ones((600, 139), dtype=np.float32)
+    story = np.full((600, 139), 2.0, dtype=np.float32)
+
+    monkeypatch.setattr(M, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(
+        M,
+        "extract_song_metadata",
+        lambda _wav: SimpleNamespace(
+            duration_seconds=20.0,
+            beat_frames=np.array([], dtype=np.int64),
+            wav_path=wav,
+        ),
+    )
+    monkeypatch.setattr(
+        M,
+        "_run_lodge_job",
+        lambda *_args, **_kwargs: {"motion": lodge, "summary": "lodge", "error": None},
+    )
+    monkeypatch.setattr(
+        M,
+        "_run_edge_job",
+        lambda *_args, **_kwargs: {"motion": edge, "summary": "edge", "error": None},
+    )
+    monkeypatch.setattr(M, "release_torch_memory", lambda: None)
+    monkeypatch.setattr(M, "analyze_structure", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(M.librosa, "load", lambda *_args, **_kwargs: (np.zeros(10), 22050))
+    monkeypatch.setattr(M, "extract_audio_descriptor", lambda *_args: object())
+    monkeypatch.setattr(M, "author_storyboard", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        M,
+        "build_story_dance",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            motion=story,
+            reasoning="assembled",
+            schedule=[(0, 600, "lodge", "body")],
+        ),
+    )
+
+    report = M.generate_song(sid)
+
+    assert report["frames"] == 600
+    assert np.array_equal(np.load(tmp_path / f"lodge_fd_{sid}_full.npy"), lodge)
+    assert np.array_equal(np.load(tmp_path / f"edge_fd_{sid}_full.npy"), edge)
+    assert np.array_equal(np.load(tmp_path / f"fd_{sid}_STORY_bestofk.npy"), story)
 
 
 def test_lists_named_motions_from_the_shared_manifest(client):

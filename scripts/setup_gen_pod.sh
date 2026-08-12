@@ -249,6 +249,10 @@ if [ ! -f "$YBOT_SCENE" ] \
 fi
 echo "  ready: $YBOT_SCENE"
 
+for required in preprocess_song.py make_song_bestofk.py build_window_bank.py process_song.sh; do
+  [ -f "$AL/scripts/$required" ] || die "missing new-song pipeline script: $required"
+done
+
 touch "$WORK/.maestro_gen_pod_ready"
 echo ""
 echo "GEN_POD_READY"
