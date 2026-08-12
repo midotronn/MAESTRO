@@ -110,6 +110,11 @@ if _AUTH_USER and _AUTH_PASS:
 @app.on_event("startup")
 def _enforce_motion_audit() -> None:
     """A live editor may not start with stale or incomplete visual evidence."""
+    if _unaudited_research_enabled():
+        logging.getLogger("uvicorn.error").warning(
+            "motion audit gate BYPASSED for unaudited research mode"
+        )
+        return
     if not _motion_audit_required():
         return
     receipt = validate_audit_receipt()
@@ -175,7 +180,18 @@ def _live_enabled() -> bool:
     return os.environ.get("AGENTLODGE_LIVE", "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _unaudited_research_enabled() -> bool:
+    return os.environ.get("MAESTRO_ALLOW_UNAUDITED_RESEARCH", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 def _motion_audit_required() -> bool:
+    if _unaudited_research_enabled():
+        return False
     explicit = os.environ.get("MAESTRO_REQUIRE_MOTION_AUDIT", "").strip().lower()
     return _live_enabled() or explicit in ("1", "true", "yes", "on")
 

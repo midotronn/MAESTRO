@@ -48,9 +48,12 @@ def test_live_editor_enables_the_blocking_motion_audit(monkeypatch):
 
     monkeypatch.delenv("AGENTLODGE_LIVE", raising=False)
     monkeypatch.delenv("MAESTRO_REQUIRE_MOTION_AUDIT", raising=False)
+    monkeypatch.delenv("MAESTRO_ALLOW_UNAUDITED_RESEARCH", raising=False)
     assert not A._motion_audit_required()
     monkeypatch.setenv("AGENTLODGE_LIVE", "1")
     assert A._motion_audit_required()
+    monkeypatch.setenv("MAESTRO_ALLOW_UNAUDITED_RESEARCH", "1")
+    assert not A._motion_audit_required()
 
 
 def test_lists_songs_and_opens_session(client):

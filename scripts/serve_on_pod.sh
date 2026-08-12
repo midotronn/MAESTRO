@@ -6,6 +6,7 @@
 #   OPENAI_API_KEY        enables the LLM edit agent
 #   MAESTRO_AUTH_USER     basic-auth username (public URL is protected when both are set)
 #   MAESTRO_AUTH_PASS     basic-auth password
+#   MAESTRO_ALLOW_UNAUDITED_RESEARCH=1 bypasses the release receipt for fast lab iteration
 #   WORKSPACE             persistent volume root (default /workspace)
 # Usage: bash serve_on_pod.sh
 set -uo pipefail
