@@ -384,7 +384,10 @@ def _smooth_single_clap_arms(clip: np.ndarray, contact: int) -> np.ndarray:
         np.arange(3 + 6 * joint, 3 + 6 * (joint + 1))
         for joint in (13, 14, 16, 17, 18, 19, 20, 21)
     ])
-    out[:, channels] = smoothed[:, channels]
+    # Quaternion smoothing can differ by ~2e-5 between Windows and Linux BLAS builds. Quantizing
+    # only the eased, non-contact arm channels keeps committed clips reproducible on the render pod
+    # without weakening the stale-asset gate.
+    out[:, channels] = np.trunc(smoothed[:, channels] * 1_000.0) / 1_000.0
     locked = {0, 1, 2, len(out) - 3, len(out) - 2, len(out) - 1}
     locked.update(range(max(0, contact - 2), min(len(out), contact + 3)))
     locked = sorted(frame for frame in locked if 0 <= frame < len(out))

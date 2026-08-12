@@ -160,6 +160,24 @@ def test_committed_clips_match_the_procedural_authoring_source():
             )
 
 
+def test_single_clap_smoothing_is_reproducible_across_render_platforms():
+    """Post-contact quaternion smoothing once drifted by 2e-5 between Windows and Linux."""
+    bank = default_motion_bank()
+    spec = bank.resolve("clap_single")
+    channels = np.concatenate([
+        np.arange(3 + 6 * joint, 3 + 6 * (joint + 1))
+        for joint in (13, 14, 16, 17, 18, 19, 20, 21)
+    ])
+    locked = {0, 1, 2, spec.frames - 3, spec.frames - 2, spec.frames - 1}
+    locked.update(range(spec.event_frame - 2, spec.event_frame + 3))
+    eased = [frame for frame in range(spec.frames) if frame not in locked]
+
+    for direction, _path in spec.direction_clips:
+        clip = bank.load_clip(spec, direction=direction)
+        scaled = clip[np.ix_(eased, channels)].astype(np.float64) * 1_000.0
+        assert float(np.max(np.abs(scaled - np.rint(scaled)))) < 1e-3, direction
+
+
 def test_every_wrist_owning_motion_has_an_explicit_hand_contract():
     wrist_owners = {
         spec.id
