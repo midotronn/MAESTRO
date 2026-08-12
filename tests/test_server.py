@@ -59,7 +59,7 @@ def test_lists_songs_and_opens_session(client):
 
 def test_lists_named_motions_from_the_shared_manifest(client):
     data = client.get("/api/motions").json()
-    assert data["version"] == "1.1.3"
+    assert data["version"] == "1.1.4"
     assert len(data["motions"]) == 20
     clap = next(m for m in data["motions"] if m["id"] == "clap_single")
     assert clap["name"] == "Single clap"

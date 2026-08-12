@@ -57,7 +57,13 @@ def _pin_signal_peaks(signal: np.ndarray, frames: tuple[int, ...]) -> np.ndarray
     out = np.asarray(signal, dtype=np.float32).copy()
     for frame in frames:
         frame = int(np.clip(frame, 0, len(out) - 1))
-        out[max(0, frame - 1):min(len(out), frame + 2)] = 1.0
+        for distance in range(1, 7):
+            q = distance / 7.0
+            weight = q * q * (3.0 - 2.0 * q)
+            for index in (frame - 9 + distance, frame + 9 - distance):
+                if 0 <= index < len(out):
+                    out[index] += weight * (1.0 - out[index])
+        out[max(0, frame - 2):min(len(out), frame + 3)] = 1.0
     return np.clip(out, 0.0, 1.0)
 
 
@@ -315,7 +321,7 @@ _CLAP_HALF_GAP = 0.003
 # y=+0.04 -- above the chest, level with the collarbones -- which renders as hands pressed
 # together under the chin, closer to a bow than a clap.
 _CLAP_POINT = (-0.045, 0.26)                        # (height, distance in front)
-_CLAP_SIDE_OFFSET = 0.20
+_CLAP_SIDE_OFFSET = 0.15
 _CLAP_OVERHEAD_SIDE_OFFSET = 0.16
 _CLAP_OVERHEAD_POINT = (0.48, 0.20)
 _CLAP_OVERHEAD_SIDE_POINT = (0.42, 0.20)
@@ -328,7 +334,7 @@ _CLAP_ELBOW = np.array([0.55, -1.0, -0.1], dtype=np.float32)
 # How far towards the meeting point the hands stay BETWEEN repeated claps: 1.0 would leave them
 # touching, 0.0 drops them to the hips. Sets the parting of the hands, so it trades readability
 # of each clap (needs travel) against the hands staying up (needs little).
-_CLAP_GUARD = 0.68
+_CLAP_GUARD = 0.56
 
 
 def _smooth_clap_wrists(
@@ -350,6 +356,22 @@ def _smooth_clap_wrists(
     return out
 
 
+def _smooth_single_clap_arms(clip: np.ndarray, contact: int) -> np.ndarray:
+    """Ease the whole arm into contact while preserving the authored five-frame closure."""
+    out = np.asarray(clip, dtype=np.float32).copy()
+    smoothed = temporal_smooth(out, amount=0.65)
+    channels = np.concatenate([
+        np.arange(3 + 6 * joint, 3 + 6 * (joint + 1))
+        for joint in (13, 14, 16, 17, 18, 19, 20, 21)
+    ])
+    out[:, channels] = smoothed[:, channels]
+    locked = {0, 1, 2, len(out) - 3, len(out) - 2, len(out) - 1}
+    locked.update(range(max(0, contact - 2), min(len(out), contact + 3)))
+    locked = sorted(frame for frame in locked if 0 <= frame < len(out))
+    out[np.ix_(locked, channels)] = clip[np.ix_(locked, channels)]
+    return out
+
+
 def _arm_targets(side: str, signal: np.ndarray, target: np.ndarray) -> np.ndarray:
     rest = _stance_wrist(side)
     return rest[None, :] + signal[:, None] * (np.asarray(target) - rest)[None, :]
@@ -361,6 +383,7 @@ def _clap_arms(
     *,
     overhead=False,
     center_x=0.0,
+    orientation_signal=None,
     respect_parent_pose=False,
 ):
     # The overhead variant has to clear the head to read as overhead, and reaching forward
@@ -378,14 +401,15 @@ def _clap_arms(
         if overhead and abs(center_x) > 1e-6
         else (_CLAP_OVERHEAD_POINT if overhead else _CLAP_POINT)
     )
+    orientation = signal if orientation_signal is None else orientation_signal
     hint = _CLAP_ELBOW
     _solve_arm(aa, "left", _arm_targets(
         "left", signal, np.array([center_x + half, y, z], dtype=np.float32)),
-               elbow_hint=hint, clap_orientation=signal,
+               elbow_hint=hint, clap_orientation=orientation,
                respect_parent_pose=respect_parent_pose)
     _solve_arm(aa, "right", _arm_targets(
         "right", signal, np.array([center_x - half, y, z], dtype=np.float32)),
-               elbow_hint=hint, clap_orientation=signal,
+               elbow_hint=hint, clap_orientation=orientation,
                respect_parent_pose=respect_parent_pose)
 
 
@@ -415,7 +439,19 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         hit = _pulse(t, 0.54, 0.15)
         wind = _pulse(t, 0.30, 0.11)                     # anticipation before the hit
         settle = _pulse(t, 0.80, 0.13)                   # follow-through after it
-        clap_signal = np.clip(hit - 0.22 * wind, 0.0, None)
+        if overhead:
+            clap_signal = np.clip(hit - 0.22 * wind, 0.0, None)
+            clap_orientation = (
+                _smoothstep(t / 0.38)
+                * _smoothstep((1.0 - t) / 0.28)
+            )
+        else:
+            # Lift both hands into an open chest-level guard before closing them. A side clap
+            # launched directly from the hips gives one arm a long strike path and reads as a
+            # punch; the visible two-hand guard makes the approach unmistakably bilateral.
+            ready = _smoothstep(t / 0.24) * _smoothstep((1.0 - t) / 0.24)
+            clap_signal = ready * (0.42 + 0.46 * hit)
+            clap_orientation = ready
         contact = 30 if overhead else 24
         clap_signal = _pin_signal_peaks(clap_signal, (contact,))
         center_x = side * (
@@ -426,8 +462,9 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
             clap_signal,
             overhead=overhead,
             center_x=center_x,
+            orientation_signal=clap_orientation,
         )
-        clap_recipe = (clap_signal, overhead, center_x)
+        clap_recipe = (clap_signal, clap_orientation, overhead, center_x)
         aa[:, 3, 0] += (0.20 if overhead else 0.13) * hit - 0.10 * wind
         aa[:, 9, 0] += (0.22 if overhead else 0.08) * hit
         aa[:, 12, 0] -= (0.26 if overhead else 0.06) * hit    # look up into an overhead clap
@@ -444,8 +481,18 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         ready = _smoothstep(t / 0.18) * _smoothstep((1.0 - t) / 0.18)
         clap_signal = ready * (_CLAP_GUARD + (1.0 - _CLAP_GUARD) * hit)
         clap_signal = _pin_signal_peaks(clap_signal, (20, 37, 55))
-        _clap_arms(aa, clap_signal, center_x=side * _CLAP_SIDE_OFFSET)
-        clap_recipe = (clap_signal, False, side * _CLAP_SIDE_OFFSET)
+        _clap_arms(
+            aa,
+            clap_signal,
+            center_x=side * _CLAP_SIDE_OFFSET,
+            orientation_signal=ready,
+        )
+        clap_recipe = (
+            clap_signal,
+            ready,
+            False,
+            side * _CLAP_SIDE_OFFSET,
+        )
         trans[:, 2] += 0.025 * np.sin(6.0 * np.pi * t)
         aa[:, 3, 0] += 0.10 * hit
         aa[:, 0, 2] += 0.10 * np.sin(3.0 * np.pi * t)        # groove side to side across the claps
@@ -563,7 +610,7 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
     elif motion_id == "arm_punch":
         ready = _smoothstep(t / 0.24) * _smoothstep((1.0 - t) / 0.18)
         wind = _pulse(t, 0.34, 0.09)
-        hit = _pulse(t, 0.55, 0.12)
+        hit = _pulse(t, 0.54, 0.08)
         right_rest = _stance_wrist("right")
         right_guard = np.array([-0.24, 0.16, 0.20], dtype=np.float32)
         right_strike = np.array([-0.14, 0.08, 0.72], dtype=np.float32)
@@ -638,14 +685,18 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         left_end = left_start.copy()
         left_end[0] += 0.31
         right_touch = left_end.copy()
-        right_touch[0] -= 0.085
+        right_touch[0] -= 0.060
+        # A perfectly superimposed touch disappears in both audit views. Keep the feet close
+        # laterally while staggering the tapping foot slightly forward so the side view can
+        # still show which foot lifted and touched.
+        right_touch[2] += 0.10
         trans[:, 0] += 0.29 * _phase_ease(t, 0.34, 0.62)
 
         left_targets = _foot_swing(
             t, 0.05, 0.46, left_start, left_end, lift=0.085,
         )
         right_targets = _foot_swing(
-            t, 0.50, 0.77, right_start, right_touch, lift=0.075,
+            t, 0.48, 0.68, right_start, right_touch, lift=0.085,
         )
         right_finish = right_start.copy()
         right_finish[0] += float(trans[-1, 0])
@@ -663,7 +714,7 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         aa[:, 12, 2] += 0.08 * _pulse(t, 0.77, 0.12)
         contacts[:, 0:2] = ((t <= 0.05) | (t >= 0.42))[:, None]
         contacts[:, 2:4] = (
-            (t <= 0.50) | ((t >= 0.76) & (t <= 0.86))
+            (t <= 0.48) | ((t >= 0.68) & (t <= 0.88))
         )[:, None]
     elif motion_id in {"step_forward", "step_backward"}:
         direction = 1.0 if motion_id == "step_forward" else -1.0
@@ -686,15 +737,20 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         aa[:, 4, 0] += 0.18 * spot
         aa[:, 5, 0] += 0.18 * spot
     elif motion_id == "body_roll":
-        for joint, center in ((3, 0.30), (6, 0.48), (9, 0.66)):
-            aa[:, joint, 0] += 0.48 * _pulse(t, center, 0.15)
-        aa[:, 12, 0] -= 0.18 * _pulse(t, 0.72, 0.16)
-        trans[:, 2] += 0.035 * np.sin(2.0 * np.pi * t)
-        aa[:, 0, 0] += 0.30 * _pulse(t, 0.20, 0.14)          # the wave starts in the hips
-        aa[:, 4, 0] += 0.26 * _pulse(t, 0.24, 0.16)
-        aa[:, 5, 0] += 0.26 * _pulse(t, 0.24, 0.16)
-        aa[:, 16, 2] -= 0.18 * _pulse(t, 0.62, 0.20)         # arms open as the chest arrives
-        aa[:, 17, 2] += 0.18 * _pulse(t, 0.62, 0.20)
+        # A roll needs a travelling S-curve, not three same-sign bends that accumulate into a
+        # rigid bow. Each spine segment crests and releases before the next one arrives.
+        for joint, center in ((3, 0.28), (6, 0.46), (9, 0.64)):
+            crest = _pulse(t, center, 0.10)
+            release = _pulse(t, center + 0.16, 0.11)
+            aa[:, joint, 0] += 0.44 * crest - 0.30 * release
+        hip = _pulse(t, 0.18, 0.11)
+        aa[:, 0, 0] += 0.26 * hip - 0.18 * _pulse(t, 0.36, 0.12)
+        aa[:, 12, 0] -= 0.20 * _pulse(t, 0.74, 0.13)
+        trans[:, 2] += 0.025 * np.sin(2.0 * np.pi * t)
+        aa[:, 4, 0] += 0.12 * hip
+        aa[:, 5, 0] += 0.12 * hip
+        aa[:, 16, 2] -= 0.20 * _pulse(t, 0.64, 0.17)         # arms open as the chest arrives
+        aa[:, 17, 2] += 0.20 * _pulse(t, 0.64, 0.17)
     elif motion_id == "crouch_drop":
         down = _smoothstep(t / 0.68)
         # The root height is NOT authored here: _ground solves it from the pose so the feet stay
@@ -712,7 +768,7 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         aa[:, 19, 1] -= 0.30 * down
     elif motion_id == "rise_reach":
         load = _smoothstep(t / 0.18)
-        rise = _smoothstep(np.clip((t - 0.40) / 0.40, 0.0, 1.0))
+        rise = _smoothstep(np.clip((t - 0.40) / 0.38, 0.0, 1.0))
         crouch = load * (1.0 - rise)
         aa[:, 1, 0] -= 0.95 * crouch
         aa[:, 2, 0] -= 0.95 * crouch
@@ -721,11 +777,12 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         # One continuous reach up and slightly forward, with the leading arm ahead of the other,
         # so it reads as a rise rather than the symmetric held V of celebrate_hands_up. Both
         # targets stay dominantly vertical -- the forward term only keeps the hands off the back.
+        lead_reach = _smoothstep(np.clip((t - 0.28) / 0.48, 0.0, 1.0))
+        trail_reach = _smoothstep(np.clip((t - 0.42) / 0.42, 0.0, 1.0))
         _solve_arm(aa, "left", _arm_targets(
-            "left", rise, np.array([0.18, 0.58, 0.42], dtype=np.float32)))
+            "left", lead_reach, np.array([0.16, 0.60, 0.46], dtype=np.float32)))
         _solve_arm(aa, "right", _arm_targets(
-            "right", _smoothstep(np.clip((t - 0.30) / 0.58, 0.0, 1.0)),
-            np.array([-0.24, 0.52, 0.20], dtype=np.float32)))
+            "right", trail_reach, np.array([-0.24, 0.53, 0.18], dtype=np.float32)))
         aa[:, 3, 0] -= 0.26 * rise                           # spine extends through the rise
         aa[:, 12, 0] -= 0.24 * rise
     else:
@@ -733,12 +790,13 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
 
     _performance_layer(aa, trans, t)
     if clap_recipe is not None:
-        signal, overhead, center_x = clap_recipe
+        signal, orientation, overhead, center_x = clap_recipe
         _clap_arms(
             aa,
             signal,
             overhead=overhead,
             center_x=center_x,
+            orientation_signal=orientation,
             respect_parent_pose=True,
         )
     if leg_targets is not None:
@@ -752,7 +810,9 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
     native_trans = np.stack([trans[:, 0], trans[:, 2], -trans[:, 1]], axis=1)
     native = np.concatenate([native_trans, rotations, contacts], axis=1).astype(np.float32)
     out = _ground(to_zup(native))
-    if motion_id == "clap_repeat":
+    if motion_id == "clap_single":
+        out = _smooth_single_clap_arms(out, 24)
+    elif motion_id == "clap_repeat":
         out = _smooth_clap_wrists(out, (20, 37, 55))
     return out
 

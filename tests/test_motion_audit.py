@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import numpy as np
 import pytest
 
 from agentlodge.editor import motion_audit
@@ -18,6 +19,11 @@ from agentlodge.editor.motion_audit import (
 )
 from agentlodge.editor.motion_bank import MotionBank
 from scripts.finalize_motion_audit import finalize
+from scripts.validate_motion_audit_ybot import (
+    _clap_checks,
+    _jump_check,
+    _step_touch_check,
+)
 
 
 def _passing_receipt() -> dict:
@@ -74,6 +80,68 @@ def test_required_matrix_includes_automatic_and_explicit_direction_variants():
     assert "clap_single@right" in cases
     assert "jump_two_foot" in cases
     assert len(cases) == 43
+
+
+def test_exact_ybot_geometry_gate_rejects_merged_claps_and_grounded_jumps():
+    floor = np.zeros(45, dtype=np.float32)
+    floor[14:31] = 0.24
+    assert _jump_check(floor, 0, 45)["passed"]
+    assert not _jump_check(np.zeros_like(floor), 0, 45)["passed"]
+
+    joints = np.zeros((45, 22, 3), dtype=np.float32)
+    control_joints = np.zeros_like(joints)
+    joints[:, 16, 0] = control_joints[:, 16, 0] = 0.5
+    joints[:, 17, 0] = control_joints[:, 17, 0] = -0.5
+    joints[:, 20, 0] = control_joints[:, 20, 0] = 0.5
+    joints[:, 21, 0] = control_joints[:, 21, 0] = -0.5
+    for start in (6, 19, 32):
+        joints[start:start + 3, 20, 0] = 0.10
+        joints[start:start + 3, 21, 0] = -0.10
+    metrics = {
+        "joints": joints,
+        "projected": np.zeros_like(joints),
+        "mesh_floor": np.zeros(45, dtype=np.float32),
+    }
+    control = dict(metrics, joints=control_joints)
+    checks, _lateral = _clap_checks(
+        "clap_repeat",
+        metrics,
+        control,
+        0,
+        45,
+        7,
+    )
+    assert all(check["passed"] for check in checks)
+
+    merged = dict(metrics, joints=joints.copy())
+    merged["joints"][19:22, 20, 0] = 0.5
+    merged["joints"][19:22, 21, 0] = -0.5
+    merged["joints"][32:35, 20, 0] = 0.5
+    merged["joints"][32:35, 21, 0] = -0.5
+    checks, _lateral = _clap_checks(
+        "clap_repeat",
+        merged,
+        control,
+        0,
+        45,
+        7,
+    )
+    assert not next(
+        check for check in checks
+        if check["name"] == "rendered_clap_contact_timing"
+    )["passed"]
+
+
+def test_exact_ybot_step_touch_requires_side_view_foot_separation():
+    joints = np.zeros((45, 22, 3), dtype=np.float32)
+    joints[:, 7, 0] = 0.2
+    joints[:, 8, 0] = -0.2
+    event = 34
+    joints[event, 7, :2] = (0.05, 0.08)
+    joints[event, 8, :2] = (-0.05, 0.0)
+    assert _step_touch_check(joints, 0, event)["passed"]
+    joints[event, 7, 1] = 0.01
+    assert not _step_touch_check(joints, 0, event)["passed"]
 
 
 @pytest.mark.parametrize(
@@ -181,6 +249,7 @@ def test_fingerprint_covers_runtime_fk_render_and_review_dependencies():
         "scripts/render_one_ybot.sh",
         "scripts/render_poses_ybot.sh",
         "scripts/render_root_motion.py",
+        "scripts/validate_motion_audit_ybot.py",
         "server/app.py",
         "server/data/smplx_neu_J_1.npy",
         "server/fk.py",
@@ -310,8 +379,32 @@ def _complete_audit_export(tmp_path):
     (audit_dir / "answer_key.json").write_text(json.dumps(answers), encoding="utf-8")
     for relative in motion_audit._mandatory_render_artifacts(review):
         path = audit_dir / relative
+        if path.is_file():
+            continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(f"{relative}\n".encode())
+    metrics_report = {
+        "schema_version": 1,
+        "audit_id": review["audit_id"],
+        "motion_fingerprint": fingerprint,
+        "status": "pass",
+        "takes": {
+            take: {
+                "case_id": answer["case_id"],
+                "status": "pass",
+                "checks": [{
+                    "name": "test",
+                    "passed": True,
+                    "detail": "exact Y-Bot geometry passed",
+                }],
+            }
+            for take, answer in answers.items()
+        },
+    }
+    (audit_dir / motion_audit.YBOT_METRICS_REPORT_NAME).write_text(
+        json.dumps(metrics_report),
+        encoding="utf-8",
+    )
     for take in takes:
         page = audit_dir / "phase_sheets" / f"{take['take']}_review_01.jpg"
         page.write_bytes(f"{take['take']}\n".encode())
@@ -492,3 +585,35 @@ def test_finalizer_rejects_missing_or_modified_render_evidence(tmp_path):
     video.write_bytes(b"changed")
     with pytest.raises(ValueError, match="render artifact changed"):
         finalize(audit_dir, result_path, tmp_path / "changed-receipt.json")
+
+
+def test_finalizer_rejects_failing_or_misbound_exact_ybot_metrics(tmp_path):
+    audit_dir, result_path, _result = _complete_audit_export(tmp_path)
+    report_path = audit_dir / motion_audit.YBOT_METRICS_REPORT_NAME
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    first = next(iter(report["takes"].values()))
+    first["status"] = "fail"
+    first["checks"][0]["passed"] = False
+    report["status"] = "fail"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    record_audit_render_receipt(audit_dir)
+    with pytest.raises(ValueError, match="exact Y-Bot render invariants failed"):
+        finalize(audit_dir, result_path, tmp_path / "failed-ybot.json")
+
+    audit_dir, result_path, _result = _complete_audit_export(tmp_path / "misbound")
+    report_path = audit_dir / motion_audit.YBOT_METRICS_REPORT_NAME
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    next(iter(report["takes"].values()))["case_id"] = "wrong-case"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    record_audit_render_receipt(audit_dir)
+    with pytest.raises(ValueError, match="metrics belong to a different case"):
+        finalize(audit_dir, result_path, tmp_path / "misbound-ybot.json")
+
+
+def test_render_receipt_binds_hidden_answer_key_and_review_manifest(tmp_path):
+    audit_dir, result_path, _result = _complete_audit_export(tmp_path)
+    answers = json.loads((audit_dir / "answer_key.json").read_text(encoding="utf-8"))
+    next(iter(answers.values()))["machine_status"] = "fail"
+    (audit_dir / "answer_key.json").write_text(json.dumps(answers), encoding="utf-8")
+    with pytest.raises(ValueError, match="render artifact changed: answer_key.json"):
+        finalize(audit_dir, result_path, tmp_path / "tampered-answer.json")

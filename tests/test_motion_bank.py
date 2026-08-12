@@ -554,18 +554,23 @@ def test_named_motions_default_to_a_slight_exaggeration():
 def test_rise_reach_has_time_to_read_as_a_planted_level_change():
     """Compressing load, extension, and reach into one beat makes the rise look like a jump."""
     spec = default_motion_bank().resolve("rise_reach")
-    assert spec.recommended_beats == 2.0
-    assert spec.minimum_frames == 36
+    assert spec.recommended_beats == 3.0
+    assert spec.minimum_frames == 45
 
 
 @pytest.mark.parametrize(
     "motion_id,minimum_frames",
     [
-        ("clap_overhead", 24),
+        ("clap_single", 24),
+        ("clap_repeat", 45),
+        ("clap_overhead", 30),
         ("jump_two_foot", 36),
         ("jump_arms_up", 36),
         ("chest_pop", 18),
-        ("rise_reach", 36),
+        ("arm_punch", 24),
+        ("step_touch", 45),
+        ("body_roll", 45),
+        ("rise_reach", 45),
     ],
 )
 def test_blind_failure_actions_keep_their_readable_duration_floor(
@@ -590,7 +595,7 @@ def test_beat_hit_motion_defaults_land_on_a_musical_beat(motion_id):
 
 def test_beat_anchor_prefers_the_strongest_feasible_beat():
     base = _base(180)
-    beats = np.array([30.0, 75.0, 120.0, 165.0])
+    beats = np.array([30.0, 45.0, 60.0, 75.0])
     strengths = np.array([1.0, 0.3, 0.7, 0.1])
 
     _out, strongest = default_motion_bank().apply(
@@ -606,7 +611,7 @@ def test_beat_anchor_prefers_the_strongest_feasible_beat():
 
 def test_agent_threads_beat_strengths_to_named_motion_placement():
     base = _base(180)
-    beats = np.array([30.0, 75.0, 120.0, 165.0])
+    beats = np.array([30.0, 45.0, 60.0, 75.0])
     strengths = np.array([1.0, 0.3, 0.7, 0.1])
     result = AE.run_agent_edit(
         base, 0, 180, "add a clap here",
@@ -1035,14 +1040,14 @@ def test_outer_crossfade_never_overwrites_a_named_event_in_a_short_window():
     motion = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))
     beats = np.arange(5, len(motion), 15)
     result = AE.run_agent_edit(
-        motion, 0, 30, "add a clap on the beat here", beats=beats, max_refine=0,
+        motion, 0, 40, "add a clap on the beat here", beats=beats, max_refine=0,
     )
     report = next(step["motion_bank"] for step in result.log if "motion_bank" in step)
     event = int(report["event_frame"])
     joints = compute_poses(result.motion)["fk_joints"]
     gap = float(np.linalg.norm(joints[event, 20] - joints[event, 21]))
 
-    assert report["action_range"] == [12, 27]
+    assert report["action_range"] == [4, 34]
     assert event == 20
     assert result.ok
     assert 0.005 < gap < 0.12
@@ -1057,18 +1062,18 @@ def test_short_selections_keep_global_beat_cadence_and_fail_when_no_hit_fits():
     beats = np.arange(0, len(motion), 15)
 
     fitted = AE.run_agent_edit(
-        motion, 5, 25, "add a clap on the beat here", beats=beats, max_refine=0,
+        motion, 2, 29, "add a clap on the beat here", beats=beats, max_refine=0,
     )
     fitted_report = next(
         step["motion_bank"] for step in fitted.log if "motion_bank" in step
     )
-    assert fitted_report["action_frames"] == 15
-    assert fitted_report["event_frame"] == 10
+    assert fitted_report["action_frames"] == 24
+    assert fitted_report["event_frame"] == 13
     assert fitted_report["beat_error_frames"] == pytest.approx(0.0)
     assert fitted.ok
 
     impossible = AE.run_agent_edit(
-        motion, 2, 14, "add a clap on the beat here", beats=beats, max_refine=0,
+        motion, 5, 32, "add a clap on the beat here", beats=beats, max_refine=0,
     )
     impossible_report = next(
         step["motion_bank"] for step in impossible.log if "motion_bank" in step
@@ -1077,7 +1082,7 @@ def test_short_selections_keep_global_beat_cadence_and_fail_when_no_hit_fits():
     assert not impossible.ok
 
     beatless = AE.run_agent_edit(
-        motion, 5, 25, "add a clap here", beats=np.array([]), max_refine=0,
+        motion, 5, 32, "add a clap here", beats=np.array([]), max_refine=0,
     )
     beatless_report = next(
         step["motion_bank"] for step in beatless.log if "motion_bank" in step
@@ -1604,7 +1609,7 @@ def test_visual_audit_derives_counterflow_ownership_instead_of_trusting_the_repo
 
 @needs_fk
 @pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
-def test_visual_audit_rejects_every_protocol_six_failure_signature():
+def test_visual_audit_rejects_every_protocol_eight_failure_signature():
     from agentlodge.dance.format import to_editor139
     from scripts.build_motion_bank_audit import _machine_checks
 
@@ -1692,6 +1697,17 @@ def test_visual_audit_rejects_every_protocol_six_failure_signature():
         beats=beats,
         direction="right",
     )
+    checks, status = _machine_checks(
+        host,
+        overhead,
+        bank.resolve("clap_overhead"),
+        overhead_report,
+    )
+    assert status == "pass"
+    assert next(
+        check for check in checks
+        if check["name"] == "readable_clap_contact_timing"
+    )["passed"]
     start, end = overhead_report["action_range"]
     event = int(overhead_report["event_frame"])
     held_clap = overhead.copy()
@@ -1708,6 +1724,94 @@ def test_visual_audit_rejects_every_protocol_six_failure_signature():
     assert status == "fail"
     assert not next(
         check for check in checks if check["name"] == "overhead_clap_approach_recoil"
+    )["passed"]
+
+    repeat, repeat_report = bank.apply(
+        host,
+        "clap_repeat",
+        beats=beats,
+        direction="left",
+    )
+    start, end = repeat_report["action_range"]
+    merged_repeat = repeat.copy()
+    cutoff = start + (end - start) // 3
+    for joint in (13, 14, 16, 17, 18, 19, 20, 21):
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        merged_repeat[cutoff:end, channels] = host[cutoff:end, channels]
+    checks, status = _machine_checks(
+        host,
+        merged_repeat,
+        bank.resolve("clap_repeat"),
+        repeat_report,
+    )
+    assert status == "fail"
+    assert not next(
+        check for check in checks
+        if check["name"] == "readable_clap_contact_timing"
+    )["passed"]
+
+    punch, punch_report = bank.apply(
+        host,
+        "arm_punch",
+        beats=beats,
+        direction="right",
+    )
+    start, end = punch_report["action_range"]
+    collapsed_punch = punch.copy()
+    for joint in (13, 14, 16, 17, 18, 19, 21):
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        collapsed_punch[start:end, channels] = host[start:end, channels]
+    checks, status = _machine_checks(
+        host,
+        collapsed_punch,
+        bank.resolve("arm_punch"),
+        punch_report,
+    )
+    assert status == "fail"
+    assert not next(
+        check for check in checks
+        if check["name"] == "guard_strike_recoil_signature"
+    )["passed"]
+
+    touch, touch_report = bank.apply(
+        host,
+        "step_touch",
+        beats=beats,
+        direction="left",
+    )
+    event = int(touch_report["event_frame"])
+    obscured_touch = touch.copy()
+    for joint in (1, 2, 4, 5, 7, 8, 10, 11):
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        obscured_touch[event, channels] = host[event, channels]
+    checks, status = _machine_checks(
+        host,
+        obscured_touch,
+        bank.resolve("step_touch"),
+        touch_report,
+    )
+    assert status == "fail"
+    assert not next(
+        check for check in checks
+        if check["name"] == "step_touch_phase_signature"
+    )["passed"]
+
+    roll, roll_report = bank.apply(host, "body_roll", beats=beats)
+    start, end = roll_report["action_range"]
+    rigid_roll = roll.copy()
+    for joint in (6, 9):
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        rigid_roll[start:end, channels] = host[start:end, channels]
+    checks, status = _machine_checks(
+        host,
+        rigid_roll,
+        bank.resolve("body_roll"),
+        roll_report,
+    )
+    assert status == "fail"
+    assert not next(
+        check for check in checks
+        if check["name"] == "sequential_body_roll_signature"
     )["passed"]
 
 
@@ -2536,7 +2640,7 @@ def test_a_forward_punch_has_guard_strike_and_recoil_phases():
     assert float(forward_reach[peak]) > 1.5 * float(side_reach[peak])
     assert float(arm_length[peak] - np.min(arm_length[:peak])) > 0.15
     assert float(arm_length[peak] - np.min(arm_length[peak + 1:])) > 0.15
-    assert int(np.count_nonzero(forward_reach > 0.9 * forward_reach[peak])) <= 3
+    assert int(np.count_nonzero(forward_reach > 0.9 * forward_reach[peak])) <= 5
     assert float(np.linalg.norm(joints[peak, 20] - joints[peak, 9])) < 0.30
     assert float(np.linalg.norm(joints[peak, 20] - joints[peak, 16])) < 0.35
     assert window_metrics(out, beats)["jerk"] < 5.0 * window_metrics(base, beats)["jerk"]

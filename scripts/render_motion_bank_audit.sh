@@ -19,12 +19,17 @@ FIXED_CAMERA="${AUDIT_FIXED_CAMERA:-1}"
 CAMERA_ARG=()
 [ "$FIXED_CAMERA" = "1" ] && CAMERA_ARG=(--fixed-camera)
 
-rm -f "$AUDIT_DIR/render_receipt.json" "$AUDIT_DIR/render_receipt.json.tmp"
+rm -f \
+  "$AUDIT_DIR/render_receipt.json" \
+  "$AUDIT_DIR/render_receipt.json.tmp" \
+  "$AUDIT_DIR/ybot_metrics_report.json" \
+  "$AUDIT_DIR/ybot_metrics_report.json.tmp"
 rm -rf "$VIDEOS" "$AUDIT_DIR/phase_sheets"
 find "$AUDIT_DIR" -maxdepth 1 -type d \
   \( -name '*_front_frames' -o -name '*_side_frames' \) -exec rm -rf -- {} +
 find "$AUDIT_DIR" -maxdepth 1 -type f \
-  \( -name '*_front.log' -o -name '*_side.log' \) -delete
+  \( -name '*_front.log' -o -name '*_side.log' \
+     -o -name '*_front_ybot.npz' -o -name '*_side_ybot.npz' \) -delete
 mkdir -p "$VIDEOS"
 "$PY" -c \
   'import json,sys; p=json.load(open(sys.argv[1])); p["fixed_camera"]=sys.argv[2]=="1"; open(sys.argv[1],"w").write(json.dumps(p,indent=2))' \
@@ -49,6 +54,7 @@ render_pair() {
         --poses "$AUDIT_DIR/${take}_${view}.npz" \
         --ybot "$YBOT" \
         --frames-dir "$frames" \
+        --rig-metrics "$AUDIT_DIR/${take}_${view}_ybot.npz" \
         --width "$WIDTH" --height "$HEIGHT" --samples "$SAMPLES" \
         --engine eevee --denoise 1 --color 0.5,0.5,0.52 --fast "${CAMERA_ARG[@]}" \
         >"$log" 2>&1; then
@@ -74,6 +80,7 @@ for take in "${TAKES[@]}"; do
 done
 
 "$PY" "$APP/scripts/build_motion_audit_sheets.py" "$AUDIT_DIR"
+"$PY" "$APP/scripts/validate_motion_audit_ybot.py" --audit "$AUDIT_DIR"
 "$PY" "$APP/scripts/record_motion_audit_render.py" "$AUDIT_DIR"
 echo "AUDIT_PHASE_SHEETS_READY $AUDIT_DIR/phase_sheets"
 echo "AUDIT_READY $AUDIT_DIR/review.html"

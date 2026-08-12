@@ -45,9 +45,10 @@ beats define playback duration. Its semantic event is aligned to a nearby music 
 The action's duration is deliberately not a function of the selection. Retiming the clip to fill
 whatever interval the user happened to drag makes its speed an accident of the gesture that
 selected it: a 1.5 s clap dropped on a 4 s selection played at 0.4x, smeared across nearly eight
-beats, and read as slow motion fighting the song rather than as dancing with it. At a 15-frame
-beat, a one-beat clap is therefore 15 frames even though its canonical source contains 45 frames.
-This is intentional retiming to the music contract, not truncation.
+beats, and read as slow motion fighting the song rather than as dancing with it. In bank version
+`1.1.4`, a single clap uses two beats and repeated claps use three, so a 15-frame beat produces
+30- and 45-frame actions rather than compressing either gesture into a half-second hit. This is
+intentional retiming to the music contract, not truncation.
 
 Retiming every authored in-between pose is still wrong for a one-beat pose accent. The source clips
 begin from a shared ready stance, so compressing a full overhead-clap, punch, or arm-raise wind-up
@@ -58,10 +59,10 @@ Joints with meaningful internal timing retain the clip trajectory: the hand osci
 the three contacts of a repeated clap, and the root and leg phases of jumps and level changes.
 
 Beat fitting also has a lower speed bound when compressing further would erase required phases.
-The jumps now span two beats and require at least 24 action frames. At a 15-frame beat this yields a
-one-second load, takeoff, flight, landing, and recovery instead of the previous half-second jump.
-At unusually fast tempos the bank adds another beat rather than compressing below the minimum; a
-selection too short to contain that duration fails with a clear request for a longer window.
+Single clap and punch require at least 24 frames, overhead clap 30, both jumps 36, and repeated
+clap, step touch, body roll, and rise/reach 45. At unusually fast tempos the bank adds another beat
+rather than compressing below the minimum; a selection too short to contain that duration fails
+with a clear request for a longer window.
 
 Beat-locking never fills the window to its last frame. A few frames of real dance are always kept
 after the action for the hand-back to fade into; when an action finished two frames from the edge
@@ -488,14 +489,15 @@ run. The supported 20-motion vocabulary is visible to the reviewer, but no take-
 embedded in the page. Shuffled take ids prevent the manifest order or filename from giving away the
 answer.
 
-Protocol version 6 also runs machine visual invariants on the exact composed host motion. Claps
+Protocol version 8 runs machine visual invariants on the exact composed host motion. Claps
 cannot enter review unless palm contact is below 1 cm, palm planes oppose, fingers are not vertical,
-the torso heading stays within 3 degrees of the source, and every unowned source channel remains
-unchanged. Left and right clap contacts must also separate visibly from the forward contact. These
-checks diagnose known failures but do not replace the human verdict. Before reveal, the reviewer
-locks both the action name and observed direction. After reveal, the reviewer must mark every visual
-phase as reviewed and record pass or fail plus an evidence note for every take. Finalize that
-exported result with:
+both hands visibly approach, the torso heading stays within 3 degrees of the source, and every
+unowned source channel remains unchanged. The same pre-render gate requires guard-strike-recoil
+punch phases, open-step-touch-stagger foot phases, and sequential lower-to-upper body-roll crests
+and releases. Before reveal, the reviewer locks both the action name and observed direction using
+the action-specific direction rules shown in the UI. After reveal, the reviewer must mark every
+visual phase as reviewed and record pass or fail plus an evidence note for every take. These checks
+diagnose known failures but do not replace the human verdict. Finalize that exported result with:
 
 ```bash
 python scripts/finalize_motion_audit.py \
@@ -506,9 +508,14 @@ python scripts/finalize_motion_audit.py \
 The finalizer rejects missed blind guesses, failed phases, failed machine checks, missing direction
 variants, empty evidence, incomplete per-take playback or comparison proof, invalid timestamp order,
 stale audit artifacts, or a fingerprint mismatch. The render step clears old videos and frame
-directories first, then writes an atomic receipt containing hashes for every pose input,
-front/side/combined video, and review sheet. A partial render or any artifact modified after
-rendering therefore cannot be finalized. It writes
+directories first, captures exact posed Y-Bot joints, camera projections, mesh-floor clearance, and
+rendered-frame coverage for every source/edit front/side pass, then runs
+`scripts/validate_motion_audit_ybot.py`. That stage blocks incorrect jump clearance, airborne
+grounded actions, unreadable clap counts or direction separation, missing punch recoil, weak planted
+rises, and collapsed step-touch silhouettes. The atomic render receipt hashes the review manifest,
+hidden answer key, exact-rig report and NPZs, pose inputs, front/side/combined videos, and review
+sheets. A partial render or any artifact modified after rendering therefore cannot be finalized. It
+writes
 `assets/motion_bank/audit_receipt.json`, which hashes the motion authoring, composition, planner,
 renderer and camera dependencies, FK template, audit code, manifest, contracts, and every clip.
 Text files are line-ending normalized so the same audited content has the same fingerprint on
@@ -619,10 +626,8 @@ write a production receipt. The failures were all three `side_step` directions, 
 gap: valid contacts and displacement were not sufficient when normal-speed silhouettes remained
 ambiguous.
 
-The remediation keeps each motion's musical recommendation while adding a minimum readable frame
-floor. Beat fitting advances by whole beats until the floor is met: overhead clap uses 24 frames,
-both jumps and `rise_reach` use 36, and `chest_pop` uses 18. On the audit's 15-frame beat grid this
-produces 30-frame overhead and chest actions and 45-frame jump and rise actions. The side step now
+That remediation kept each motion's musical recommendation while adding a minimum readable frame
+floor. Beat fitting advances by whole beats until the floor is met. The side step now
 travels farther into a wider stance and carries a same-side arm and head cue that mirrors with the
 requested dancer-relative direction. `jump_arms_up` uses a wide airborne V rather than converging
 hands. `rise_reach` holds a deeper planted load and reaches upward with one hand clearly leading.
@@ -639,12 +644,32 @@ closed-arm jump silhouette, head-led chest motion, airborne rise contacts, and o
 without separation or smooth recoil. These machine gates can reject a known failure earlier, but
 the fresh 43-case blind review remains the authority for release.
 
-Review protocol 7 also makes that authority explicit. A receipt now requires a named independent
+Review protocol 7 made that authority explicit. A receipt requires a named independent
 reviewer attestation bound to the audit ID and motion fingerprint, confirmation that answers stayed
 hidden until every guess was locked, and a fresh verification nonce. Pod deployment additionally
 refuses a receipt that is not committed or whose exact local commit has not been pushed to
 `origin/feature/named-motion-bank`; a locally manufactured or stale receipt therefore cannot be used
 as a deployment waiver.
+
+The complete protocol-7 audit at commit `2b16f83`, seed `90173`, proved uninterrupted 1.0x playback
+and comparison access for all 43 takes, froze every blind decision, and revealed the answer key only
+after locking. It still failed release: 13 action guesses were wrong and 11 takes were independently
+marked visually ambiguous. Their union contained 18 blocking takes, so only 25/43 were both correct
+and unambiguous. No production receipt was generated.
+
+Exact rendered geometry showed why protocol 8 needs both forms of evidence. Some blind claims were
+physically false: both jump variants had substantial measured mesh clearance, while bounce and
+rise/reach remained grounded, and several claps had exact contact. Those measurements explain a
+review error but cannot convert a confusing silhouette into a pass. Genuine defects remained:
+repeated-clap contacts were too brief, side single claps resembled punches, step-touch feet collapsed
+in profile, and body roll read as a rigid fold.
+
+Bank `1.1.4` lengthens the affected phrases, gives claps a held contact with eased approach and
+recoil, keeps palms oriented before contact, makes punches cock and retract, staggers the step-touch
+feet in depth, propagates body roll through signed lower/mid/upper crests, and gives rise/reach one
+clearly leading arm. Protocol 8 binds the exact Y-Bot metric report and every underlying render
+artifact into receipt schema 2. Release still requires a new randomized 43/43 blind pass on the
+exact pushed commit; machine evidence may reject a take, but it may never waive a human failure.
 
 ## Adding a motion
 

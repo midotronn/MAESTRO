@@ -21,6 +21,7 @@ from agentlodge.editor.motion_audit import (  # noqa: E402
     required_audit_cases,
     validate_audit_render_receipt,
     validate_audit_receipt,
+    validate_ybot_metrics_report,
 )
 from agentlodge.editor.motion_bank import MotionBank, normalize_name  # noqa: E402
 
@@ -209,6 +210,7 @@ def finalize(audit_dir: Path, review_result: Path, output: Path) -> dict:
         raise ValueError("release audit must use the fixed camera that exposes root travel")
     try:
         validate_audit_render_receipt(audit_dir, review)
+        ybot_metrics = validate_ybot_metrics_report(audit_dir, review)
     except RuntimeError as exc:
         raise ValueError(str(exc)) from exc
     if result.get("audit_id") != review.get("audit_id"):
@@ -243,6 +245,8 @@ def finalize(audit_dir: Path, review_result: Path, output: Path) -> dict:
         decision = decisions[take_id]
         answer = answers[take_id]
         case_id = answer["case_id"]
+        if ybot_metrics["takes"][take_id].get("case_id") != case_id:
+            raise ValueError(f"{take_id}: exact Y-Bot metrics belong to a different case")
         _validate_review_proof(
             take,
             decision,

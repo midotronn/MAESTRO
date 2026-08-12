@@ -13,7 +13,8 @@ from agentlodge.editor.motion_bank import MotionBank, MotionSpec
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RECEIPT = ROOT / "assets" / "motion_bank" / "audit_receipt.json"
 RENDER_RECEIPT_NAME = "render_receipt.json"
-REVIEW_PROTOCOL_VERSION = 7
+YBOT_METRICS_REPORT_NAME = "ybot_metrics_report.json"
+REVIEW_PROTOCOL_VERSION = 8
 REVIEWER_ATTESTATION_STATEMENT = (
     "I independently reviewed every source/edit pair at normal speed with answers hidden "
     "until all guesses were locked, and I did not waive any failed or ambiguous case."
@@ -43,6 +44,7 @@ _AUDITED_FILES = (
     "scripts/render_one_ybot.sh",
     "scripts/render_poses_ybot.sh",
     "scripts/render_root_motion.py",
+    "scripts/validate_motion_audit_ybot.py",
     "server/app.py",
     "server/data/smplx_neu_J_1.npy",
     "server/fk.py",
@@ -131,11 +133,18 @@ def _mandatory_render_artifacts(review: dict) -> set[str]:
         for relative in (
             f"{identifier}_front.npz",
             f"{identifier}_side.npz",
+            f"{identifier}_front_ybot.npz",
+            f"{identifier}_side_ybot.npz",
             f"videos/{identifier}_front.mp4",
             f"videos/{identifier}_side.mp4",
             f"videos/{identifier}.mp4",
         )
     }
+    artifacts.update({
+        "review.json",
+        "answer_key.json",
+        YBOT_METRICS_REPORT_NAME,
+    })
     for take in review.get("takes", ()):
         identifier = take["take"]
         artifacts.update({
@@ -170,7 +179,7 @@ def record_audit_render_receipt(audit_dir: Path) -> dict:
     if missing:
         raise RuntimeError(f"motion audit render is incomplete: {missing}")
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "audit_id": review["audit_id"],
         "motion_fingerprint": review["motion_fingerprint"],
         "fixed_camera": True,
@@ -196,7 +205,7 @@ def validate_audit_render_receipt(audit_dir: Path, review: dict | None = None) -
     if not path.is_file():
         raise RuntimeError("motion audit render receipt is missing")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if int(payload.get("schema_version", 0)) != 1:
+    if int(payload.get("schema_version", 0)) != 2:
         raise RuntimeError("motion audit render receipt has an unsupported schema")
     if payload.get("audit_id") != review.get("audit_id"):
         raise RuntimeError("motion audit render receipt belongs to a different audit")
@@ -224,6 +233,47 @@ def validate_audit_render_receipt(audit_dir: Path, review: dict | None = None) -
             raise RuntimeError(f"motion audit render artifact is missing: {relative}")
         if _sha256_file(candidate) != expected:
             raise RuntimeError(f"motion audit render artifact changed: {relative}")
+    return payload
+
+
+def validate_ybot_metrics_report(
+    audit_dir: Path,
+    review: dict | None = None,
+) -> dict:
+    """Reject an incomplete or failing exact-rig audit report."""
+    audit_dir = Path(audit_dir).resolve()
+    review = review or json.loads(
+        (audit_dir / "review.json").read_text(encoding="utf-8")
+    )
+    path = audit_dir / YBOT_METRICS_REPORT_NAME
+    if not path.is_file():
+        raise RuntimeError("motion audit has no exact Y-Bot metrics report")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if int(payload.get("schema_version", 0)) != 1:
+        raise RuntimeError("motion audit Y-Bot metrics report has an unsupported schema")
+    if payload.get("audit_id") != review.get("audit_id"):
+        raise RuntimeError("motion audit Y-Bot metrics belong to a different audit")
+    if payload.get("motion_fingerprint") != review.get("motion_fingerprint"):
+        raise RuntimeError("motion audit Y-Bot metrics have a stale fingerprint")
+    takes = payload.get("takes")
+    if not isinstance(takes, dict):
+        raise RuntimeError("motion audit Y-Bot metrics report has no take results")
+    expected = {take["take"] for take in review.get("takes", ())}
+    if set(takes) != expected:
+        raise RuntimeError("motion audit Y-Bot metrics do not cover every take exactly once")
+    for take_id, result in takes.items():
+        if result.get("status") != "pass":
+            raise RuntimeError(f"{take_id}: exact Y-Bot render invariants failed")
+        checks = result.get("checks")
+        if not isinstance(checks, list) or not checks:
+            raise RuntimeError(f"{take_id}: exact Y-Bot render checks are missing")
+        if not all(
+            isinstance(check, dict) and check.get("passed") is True
+            for check in checks
+        ):
+            raise RuntimeError(f"{take_id}: an exact Y-Bot render check is not passing")
+    if payload.get("status") != "pass":
+        raise RuntimeError("motion audit exact Y-Bot metrics did not pass")
     return payload
 
 

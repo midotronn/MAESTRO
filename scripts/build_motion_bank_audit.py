@@ -69,11 +69,15 @@ def _prepare_output(output: Path) -> None:
         "take_*.npy",
         "take_*_front.npz",
         "take_*_side.npz",
+        "take_*_front_ybot.npz",
+        "take_*_side_ybot.npz",
         "take_*_front.log",
         "take_*_side.log",
         "control_*.npy",
         "control_*_front.npz",
         "control_*_side.npz",
+        "control_*_front_ybot.npz",
+        "control_*_side_ybot.npz",
         "control_*_front.log",
         "control_*_side.log",
     ):
@@ -83,6 +87,7 @@ def _prepare_output(output: Path) -> None:
     for name in (
         "answer_key.json",
         "render_receipt.json",
+        "ybot_metrics_report.json",
         "review.html",
         "review.json",
     ):
@@ -204,6 +209,14 @@ def _declared_clap_contacts(spec, report: dict, gaps: np.ndarray) -> tuple[int, 
         }
         contacts.append(min(mapped, key=lambda frame: float(gaps[frame])))
     return tuple(contacts)
+
+
+def _true_runs(mask: np.ndarray) -> tuple[tuple[int, int], ...]:
+    """Return inclusive contiguous runs from a one-dimensional boolean mask."""
+    values = np.asarray(mask, dtype=bool).reshape(-1)
+    starts = np.flatnonzero(values & ~np.r_[False, values[:-1]])
+    ends = np.flatnonzero(values & ~np.r_[values[1:], False])
+    return tuple((int(start), int(end)) for start, end in zip(starts, ends))
 
 
 def _dancer_axes(
@@ -359,6 +372,42 @@ def _machine_checks(
             ),
         })
 
+    if spec.id == "step_touch":
+        start, end = map(int, report["action_range"])
+        event = int(report["event_frame"])
+        joints = compute_poses(edited)["fk_joints"]
+        _left_axis, forward_axis = _dancer_axes(edited, joints, start)
+        trailing = 8 if resolved_direction == "left" else 7
+        event_gap = float(np.linalg.norm(
+            joints[event, 7, :2] - joints[event, 8, :2]
+        ))
+        pre_touch = joints[start + 5:max(start + 6, event - 4)]
+        open_gap = float(np.max(np.linalg.norm(
+            pre_touch[:, 7, :2] - pre_touch[:, 8, :2],
+            axis=1,
+        )))
+        foot_delta = joints[event, 7, :2] - joints[event, 8, :2]
+        sagittal_stagger = abs(float(foot_delta @ forward_axis))
+        trailing_clearance = float(
+            np.max(joints[start:event, trailing, 2]) - joints[event, trailing, 2]
+        )
+        touch_passed = (
+            resolved_direction in {"left", "right"}
+            and open_gap > 0.35
+            and event_gap < 0.14
+            and sagittal_stagger > 0.06
+            and trailing_clearance > 0.08
+        )
+        checks.append({
+            "name": "step_touch_phase_signature",
+            "passed": bool(touch_passed),
+            "detail": (
+                f"open/touch ankle gaps {open_gap:.4f}/{event_gap:.4f} m, "
+                f"sagittal touch stagger {sagittal_stagger:.4f} m, "
+                f"trailing-foot clearance {trailing_clearance:.4f} m"
+            ),
+        })
+
     if spec.id in {"jump_two_foot", "jump_arms_up"}:
         start, end = map(int, report["action_range"])
         event = int(report["event_frame"])
@@ -415,6 +464,88 @@ def _machine_checks(
             "name": "jump_arm_signature",
             "passed": bool(arm_passed),
             "detail": arm_detail,
+        })
+
+    if spec.id == "arm_punch":
+        start, end = map(int, report["action_range"])
+        joints = compute_poses(edited[start:end])["fk_joints"]
+        if resolved_direction == "left":
+            punch_wrist, punch_shoulder = 20, 16
+            guard_wrist, guard_shoulder = 21, 17
+        else:
+            punch_wrist, punch_shoulder = 21, 17
+            guard_wrist, guard_shoulder = 20, 16
+        extension = np.linalg.norm(
+            joints[:, punch_wrist] - joints[:, punch_shoulder],
+            axis=1,
+        )
+        peak = int(np.argmax(extension))
+        guard_length = float(np.linalg.norm(
+            joints[peak, guard_wrist] - joints[peak, guard_shoulder]
+        ))
+        guard_chest = float(np.linalg.norm(
+            joints[peak, guard_wrist] - joints[peak, 9]
+        ))
+        before = float(np.min(extension[:peak])) if peak > 0 else float("inf")
+        after = (
+            float(np.min(extension[peak + 1:]))
+            if peak + 1 < len(extension)
+            else float("inf")
+        )
+        punch_passed = (
+            resolved_direction in {"left", "right"}
+            and 2 < peak < len(extension) - 3
+            and float(extension[peak] - before) > 0.25
+            and float(extension[peak] - after) > 0.25
+            and float(extension[peak] - guard_length) > 0.20
+            and guard_chest < 0.32
+        )
+        checks.append({
+            "name": "guard_strike_recoil_signature",
+            "passed": bool(punch_passed),
+            "detail": (
+                f"strike peak at local frame {peak}, arm length "
+                f"{float(extension[peak]):.4f} m versus pre/post "
+                f"{before:.4f}/{after:.4f} m; guard arm/chest distances "
+                f"{guard_length:.4f}/{guard_chest:.4f} m"
+            ),
+        })
+
+    if spec.id == "body_roll":
+        start, end = map(int, report["action_range"])
+        host_local = _sixd_to_matrix(
+            host[start:end, 3:135].reshape(-1, 22, 6)
+        )
+        edit_local = _sixd_to_matrix(
+            edited[start:end, 3:135].reshape(-1, 22, 6)
+        )
+        local_delta = np.swapaxes(host_local, -1, -2) @ edit_local
+        delta_aa = _matrix_to_axis_angle(local_delta)
+        signals = [delta_aa[:, joint, 0] for joint in (3, 6, 9)]
+        crest_frames = [int(np.argmax(signal)) for signal in signals]
+        release_frames = [int(np.argmin(signal)) for signal in signals]
+        roll_passed = (
+            crest_frames[0] + 4 <= crest_frames[1]
+            and crest_frames[1] + 4 <= crest_frames[2]
+            and all(
+                float(signal[crest]) > 0.25
+                and float(signal[release]) < -0.12
+                and release >= crest + 5
+                for signal, crest, release in zip(
+                    signals,
+                    crest_frames,
+                    release_frames,
+                )
+            )
+        )
+        checks.append({
+            "name": "sequential_body_roll_signature",
+            "passed": bool(roll_passed),
+            "detail": (
+                f"lower/mid/upper crest frames {crest_frames}, release frames "
+                f"{release_frames}, crest amplitudes "
+                f"{[round(float(signal[crest]), 4) for signal, crest in zip(signals, crest_frames)]}"
+            ),
         })
 
     if spec.id == "chest_pop":
@@ -531,6 +662,7 @@ def _machine_checks(
         })
         start, end = map(int, report["action_range"])
         joints = compute_poses(edited)["fk_joints"]
+        host_joints = compute_poses(host)["fk_joints"]
         global_r = _global_joint_rotations(edited)
         host_global = _global_joint_rotations(host)
         gaps = np.linalg.norm(joints[:, 20] - joints[:, 21], axis=-1)
@@ -539,6 +671,7 @@ def _machine_checks(
         left_axis = np.array([1.0, 0.0, 0.0], dtype=np.float32)
         right_axis = np.array([-1.0, 0.0, 0.0], dtype=np.float32)
         contact_gaps = []
+        bilateral_moves = []
         palm_dots = []
         finger_dots = []
         finger_ups = []
@@ -548,6 +681,13 @@ def _machine_checks(
             left_finger = global_r[frame, 20] @ left_axis
             right_finger = global_r[frame, 21] @ right_axis
             contact_gaps.append(float(gaps[frame]))
+            bilateral_moves.append([
+                float(np.linalg.norm(
+                    (joints[frame, wrist] - joints[frame, 0])
+                    - (host_joints[frame, wrist] - host_joints[frame, 0])
+                ))
+                for wrist in (20, 21)
+            ])
             palm_dots.append(float(left_palm @ right_palm))
             finger_dots.append(float(left_finger @ right_finger))
             finger_ups.append(float(0.5 * (left_finger[2] + right_finger[2])))
@@ -608,6 +748,51 @@ def _machine_checks(
                 "name": "host_facing_continuity",
                 "passed": facing_passed,
                 "detail": facing_detail,
+            },
+        ])
+        action_gaps = gaps[start:end]
+        closure_mask = action_gaps < 0.02
+        # A one-frame near-contact excursion is still one physical clap, not a second
+        # contact. Bridge it only while the hands remain within 10 cm; repeated claps
+        # still need a visibly wider separation between their distinct closure runs.
+        for frame in range(1, len(closure_mask) - 1):
+            if (
+                not closure_mask[frame]
+                and closure_mask[frame - 1]
+                and closure_mask[frame + 1]
+                and action_gaps[frame] < 0.10
+            ):
+                closure_mask[frame] = True
+        closure_runs = _true_runs(closure_mask)
+        expected_runs = 3 if spec.id == "clap_repeat" else 1
+        timing_passed = (
+            len(closure_runs) == expected_runs
+            and all(end_frame - start_frame + 1 >= 3 for start_frame, end_frame in closure_runs)
+        )
+        if timing_passed and len(closure_runs) > 1:
+            timing_passed = all(
+                float(np.max(gaps[start + left_end + 1:start + right_start])) > 0.05
+                for (_left_start, left_end), (right_start, _right_end)
+                in zip(closure_runs, closure_runs[1:])
+            )
+        checks.extend([
+            {
+                "name": "readable_clap_contact_timing",
+                "passed": bool(timing_passed),
+                "detail": (
+                    f"closure runs {list(closure_runs)} at < 0.0200 m; expected "
+                    f"{expected_runs} run(s), each at least 3 frames with visible separation"
+                ),
+            },
+            {
+                "name": "bilateral_clap_approach",
+                "passed": bool(bilateral_moves) and all(
+                    min(movements) > 0.10 for movements in bilateral_moves
+                ),
+                "detail": (
+                    "left/right wrist movement versus source at contact "
+                    f"{[[round(value, 4) for value in pair] for pair in bilateral_moves]} m"
+                ),
             },
         ])
         if spec.id == "clap_overhead":
@@ -842,6 +1027,12 @@ def _review_html(
     <p><strong>Pass rule:</strong> {html.escape(rule)}</p>
     <p>Compare the source choreography with the edited take, then name only the action that was
        added. The answer key is not loaded until every take has a non-empty locked guess.</p>
+    <p><strong>Direction scoring:</strong> use the dancer's observed direction, never the camera's.
+       For mirrored gestures choose the active arm or lead side; for claps choose the side where
+       the hands meet or <em>forward</em> for a centered contact; for turns and lateral travel use
+       dancer-relative rotation or travel. Forward/backward steps use <em>No distinct direction</em>
+       because that direction is already part of the action name. An automatic edit is scored by
+       the direction it visibly resolved to, not by the word "auto".</p>
     {facing_note}
     <details>
       <summary>Supported motion vocabulary ({len(vocabulary)})</summary>

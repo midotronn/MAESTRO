@@ -6,8 +6,8 @@
       "recognizable_as": "one chest-level clap directed with the surrounding dance or to the requested side",
       "required_phases": [
         "hands begin apart",
-        "both hands approach each other",
-        "one visibly closed palm-to-palm contact occurs at chest level with relaxed diagonal fingers",
+        "both hands rise into a visible open guard before approaching each other",
+        "one visibly closed palm-to-palm contact is held long enough to read at chest level with relaxed diagonal fingers",
         "the left and right contact points are unmistakably displaced from the forward clap; auto preserves source facing, while an explicit counter-flow side may use only a bounded upper-torso turn",
         "the source root, torso, legs, and dance rhythm continue through the arm gesture",
         "hands separate into the host dance"
@@ -17,7 +17,7 @@
       "recognizable_as": "three chest-level claps directed with the surrounding dance or to the requested side",
       "required_phases": [
         "hands rise to a chest-level guard",
-        "three visibly closed contacts occur with relaxed diagonal fingers and clear recoil",
+        "three visibly closed contacts each persist across multiple rendered frames with relaxed diagonal fingers and clear recoil",
         "the requested left or right contact stays unmistakably displaced from the forward clap; only an explicit counter-flow side may add a bounded upper-torso turn",
         "the source root, torso, legs, and dance rhythm continue throughout",
         "hands stay near the guard between contacts",
@@ -28,7 +28,7 @@
       "recognizable_as": "one directional overhead clap",
       "required_phases": [
         "both arms rise above the head",
-        "palms visibly meet above the head without intersecting it",
+        "palms visibly meet above the head for a readable contact hold without intersecting it",
         "the overhead contact shifts unmistakably toward the requested or inferred direction; only an explicit counter-flow side may add a bounded upper-torso turn",
         "the source root, torso, legs, and dance rhythm continue through the arm gesture",
         "hands separate through a smooth recoil without a wrist flip",
@@ -127,8 +127,8 @@
       "required_phases": [
         "the lead foot steps laterally and accepts the weight",
         "the root settles over the lead leg",
-        "the trailing foot lifts and taps beside the lead foot",
-        "the root pauses during the tap instead of continuing sideways"
+        "the trailing foot lifts and taps close beside but slightly forward of the lead foot so both views retain separation",
+        "the root pauses and the touch holds briefly instead of continuing sideways"
       ]
     },
     "step_forward": {
@@ -170,9 +170,9 @@
     "body_roll": {
       "recognizable_as": "a body roll",
       "required_phases": [
-        "the wave begins in the hips or lower torso",
-        "the curve travels sequentially through the spine",
-        "the chest and upper torso arrive after the hips",
+        "the wave begins in the hips or lower torso with a visible crest and release",
+        "an S-curve travels sequentially through the spine rather than stacking same-direction bends",
+        "the chest and upper torso crest after the hips have begun to release",
         "the action does not read as one rigid bow or lean"
       ]
     },
@@ -190,7 +190,7 @@
       "required_phases": [
         "the action begins from a visibly low level",
         "the legs extend while the torso rises",
-        "both arms reach upward with one hand visibly leading forward",
+        "both arms reach upward with one hand visibly beginning and leading forward before the other",
         "the feet remain planted so the action does not become a jump"
       ]
     }

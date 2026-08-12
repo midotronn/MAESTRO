@@ -24,6 +24,7 @@ import sys
 
 import bpy  # type: ignore
 import numpy as np
+from bpy_extras.object_utils import world_to_camera_view  # type: ignore
 from mathutils import Matrix, Quaternion, Vector  # type: ignore
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -80,6 +81,8 @@ def parse_args():
     p.add_argument("--fixed-camera", action="store_true",
                    help="Preserve root motion but keep the studio camera and key light fixed. "
                         "Use for visual audits where camera following would hide travel.")
+    p.add_argument("--rig-metrics", default="",
+                   help="Optional .npz path for exact posed Y-Bot joints, projections, and floor.")
     return p.parse_args(argv)
 
 
@@ -280,6 +283,9 @@ def render_take(args, color):
 
     rest = rest_rotations(arm)
     n_body = min(22, poses.shape[1])  # SMPL joints 0..21 (hands 22,23 stay at rest)
+    metric_bone_names = tuple(
+        name for name in JOINT_NAMES if name in arm.pose.bones
+    )
 
     def whead(name):
         return arm.matrix_world @ arm.pose.bones[name].head
@@ -456,6 +462,19 @@ def render_take(args, color):
     # still track; only single-frame pops are clamped. Tunable via YBOT_GROUND_MAX_DZ (metres/frame).
     ground_max_dz = float(os.environ.get("YBOT_GROUND_MAX_DZ", "0.02"))
     prev_gz = None
+    metric_joints = None
+    metric_bone_heads = None
+    metric_bone_tails = None
+    metric_projected = None
+    metric_floor = None
+    if args.rig_metrics:
+        metric_joints = np.full((L, n_body, 3), np.nan, dtype=np.float32)
+        metric_bone_heads = np.full(
+            (L, len(metric_bone_names), 3), np.nan, dtype=np.float32
+        )
+        metric_bone_tails = np.full_like(metric_bone_heads, np.nan)
+        metric_projected = np.full((L, n_body, 3), np.nan, dtype=np.float32)
+        metric_floor = np.full(L, np.nan, dtype=np.float32)
     for i in range(0, L, stride):
         pose_frame(i)
         arm.location = (0.0, 0.0, 0.0)
@@ -516,8 +535,41 @@ def render_take(args, color):
                 prev_gz = gz
                 arm.location = (arm.location.x, arm.location.y, gz)
                 bpy.context.view_layer.update()
+        if metric_joints is not None:
+            joints = body_joint_positions().astype(np.float32)
+            metric_joints[i] = joints
+            metric_bone_heads[i] = np.asarray(
+                [[*whead(name)] for name in metric_bone_names],
+                dtype=np.float32,
+            )
+            metric_bone_tails[i] = np.asarray(
+                [[*wtail(name)] for name in metric_bone_names],
+                dtype=np.float32,
+            )
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+            metric_floor[i] = float(lowest_mesh_z(depsgraph, ground_meshes))
+            if cam is not None:
+                metric_projected[i] = np.asarray([
+                    tuple(world_to_camera_view(scene, cam, Vector(joint)))
+                    for joint in joints
+                ], dtype=np.float32)
         scene.render.filepath = f"{frames_dir}/frame_{i:05d}.png"
         bpy.ops.render.render(write_still=True)
+    if metric_joints is not None:
+        metrics_path = os.path.abspath(args.rig_metrics)
+        os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
+        np.savez_compressed(
+            metrics_path,
+            joints=metric_joints,
+            bone_heads=metric_bone_heads,
+            bone_tails=metric_bone_tails,
+            bone_names=np.asarray(metric_bone_names),
+            projected=metric_projected,
+            mesh_floor=metric_floor,
+            joint_names=np.asarray(JOINT_NAMES[:n_body]),
+            rendered_frames=np.arange(0, L, stride, dtype=np.int32),
+        )
+        print(f"YBOT_RIG_METRICS {metrics_path}")
     print(f"BLENDER_RENDERED {L} frames -> {frames_dir}")
 
 
