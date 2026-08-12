@@ -565,21 +565,23 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
             aa[:, 16, 1] -= 0.70 * load + 0.38 * land - 0.48 * air
             aa[:, 17, 1] += 0.70 * load + 0.38 * land - 0.48 * air
     elif motion_id == "bounce_in_place":
-        compression = 0.5 - 0.5 * np.cos(6.0 * np.pi * t)
-        # Keep both ankles visibly planted and apart while the pelvis performs three clear pulses.
+        compression = 0.5 - 0.5 * np.cos(4.0 * np.pi * t)
+        # Keep both ankles visibly planted and apart while the pelvis performs two full pulses.
+        # Three faster dips survived the numeric cycle check but collapsed into one crouch at
+        # normal playback speed after composition onto a real host.
         # Solving the legs against fixed feet avoids the tucked silhouette that can make a deep
         # grounded bend look airborne on a featureless floor.
-        trans[:, 2] -= 0.13 * compression
+        trans[:, 2] -= 0.16 * compression
         left = _stance_ankle("left")
         right = _stance_ankle("right")
         leg_targets = (
             np.repeat(left[None, :], n, axis=0),
             np.repeat(right[None, :], n, axis=0),
         )
-        aa[:, 3, 0] += 0.1 * np.sin(6.0 * np.pi * t)
-        aa[:, 0, 2] += 0.13 * np.sin(3.0 * np.pi * t)        # hips answer every other bounce
-        aa[:, 16, 1] -= 0.16 * np.sin(3.0 * np.pi * t)
-        aa[:, 17, 1] -= 0.16 * np.sin(3.0 * np.pi * t)
+        aa[:, 3, 0] += 0.13 * compression
+        aa[:, 0, 2] += 0.12 * np.sin(4.0 * np.pi * t)
+        aa[:, 16, 1] -= 0.18 * compression
+        aa[:, 17, 1] -= 0.18 * compression
     elif motion_id == "wave":
         raise_arm = _smoothstep(t / 0.28) * (1.0 - _smoothstep((t - 0.78) / 0.22))
         target = np.column_stack([
@@ -640,12 +642,12 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         # Cancelling only the rotation is not enough to hold the head: the chain below has
         # already carried it forward, so the counter has to over-rotate to bring it back. The
         # extra term compensates for that leftover head travel over the spine3->head length.
-        counter = base + lower + mid + pop_scale * 0.20 * drive
+        counter = base + lower + mid + pop_scale * 0.24 * drive
         aa[:, 0, 0] += base
         aa[:, 3, 0] += lower
         aa[:, 6, 0] += mid
-        aa[:, 9, 0] -= 0.74 * counter                        # shoulders open rather than dive
-        aa[:, 12, 0] -= 0.26 * counter                       # head holds its place
+        aa[:, 9, 0] -= 0.73 * counter                        # shoulders open rather than dive
+        aa[:, 12, 0] -= 0.27 * counter                       # head holds its place
         aa[:, 16, 2] -= 0.20 * hit
         aa[:, 17, 2] += 0.20 * hit
         aa[:, 4, 0] += 0.08 * hit
@@ -689,8 +691,8 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         left_start = _stance_ankle("left")
         right_start = _stance_ankle("right")
         left_end = left_start.copy()
-        left_end[0] += 0.50
-        trans[:, 0] += 0.38 * _phase_ease(t, 0.30, 0.64)
+        left_end[0] += 0.58
+        trans[:, 0] += 0.46 * _phase_ease(t, 0.28, 0.68)
         left_targets = _foot_swing(
             t, 0.05, 0.45, left_start, left_end, lift=0.11,
         )
@@ -710,7 +712,7 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
             _arm_targets(
                 "left",
                 directional,
-                np.array([0.47, 0.02, 0.16], dtype=np.float32),
+                np.array([0.60, 0.03, 0.18], dtype=np.float32),
             ),
         )
         _solve_arm(
@@ -722,7 +724,7 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
                 np.array([-0.22, 0.00, 0.18], dtype=np.float32),
             ),
         )
-        aa[:, 12, 1] += 0.30 * directional
+        aa[:, 12, 1] += 0.42 * directional
         contacts[:, 0:2] = ((t <= 0.05) | (t >= 0.42))[:, None]
         contacts[:, 2:4] = 1.0
     elif motion_id == "step_touch":
@@ -770,33 +772,35 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         left_start = _stance_ankle("left")
         right_start = _stance_ankle("right")
         left_end = left_start.copy()
-        left_end[2] += 0.50 * direction
-        travel = _phase_ease(t, 0.26, 0.62)
-        _travel(trans, direction * 0.34 * travel)
+        left_end[2] += 0.62 * direction
+        travel = _phase_ease(t, 0.28, 0.74)
+        _travel(trans, direction * 0.46 * travel)
         left_targets = _foot_swing(
             t,
             0.08,
-            0.52,
+            0.48,
             left_start,
             left_end,
-            lift=0.10,
+            lift=0.12,
         )
         right_targets = np.repeat(right_start[None, :], n, axis=0)
         leg_targets = (left_targets, right_targets)
-        _arm_swing(aa, np.pi * _phase_ease(t, 0.08, 0.58), 0.38 * direction)
-        aa[:, 3, 0] += direction * 0.14 * np.sin(np.pi * travel)
-        contacts[:, 0:2] = ((t <= 0.08) | (t >= 0.52))[:, None]
+        _arm_swing(aa, np.pi * _phase_ease(t, 0.08, 0.66), 0.42 * direction)
+        aa[:, 3, 0] += direction * 0.18 * np.sin(np.pi * travel)
+        contacts[:, 0:2] = ((t <= 0.08) | (t >= 0.48))[:, None]
         contacts[:, 2:4] = 1.0
     elif motion_id in {"turn_quarter", "turn_half"}:
         angle = (np.pi / 2.0) if motion_id == "turn_quarter" else np.pi
-        spin = _smoothstep(t)
+        # Resolve the new facing before the clip ends and hold it long enough to read. A turn
+        # spread over every frame has no stable "before" or "after" silhouette at normal speed.
+        spin = _phase_ease(t, 0.08, 0.66)
         aa[:, 0, 1] = angle * spin
-        _legs(aa, 2.0 * np.pi * t, 0.28)
-        _arm_swing(aa, 2.0 * np.pi * t, 0.22)
+        _legs(aa, np.pi * _phase_ease(t, 0.05, 0.66), 0.32)
+        _arm_swing(aa, np.pi * _phase_ease(t, 0.05, 0.66), 0.30)
         trans[:, 2] += 0.025 * np.sin(2.0 * np.pi * t) ** 2
-        spot = np.sin(np.pi * t)
-        aa[:, 12, 1] += 0.30 * spot                          # head leads, then spots the turn
-        aa[:, 9, 1] -= 0.18 * spot
+        spot = np.sin(np.pi * _phase_ease(t, 0.02, 0.68))
+        aa[:, 12, 1] += 0.38 * spot                          # head leads, then spots the turn
+        aa[:, 9, 1] -= 0.22 * spot
         aa[:, 4, 0] += 0.18 * spot
         aa[:, 5, 0] += 0.18 * spot
     elif motion_id == "body_roll":
@@ -854,7 +858,12 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
     else:
         raise KeyError(f"no procedural authoring recipe for {motion_id}")
 
-    _performance_layer(aa, trans, t)
+    _performance_layer(
+        aa,
+        trans,
+        t,
+        sway=0.0 if motion_id == "chest_pop" else 1.0,
+    )
     if clap_recipe is not None:
         signal, orientation, overhead, center_x = clap_recipe
         _clap_arms(

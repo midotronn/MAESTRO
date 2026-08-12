@@ -48,6 +48,15 @@ from server.fk import BODY_PARENTS, compute_poses, save_poses_npz  # noqa: E402
 
 
 CONTRACTS = ROOT / "assets" / "motion_bank" / "visual_contracts.json"
+_FIXED_REVIEW_DIRECTIONS = {
+    "step_forward": "forward",
+    "step_backward": "backward",
+}
+
+
+def _review_direction(spec, report: dict) -> str | None:
+    """Return the direction a blind reviewer must identify for this action."""
+    return report.get("direction") or _FIXED_REVIEW_DIRECTIONS.get(spec.id)
 
 
 def _new_audit_id(output: Path, seed: int) -> str:
@@ -368,11 +377,11 @@ def _machine_checks(
         locomotion_signal = signed_root + lead_foot
         direction_passed = (
             resolved_direction in {"left", "right"}
-            and signed_root > 0.24
-            and lead_foot > 0.30
-            and lead_lateral > 0.45
-            and lead_lateral - trail_lateral > 0.35
-            and stance_width > 0.40
+            and signed_root > 0.32
+            and lead_foot > 0.40
+            and lead_lateral > 0.52
+            and lead_lateral - trail_lateral > 0.40
+            and stance_width > 0.48
             and locomotion_signal > 1.05 * lead_arm_delta
         )
         checks.append({
@@ -438,9 +447,13 @@ def _machine_checks(
         signed_root = sign * float(root[-1])
         signed_foot = float(np.max(sign * lead_foot))
         wrong_way = float(np.max(-sign * root))
+        plant_candidates = np.flatnonzero(sign * lead_foot >= 0.90 * signed_foot)
+        plant = int(plant_candidates[0]) if plant_candidates.size else len(root) - 1
+        follow_through = sign * float(root[-1] - root[plant])
         step_passed = (
-            signed_root > 0.25
-            and signed_foot > 0.35
+            signed_root > 0.35
+            and signed_foot > 0.50
+            and follow_through > 0.10
             and wrong_way < 0.08
         )
         checks.append({
@@ -448,8 +461,9 @@ def _machine_checks(
             "passed": bool(step_passed),
             "detail": (
                 f"{spec.id} signed root/lead-foot travel "
-                f"{signed_root:.4f}/{signed_foot:.4f} m; wrong-way root "
-                f"excursion {wrong_way:.4f} m"
+                f"{signed_root:.4f}/{signed_foot:.4f} m; root follow-through after "
+                f"lead-foot plant {follow_through:.4f} m; wrong-way root excursion "
+                f"{wrong_way:.4f} m"
             ),
         })
 
@@ -468,11 +482,19 @@ def _machine_checks(
             else 1.0
         )
         final_progress = float(progress[-1])
+        completion = np.flatnonzero(progress >= 0.85 * target)
+        completion_frame = int(completion[0]) if completion.size else len(progress) - 1
+        completion_fraction = completion_frame / max(1, len(progress) - 1)
+        hold_frame = int(np.ceil(0.80 * max(0, len(progress) - 1)))
+        tail_span = float(np.ptp(progress[hold_frame:]))
         turn_passed = (
             resolved_direction in {"left", "right"}
             and 0.78 * target < final_progress < 1.22 * target
             and float(np.max(progress)) < 1.28 * target
             and backward_fraction < 0.20
+            and completion_fraction < 0.82
+            and float(progress[hold_frame]) > 0.85 * target
+            and tail_span < 0.08 * target
         )
         checks.append({
             "name": "coherent_turn_progression",
@@ -481,6 +503,8 @@ def _machine_checks(
                 f"{resolved_direction} final/peak turn "
                 f"{np.rad2deg(final_progress):.2f}/"
                 f"{np.rad2deg(float(np.max(progress))):.2f} degrees; "
+                f"85%-complete at {completion_fraction:.3f} of the action with "
+                f"{np.rad2deg(tail_span):.2f} degrees of drift in the final 20%; "
                 f"backward-step fraction {backward_fraction:.3f}"
             ),
         })
@@ -512,17 +536,26 @@ def _machine_checks(
         travel = float(np.ptp(pelvis))
         threshold = float(np.min(pelvis) + 0.42 * travel)
         runs = _true_runs(pelvis < threshold) if travel > 1e-6 else ()
+        rebound = (
+            float(np.max(pelvis[runs[0][1] + 1:runs[1][0]]) - np.min(pelvis))
+            if len(runs) == 2 and runs[0][1] + 1 < runs[1][0]
+            else 0.0
+        )
+        finish_recovery = float(pelvis[-1] - np.min(pelvis))
         cycle_passed = (
-            travel > 0.07
-            and len(runs) == 3
+            travel > 0.10
+            and len(runs) == 2
             and all(run_end - run_start + 1 >= 2 for run_start, run_end in runs)
+            and rebound > 0.08
+            and finish_recovery > 0.08
         )
         checks.append({
             "name": "bounce_cycle_signature",
             "passed": bool(cycle_passed),
             "detail": (
                 f"pelvis range {travel:.4f} m with low-phase runs "
-                f"{list(runs)}"
+                f"{list(runs)}; inter-pulse rebound {rebound:.4f} m and final "
+                f"recovery {finish_recovery:.4f} m"
             ),
         })
 
@@ -711,7 +744,7 @@ def _machine_checks(
         )))
         isolation_passed = (
             chest_forward > 0.08
-            and abs(head_forward) < 0.65 * chest_forward
+            and abs(head_forward) < 0.60 * chest_forward
             and float(head_delta[2]) > -0.07
             and knee_delta < 0.20
             and knee_channel_drift <= 5e-7
@@ -1102,9 +1135,10 @@ def _review_html(
                 <select class="direction-guess">
                   <option value="">Choose a direction</option>
                   <option value="none">No distinct direction</option>
-                  <option value="forward">Forward</option>
-                  <option value="left">Left (dancer's left)</option>
-                  <option value="right">Right (dancer's right)</option>
+                  <option value="forward">Forward (screen right in SIDE)</option>
+                  <option value="backward">Backward (screen left in SIDE)</option>
+                  <option value="left">Dancer left (screen right in FRONT)</option>
+                  <option value="right">Dancer right (screen left in FRONT)</option>
                 </select>
               </label>
               <div class="actions">
@@ -2015,7 +2049,7 @@ def main() -> None:
             "name": spec.name,
             "aliases": list(spec.aliases),
             "requested_direction": direction,
-            "resolved_direction": report.get("direction"),
+            "resolved_direction": _review_direction(spec, report),
             "visual_contract": contracts[spec.id],
             "machine_checks": machine_checks,
             "machine_status": machine_status,

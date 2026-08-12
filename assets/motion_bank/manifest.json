@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "bank_version": "1.1.5",
+  "bank_version": "1.1.6",
   "motions": [
     {
       "id": "clap_single",
@@ -211,7 +211,7 @@
         "type": "grounded_vertical_cycles",
         "threshold": 1.0,
         "pulses": 2,
-        "height": 0.08,
+        "height": 0.11,
         "grounded_fraction": 1.0,
         "joints": [4, 5],
         "joint_activity": 0.45
@@ -391,7 +391,7 @@
       "event_frame": 41,
       "recommended_beats": 2.0,
       "default_anchor": "center",
-      "validator": {"type": "root_displacement", "axis": "x", "threshold": 0.20},
+      "validator": {"type": "root_displacement", "axis": "x", "threshold": 0.30},
       "composition": {
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21],
         "additive_joints": [0, 3, 9, 12],
@@ -455,7 +455,7 @@
       "event_frame": 34,
       "recommended_beats": 2.0,
       "default_anchor": "center",
-      "validator": {"type": "root_displacement", "axis": "y", "threshold": 0.28},
+      "validator": {"type": "root_displacement", "axis": "y", "threshold": 0.36},
       "composition": {
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 18, 19],
         "additive_joints": [3, 9],
@@ -484,7 +484,7 @@
       "event_frame": 34,
       "recommended_beats": 2.0,
       "default_anchor": "center",
-      "validator": {"type": "root_displacement", "axis": "y", "threshold": 0.28},
+      "validator": {"type": "root_displacement", "axis": "y", "threshold": 0.36},
       "composition": {
         "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 18, 19],
         "additive_joints": [3, 9],

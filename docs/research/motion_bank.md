@@ -497,11 +497,15 @@ both hands visibly approach, the torso heading stays within 3 degrees of the sou
 unowned source channel remains unchanged. The same pre-render gate requires guard-strike-recoil
 punch phases, open-step-touch-stagger foot phases, and sequential lower-to-upper body-roll crests
 and releases. Protocol 9 additionally requires locomotion to dominate a side step's arm cue,
-forward and backward steps to travel in the named dancer-relative direction, turns to progress
-coherently without reversing, bounce to contain three readable low phases, planted level changes
-to keep both feet stable, crouch to arrive near its lowest pose, and rise/reach to load before both
-hands become high. Before reveal, the reviewer locks both the action name and observed direction
-using the action-specific direction rules shown in the UI. After reveal, the reviewer must mark
+forward and backward steps to travel in the named dancer-relative direction and keep following
+after the lead foot plants, turns to resolve early enough to hold the new facing, bounce to contain
+two complete down-up pulses instead of reading as one crouch, planted level changes to keep both
+feet stable, crouch to arrive near its lowest pose, and rise/reach to load before both hands become
+high. Before reveal, the reviewer locks both the action name and observed direction using the
+action-specific direction rules shown in the UI. Fixed forward/backward actions are directional
+even though they have no selectable manifest variant. The selector includes backward explicitly
+and labels dancer-left/dancer-right with their normalized front-view screen side so viewer-relative
+answers cannot silently invert the result. After reveal, the reviewer must mark
 every required visual phase and every prohibited competing silhouette as reviewed, then record
 pass or fail plus an evidence note for every take. These checks diagnose known failures but do not
 replace the human verdict. Finalize that exported result with:

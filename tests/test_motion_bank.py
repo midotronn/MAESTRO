@@ -214,6 +214,8 @@ def test_blind_review_locks_every_guess_before_loading_the_separate_answer_key()
     assert "takeIds.every" in page
     assert 'class="lock"' in page
     assert 'class="direction-guess"' in page
+    assert '<option value="backward">Backward (screen left in SIDE)</option>' in page
+    assert "Dancer left (screen right in FRONT)" in page
     assert 'id="reveal-all" type="button" disabled' in page
     assert 'class="play-pair"' in page
     assert 'class="review-link"' in page
@@ -273,6 +275,15 @@ def test_blind_review_locks_every_guess_before_loading_the_separate_answer_key()
     assert message_handler.index("validComparisonAcknowledgment") < message_handler.index(
         "comparisonOpenedAt"
     )
+
+
+def test_blind_review_scores_fixed_forward_and_backward_actions_as_directional():
+    from scripts.build_motion_bank_audit import _review_direction
+
+    bank = default_motion_bank()
+    assert _review_direction(bank.resolve("step_forward"), {}) == "forward"
+    assert _review_direction(bank.resolve("step_backward"), {}) == "backward"
+    assert _review_direction(bank.resolve("bounce_in_place"), {}) is None
 
 
 def test_parent_rejects_mismatched_or_stale_comparison_acknowledgments():
@@ -2082,11 +2093,16 @@ def test_side_step_root_and_lead_arm_agree_on_dancer_relative_direction():
         root = (out[start:end, :2] - out[start, :2]) @ left[:2]
         lead = 20 if direction == "left" else 21
         trail = 21 if direction == "left" else 20
+        lead_ankle = 7 if direction == "left" else 8
         lead_offset = sign * float((joints[event, lead] - joints[event, 9]) @ left)
         trail_offset = sign * float((joints[event, trail] - joints[event, 9]) @ left)
-        assert float(np.max(sign * root)) > 0.24, (direction, root)
-        assert lead_offset > 0.45, (direction, lead_offset)
-        assert lead_offset > trail_offset + 0.35, (
+        lead_foot = sign * float(
+            (joints[event, lead_ankle] - joints[start, lead_ankle]) @ left
+        )
+        assert float(np.max(sign * root)) > 0.32, (direction, root)
+        assert lead_foot > 0.40, (direction, lead_foot)
+        assert lead_offset > 0.52, (direction, lead_offset)
+        assert lead_offset > trail_offset + 0.40, (
             direction,
             lead_offset,
             trail_offset,
@@ -2484,9 +2500,9 @@ def test_a_chest_pop_moves_the_chest_and_not_the_head():
     chest, head = travel(9), travel(15)
     chest_fwd, head_fwd = float(chest @ fwd), float(head @ fwd)
     assert chest_fwd > 0.10, ("the chest pop is too subtle to read at full-body scale", chest_fwd)
-    assert abs(head_fwd) < 0.6 * chest_fwd, (
+    assert abs(head_fwd) < 0.5 * chest_fwd, (
         "the head travels as far as the chest, so this reads as a nod", head_fwd, chest_fwd)
-    assert float(head[2]) > -0.06, ("the head dives instead of staying level", float(head[2]))
+    assert float(head[2]) > -0.07, ("the head dives instead of staying level", float(head[2]))
 
 
 @pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
@@ -2618,7 +2634,27 @@ def test_a_bounce_actually_travels_far_enough_to_see():
     clip = default_motion_bank().load_clip("bounce_in_place")
     pelvis = compute_poses(clip)["fk_joints"][:, 0, 2]
     travel = float(pelvis.max() - pelvis.min())
-    assert travel > 0.07, travel
+    assert travel > 0.10, travel
+
+
+@needs_fk
+def test_a_bounce_has_two_complete_rebounds_instead_of_one_crouch():
+    from server.fk import compute_poses
+
+    pelvis = compute_poses(
+        default_motion_bank().load_clip("bounce_in_place")
+    )["fk_joints"][:, 0, 2]
+    travel = float(np.ptp(pelvis))
+    low = pelvis < float(np.min(pelvis) + 0.42 * travel)
+    starts = np.flatnonzero(low & ~np.r_[False, low[:-1]])
+    ends = np.flatnonzero(low & ~np.r_[low[1:], False])
+    runs = tuple(zip(starts, ends))
+
+    assert len(runs) == 2, runs
+    between = pelvis[int(runs[0][1]) + 1:int(runs[1][0])]
+    assert between.size
+    assert float(np.max(between) - np.min(pelvis)) > 0.08
+    assert float(pelvis[-1] - np.min(pelvis)) > 0.08
 
 
 def test_a_root_only_bob_cannot_impersonate_a_bounce():
@@ -2725,6 +2761,46 @@ def test_a_named_step_travels_and_leans_the_way_its_name_says(motion_id, sign):
     assert sign * travel > 0.25, (motion_id, travel)
     lean = (joints[:, 9] - joints[:, 0]) @ forward - float((joints[0, 9] - joints[0, 0]) @ forward)
     assert sign * float(lean[np.argmax(np.abs(lean))]) > 0, (motion_id, lean.min(), lean.max())
+
+
+@needs_fk
+@pytest.mark.parametrize("motion_id,sign", [("step_forward", 1.0), ("step_backward", -1.0)])
+def test_a_named_step_plants_before_the_body_finishes_following(motion_id, sign):
+    from server.fk import compute_poses
+
+    bank = default_motion_bank()
+    clip = bank.load_clip(motion_id)
+    joints = compute_poses(clip)["fk_joints"]
+    forward = _body_forward(joints)
+    root = (clip[:, :3] - clip[0, :3]) @ forward
+    lead = (joints[:, 7] - joints[0, 7]) @ forward
+    signed_lead = sign * lead
+    plant = int(np.flatnonzero(signed_lead >= 0.90 * np.max(signed_lead))[0])
+    follow_through = sign * float(root[-1] - root[plant])
+
+    assert sign * float(root[-1]) > 0.35
+    assert float(np.max(signed_lead)) > 0.50
+    assert follow_through > 0.10, (motion_id, plant, follow_through)
+
+
+@needs_fk
+def test_a_quarter_turn_reaches_and_holds_its_new_facing_before_the_clip_ends():
+    from server.fk import compute_poses
+
+    bank = default_motion_bank()
+    spec = bank.resolve("turn_quarter")
+    joints = compute_poses(bank.load_clip(spec))["fk_joints"]
+    lateral = joints[:, 16, :2] - joints[:, 17, :2]
+    heading = np.unwrap(np.arctan2(lateral[:, 1], lateral[:, 0]))
+    progress = heading - heading[0]
+    target = np.pi / 2.0
+    completion = int(np.flatnonzero(progress >= 0.85 * target)[0])
+    hold = int(np.ceil(0.80 * (len(progress) - 1)))
+
+    assert progress[spec.event_frame] > 0.80 * target
+    assert completion / (len(progress) - 1) < 0.82
+    assert progress[hold] > 0.85 * target
+    assert float(np.ptp(progress[hold:])) < 0.08 * target
 
 
 @needs_fk

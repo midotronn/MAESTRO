@@ -172,7 +172,7 @@ def test_protocol_nine_exact_rig_checks_reject_competing_silhouettes():
 
     bounce = joints.copy()
     bounce[:, 0, 2] = 1.0
-    for start in (3, 12, 21):
+    for start in (5, 19):
         bounce[start:start + 3, 0, 2] = 0.80
     assert _bounce_cycle_check(bounce, 0, 30)["passed"]
     assert not _bounce_cycle_check(joints, 0, 30)["passed"]
@@ -182,13 +182,14 @@ def test_protocol_nine_exact_rig_checks_reject_competing_silhouettes():
     assert not _planted_foot_check(sliding, 0, 30)["passed"]
 
     step = joints.copy()
-    step[:, 0, 1] = np.linspace(0.0, -0.34, 30)
-    step[:, 7, 1] += np.linspace(0.0, -0.50, 30)
+    step[8:, 0, 1] = np.linspace(0.0, -0.46, 22)
+    step[:15, 7, 1] += np.linspace(0.0, -0.62, 15)
+    step[15:, 7, 1] -= 0.62
     assert _step_direction_check("step_forward", step, 0, 30)["passed"]
     assert not _step_direction_check("step_backward", step, 0, 30)["passed"]
 
     turn = joints.copy()
-    angles = np.linspace(0.0, np.pi / 2.0, 30)
+    angles = np.r_[np.linspace(0.0, np.pi / 2.0, 21), np.full(9, np.pi / 2.0)]
     turn[:, 16, 0] = 0.25 * np.cos(angles)
     turn[:, 16, 1] = 0.25 * np.sin(angles)
     turn[:, 17, :2] = -turn[:, 16, :2]
@@ -215,7 +216,8 @@ def test_protocol_nine_exact_rig_checks_reject_competing_silhouettes():
 
     side_step = joints.copy()
     side_step[:, 0, 0] = np.linspace(0.0, 0.36, 30)
-    side_step[:, 7, 0] = np.linspace(0.18, 0.68, 30)
+    side_step[:21, 7, 0] = np.linspace(0.18, 0.68, 21)
+    side_step[21:, 7, 0] = 0.68
     side_step[20:, 8, 0] = -0.18
     side_step[20, 20, 0] += 0.30
     assert _side_step_check(
@@ -409,6 +411,10 @@ def _complete_audit_export(tmp_path):
         resolved = None
         if spec.directions:
             resolved = spec.canonical_direction if requested == "auto" else requested
+        elif spec.id == "step_forward":
+            resolved = "forward"
+        elif spec.id == "step_backward":
+            resolved = "backward"
         takes.append({"take": take, "control": "control_01", "frames": 54})
         answers[take] = {
             "case_id": case_id,
@@ -550,6 +556,22 @@ def test_finalizer_recomputes_blind_action_and_direction_results(tmp_path):
     result_path.write_text(json.dumps(result), encoding="utf-8")
     with pytest.raises(ValueError, match="blind direction"):
         finalize(audit_dir, result_path, tmp_path / "direction-receipt.json")
+
+
+def test_finalizer_requires_backward_to_be_identified_as_backward(tmp_path):
+    audit_dir, result_path, result = _complete_audit_export(tmp_path)
+    answers = json.loads((audit_dir / "answer_key.json").read_text(encoding="utf-8"))
+    backward = next(
+        decision
+        for take, decision in result["takes"].items()
+        if answers[take]["id"] == "step_backward"
+    )
+    assert backward["direction_guess"] == "backward"
+    backward["direction_guess"] = "none"
+    backward["direction_recognized"] = True
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    with pytest.raises(ValueError, match="blind direction"):
+        finalize(audit_dir, result_path, tmp_path / "backward-receipt.json")
 
 
 def test_finalizer_rejects_skipped_visual_phases_even_when_marked_pass(tmp_path):

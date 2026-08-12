@@ -260,17 +260,26 @@ def _bounce_cycle_check(
     travel = float(np.ptp(pelvis))
     threshold = float(np.min(pelvis) + 0.42 * travel)
     runs = _true_runs(pelvis < threshold) if travel > 1e-6 else ()
+    rebound = (
+        float(np.max(pelvis[runs[0][1] + 1:runs[1][0]]) - np.min(pelvis))
+        if len(runs) == 2 and runs[0][1] + 1 < runs[1][0]
+        else 0.0
+    )
+    finish_recovery = float(pelvis[-1] - np.min(pelvis))
     passed = (
-        travel > 0.07
-        and len(runs) == 3
+        travel > 0.10
+        and len(runs) == 2
         and all(run_end - run_start + 1 >= 2 for run_start, run_end in runs)
+        and rebound > 0.08
+        and finish_recovery > 0.08
     )
     return _check(
         "rendered_bounce_cycle_count",
         passed,
         (
             f"pelvis range {travel:.4f} m with low-phase runs {list(runs)} "
-            f"below {threshold:.4f} m"
+            f"below {threshold:.4f} m; inter-pulse rebound {rebound:.4f} m and "
+            f"final recovery {finish_recovery:.4f} m"
         ),
     )
 
@@ -356,9 +365,9 @@ def _side_step_check(
     locomotion = signed_root + signed_foot
     passed = (
         direction in {"left", "right"}
-        and signed_root > 0.24
-        and signed_foot > 0.30
-        and stance > 0.40
+        and signed_root > 0.32
+        and signed_foot > 0.40
+        and stance > 0.48
         and locomotion > 1.05 * arm_delta
     )
     return _check(
@@ -387,13 +396,22 @@ def _step_direction_check(
     signed_root = sign * float(root[-1])
     signed_foot = float(np.max(sign * lead))
     wrong_way = float(np.max(-sign * root))
-    passed = signed_root > 0.25 and signed_foot > 0.35 and wrong_way < 0.08
+    plant_candidates = np.flatnonzero(sign * lead >= 0.90 * signed_foot)
+    plant = int(plant_candidates[0]) if plant_candidates.size else len(root) - 1
+    follow_through = sign * float(root[-1] - root[plant])
+    passed = (
+        signed_root > 0.35
+        and signed_foot > 0.50
+        and follow_through > 0.10
+        and wrong_way < 0.08
+    )
     return _check(
         "rendered_step_direction_signature",
         passed,
         (
             f"{motion_id} signed root/lead-foot travel "
-            f"{signed_root:.4f}/{signed_foot:.4f} m; wrong-way root excursion "
+            f"{signed_root:.4f}/{signed_foot:.4f} m; root follow-through after "
+            f"lead-foot plant {follow_through:.4f} m; wrong-way root excursion "
             f"{wrong_way:.4f} m"
         ),
     )
@@ -414,11 +432,19 @@ def _turn_check(
     increments = np.diff(progress)
     backward_fraction = float(np.mean(increments < -0.03)) if increments.size else 1.0
     final = float(progress[-1])
+    completion = np.flatnonzero(progress >= 0.85 * target)
+    completion_frame = int(completion[0]) if completion.size else len(progress) - 1
+    completion_fraction = completion_frame / max(1, len(progress) - 1)
+    hold_frame = int(np.ceil(0.80 * max(0, len(progress) - 1)))
+    tail_span = float(np.ptp(progress[hold_frame:]))
     passed = (
         direction in {"left", "right"}
         and 0.78 * target < final < 1.22 * target
         and float(np.max(progress)) < 1.28 * target
         and backward_fraction < 0.20
+        and completion_fraction < 0.82
+        and float(progress[hold_frame]) > 0.85 * target
+        and tail_span < 0.08 * target
     )
     return _check(
         "rendered_turn_progression",
@@ -426,7 +452,9 @@ def _turn_check(
         (
             f"{direction} final/peak heading progress "
             f"{np.rad2deg(final):.2f}/{np.rad2deg(float(np.max(progress))):.2f} "
-            f"degrees; backward-step fraction {backward_fraction:.3f}"
+            f"degrees; 85%-complete at {completion_fraction:.3f} of the action with "
+            f"{np.rad2deg(tail_span):.2f} degrees of drift in the final 20%; backward-step "
+            f"fraction {backward_fraction:.3f}"
         ),
     )
 
@@ -519,8 +547,8 @@ def _chest_pop_check(
     head_forward = float(head[:2] @ forward)
     passed = (
         chest_forward > 0.08
-        and abs(head_forward) < 0.65 * chest_forward
-        and float(head[2]) > -0.07
+        and abs(head_forward) < 0.60 * chest_forward
+        and float(head[2]) > -0.06
     )
     return _check(
         "rendered_chest_pop_isolation",
