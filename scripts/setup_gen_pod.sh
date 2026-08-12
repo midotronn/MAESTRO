@@ -148,7 +148,7 @@ step "python deps"
 "$PIP" install -q -r "$AL/requirements.txt"
 "$PIP" install -q gdown omegaconf pytorch-lightning einops tqdm soundfile librosa \
   opencv-python-headless pyrender PyOpenGL trimesh smplx p_tqdm h5py imageio imageio-ffmpeg psutil \
-  torchmetrics accelerate wandb fire
+  torchmetrics accelerate wandb fire pytest==9.1.1
 # pytorch3d (transforms only -> CPU build is fine; no nvcc). Build isolation OFF so it sees torch.
 if ! "$PIP" show pytorch3d >/dev/null 2>&1; then
   CUDA_VISIBLE_DEVICES="" FORCE_CUDA=0 MAX_JOBS="$(nproc)" \
@@ -167,6 +167,7 @@ for module in (
     "smplx",
     "librosa",
     "omegaconf",
+    "pytest",
 ):
     importlib.import_module(module)
 print("  Python dependency imports: OK")
