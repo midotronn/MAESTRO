@@ -40,9 +40,10 @@ $env:AGENTLODGE_POD_KEY="$HOME\.ssh\id_ed25519"
 Set `AGENTLODGE_TORCH_INDEX=cpu` for a render-only box (no GPU generation), else the default
 `cu128` installs CUDA torch for real backbone generation.
 
-> First time on a **new /workspace volume** (no checkpoints yet), run
-> `.\scripts\pod.ps1 ssh "cd /workspace/AgentLODGE && bash scripts/runpod_bootstrap.sh"` once to
-> fetch the LODGE/EDGE checkpoints and Blender, then `pod.ps1 setup`.
+On a **new `/workspace` volume**, `pod.ps1 setup` detects that the repository is absent and runs
+`setup_gen_pod.sh` as the full bootstrap. It clones MAESTRO, LODGE, and EDGE; downloads the model
+weights; installs Blender; builds the reusable exact-Y-Bot scene; and verifies CUDA with a real GPU
+matrix multiplication. On later pod restarts, the same command uses the lighter restart setup.
 
 ## 3. Build a real candidate bank for a song
 
@@ -135,4 +136,3 @@ time (LODGE and EDGE each spawn a subprocess, so a single new seed can pay this 
   /root/al_gpu`), repoint `LODGE/.venv` + the EDGE `.pth` at it, and set
   `AGENTLODGE_POD_PYTHON=/root/al_gpu/bin/python`, imports drop to ~10s. This is **ephemeral** (lost
   on restart), so re-copy after each pod start.
-

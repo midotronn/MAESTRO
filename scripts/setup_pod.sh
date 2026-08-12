@@ -8,7 +8,8 @@
 #   2. a Python venv with torch + pytorch3d + the LODGE/EDGE deps        -> gone if it lived on /root
 #   3. LODGE/EDGE venv links so the subprocess backends resolve
 # and verifies the result. Checkpoints/data live on the /workspace network volume and survive
-# restarts; on a brand-new volume run scripts/runpod_bootstrap.sh first to fetch them.
+# restarts; on a brand-new volume run scripts/setup_gen_pod.sh first to clone the repositories,
+# fetch checkpoints, install Blender, and build the exact Y-Bot render scene.
 #
 # Configurable via env (sensible defaults):
 #   WORKSPACE   (default /workspace)   root of the persistent volume with AgentLODGE/LODGE/EDGE

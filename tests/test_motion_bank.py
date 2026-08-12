@@ -187,6 +187,10 @@ def test_every_motion_has_a_blind_visual_acceptance_contract():
         assert contract["recognizable_as"].strip(), motion_id
         assert len(contract["required_phases"]) >= 4, motion_id
         assert all(str(phase).strip() for phase in contract["required_phases"]), motion_id
+        assert len(contract["must_not_read_as"]) >= 2, motion_id
+        assert all(
+            str(signature).strip() for signature in contract["must_not_read_as"]
+        ), motion_id
 
 
 def test_blind_review_locks_every_guess_before_loading_the_separate_answer_key():
@@ -488,8 +492,31 @@ def test_audit_phase_sheets_build_synchronized_dual_view(tmp_path):
     assert '"auditId": "sheet-audit"' in review_index
     assert '"motionFingerprint": "sheet-fingerprint"' in review_index
     assert '"takeId": "take_01"' in review_index
+    assert "White skeleton = exact rendered Y-Bot joints" in review_index
+    assert "screen-right = dancer left" in review_index
     assert "image.complete&&image.naturalWidth>0" in review_index
     assert "window.opener.postMessage" in review_index
+
+
+def test_protocol_nine_phase_sheets_require_exact_projected_ybot_joints(tmp_path):
+    from agentlodge.editor.motion_audit import REVIEW_PROTOCOL_VERSION
+    from scripts.build_motion_audit_sheets import build_sheets
+
+    review = {
+        "audit_id": "protocol-nine-sheet-audit",
+        "motion_fingerprint": "sheet-fingerprint",
+        "review_protocol_version": REVIEW_PROTOCOL_VERSION,
+        "takes": [{
+            "take": "take_01",
+            "control": "control_01",
+            "frames": 4,
+            "action_range": [1, 3],
+            "event_frame": 2,
+        }],
+    }
+    (tmp_path / "review.json").write_text(json.dumps(review), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="protocol-9 skeleton evidence is missing"):
+        build_sheets(tmp_path, size=96)
 
 
 @pytest.mark.parametrize(
@@ -1689,6 +1716,22 @@ def test_visual_audit_rejects_every_protocol_eight_failure_signature():
     assert status == "fail"
     assert not next(
         check for check in checks if check["name"] == "planted_rise_reach_signature"
+    )["passed"]
+
+    event = int(rise_report["event_frame"])
+    premature_reach = rise.copy()
+    for joint in (13, 14, 16, 17, 18, 19, 20, 21):
+        channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+        premature_reach[start:end, channels] = rise[event, channels]
+    checks, status = _machine_checks(
+        host,
+        premature_reach,
+        bank.resolve("rise_reach"),
+        rise_report,
+    )
+    assert status == "fail"
+    assert not next(
+        check for check in checks if check["name"] == "rise_before_reach_signature"
     )["passed"]
 
     overhead, overhead_report = bank.apply(

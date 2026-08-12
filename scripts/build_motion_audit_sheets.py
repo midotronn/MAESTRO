@@ -8,7 +8,166 @@ import json
 from pathlib import Path
 from urllib.parse import urlencode
 
+import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFont
+
+
+_SKELETON_EDGES = (
+    (0, 1), (0, 2), (0, 3),
+    (1, 4), (4, 7), (7, 10),
+    (2, 5), (5, 8), (8, 11),
+    (3, 6), (6, 9), (9, 12), (12, 15),
+    (9, 13), (13, 16), (16, 18), (18, 20),
+    (9, 14), (14, 17), (17, 19), (19, 21),
+)
+_TRAIL_JOINTS = {
+    0: "#00d7ff",
+    7: "#64ff8f",
+    8: "#64ff8f",
+    20: "#ff65d8",
+    21: "#ffc857",
+}
+
+
+def _direction_legend(view: str) -> str:
+    if view == "front":
+        return "<- DANCER RIGHT | DANCER LEFT ->"
+    return "<- BACKWARD | FORWARD ->"
+
+
+def _load_projected(
+    audit_dir: Path,
+    identifier: str,
+    view: str,
+    frames: int,
+    *,
+    required: bool,
+) -> np.ndarray | None:
+    path = audit_dir / f"{identifier}_{view}_ybot.npz"
+    if not path.is_file():
+        if required:
+            raise RuntimeError(f"{path.name}: protocol-9 skeleton evidence is missing")
+        return None
+    with np.load(path, allow_pickle=False) as payload:
+        if "projected" not in payload:
+            raise RuntimeError(f"{path.name}: projected Y-Bot joints are missing")
+        projected = np.asarray(payload["projected"], dtype=np.float32)
+    if projected.shape != (frames, 22, 3):
+        raise RuntimeError(f"{path.name}: invalid projected-joint shape {projected.shape}")
+    if not np.isfinite(projected).all():
+        raise RuntimeError(f"{path.name}: projected Y-Bot joints are non-finite")
+    return projected
+
+
+def _projected_point(
+    projected: np.ndarray,
+    frame: int,
+    joint: int,
+    size: tuple[int, int],
+) -> tuple[int, int] | None:
+    x, y = map(float, projected[frame, joint, :2])
+    if not (-0.25 <= x <= 1.25 and -0.25 <= y <= 1.25):
+        return None
+    width, height = size
+    return (
+        int(round(np.clip(x, 0.0, 1.0) * (width - 1))),
+        int(round((1.0 - np.clip(y, 0.0, 1.0)) * (height - 1))),
+    )
+
+
+def _draw_direction_legend(image: Image.Image, view: str) -> None:
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+    text = _direction_legend(view)
+    box = draw.textbbox((0, 0), text, font=font)
+    width = box[2] - box[0] + 10
+    height = box[3] - box[1] + 6
+    x = max(4, image.width - width - 4)
+    y = max(4, image.height - height - 4)
+    draw.rectangle((x, y, x + width, y + height), fill="#101018", outline="#f3d35b")
+    draw.text((x + 5, y + 3), text, fill="#f3d35b", font=font)
+
+
+def _draw_motion_evidence(
+    image: Image.Image,
+    projected: np.ndarray,
+    frame: int,
+    *,
+    start: int,
+    end: int,
+) -> None:
+    draw = ImageDraw.Draw(image)
+    size = image.size
+    start_frame = int(np.clip(start, 0, len(projected) - 1))
+    end_frame = int(np.clip(max(start + 1, end), 1, len(projected)))
+
+    feet = [
+        _projected_point(projected, start_frame, joint, size)
+        for joint in (7, 8, 10, 11)
+    ]
+    feet = [point for point in feet if point is not None]
+    if feet:
+        floor_y = max(point[1] for point in feet)
+        draw.line((0, floor_y, image.width - 1, floor_y), fill="#5ad9ff", width=2)
+
+    root_start = _projected_point(projected, start_frame, 0, size)
+    if root_start is not None:
+        for y in range(0, image.height, 12):
+            draw.line(
+                (root_start[0], y, root_start[0], min(image.height - 1, y + 6)),
+                fill="#5ad9ff",
+                width=1,
+            )
+
+    for joint, color in _TRAIL_JOINTS.items():
+        points = [
+            _projected_point(projected, trail_frame, joint, size)
+            for trail_frame in range(start_frame, end_frame)
+        ]
+        points = [point for point in points if point is not None]
+        if len(points) >= 2:
+            draw.line(points, fill=color, width=2)
+        if points:
+            x, y = points[-1]
+            draw.ellipse((x - 3, y - 3, x + 3, y + 3), fill=color, outline="black")
+
+    current = {
+        joint: _projected_point(projected, frame, joint, size)
+        for joint in range(22)
+    }
+    for parent, child in _SKELETON_EDGES:
+        if current[parent] is not None and current[child] is not None:
+            draw.line((current[parent], current[child]), fill="white", width=2)
+    for joint, point in current.items():
+        if point is None:
+            continue
+        x, y = point
+        color = _TRAIL_JOINTS.get(joint, "#ffffff")
+        radius = 3 if joint in _TRAIL_JOINTS else 2
+        draw.ellipse(
+            (x - radius, y - radius, x + radius, y + radius),
+            fill=color,
+            outline="black",
+        )
+
+
+def _frame_image(
+    path: Path,
+    *,
+    projected: np.ndarray | None,
+    frame: int,
+    start: int,
+    end: int,
+    view: str,
+    detail: bool,
+) -> Image.Image:
+    image = Image.open(path).convert("RGB")
+    if projected is not None:
+        _draw_motion_evidence(image, projected, frame, start=start, end=end)
+    if detail:
+        image = _detail_crop(image)
+    _draw_direction_legend(image, view)
+    return image
 
 
 def _detail_crop(image: Image.Image) -> Image.Image:
@@ -45,10 +204,20 @@ def _tile(
     event: bool,
     font: ImageFont.ImageFont,
     detail: bool,
+    projected: np.ndarray | None,
+    frame: int,
+    action_range: tuple[int, int],
+    view: str,
 ) -> None:
-    image = Image.open(path).convert("RGB")
-    if detail:
-        image = _detail_crop(image)
+    image = _frame_image(
+        path,
+        projected=projected,
+        frame=frame,
+        start=action_range[0],
+        end=action_range[1],
+        view=view,
+        detail=detail,
+    )
     image.thumbnail((size, size), Image.Resampling.LANCZOS)
     canvas.paste(image, (x, y))
     color, border = "#666", 1
@@ -80,6 +249,7 @@ def _build_view_sheet(
     output: Path,
     columns: int,
     size: int,
+    projected: dict[tuple[str, str], np.ndarray | None],
     detail: bool = False,
 ) -> None:
     take = item["take"]
@@ -103,12 +273,13 @@ def _build_view_sheet(
         fill="white",
         font=font,
     )
+    draw.text((10, 28), _direction_legend(view), fill="#f3d35b", font=font)
     roots = (
-        ("EDIT", audit_dir / f"{take}_{view}_frames"),
-        ("SOURCE", audit_dir / f"{control}_{view}_frames"),
+        ("EDIT", take, audit_dir / f"{take}_{view}_frames"),
+        ("SOURCE", control, audit_dir / f"{control}_{view}_frames"),
     )
     for chunk_index, chunk in enumerate(chunks):
-        for pair_index, (kind, root) in enumerate(roots):
+        for pair_index, (kind, pair_id, root) in enumerate(roots):
             row = chunk_index * 2 + pair_index
             y = header + row * row_height
             draw.text((6, y + 6), kind, fill="#ddd", font=font)
@@ -126,6 +297,10 @@ def _build_view_sheet(
                     event=frame == event,
                     font=font,
                     detail=detail,
+                    projected=projected[(pair_id, view)],
+                    frame=frame,
+                    action_range=(start, end),
+                    view=view,
                 )
     suffix = f"{view}_detail" if detail else view
     canvas.save(output / f"{take}_{suffix}.jpg", quality=95)
@@ -143,15 +318,28 @@ def _dual_tile(
     active: bool,
     event: bool,
     font: ImageFont.ImageFont,
+    projected: tuple[np.ndarray | None, np.ndarray | None],
+    frame: int,
+    action_range: tuple[int, int],
 ) -> None:
-    for view_index, (view, root) in enumerate(zip(("F", "S"), roots, strict=True)):
-        image = Image.open(root).convert("RGB")
+    for view_index, (view, root, evidence) in enumerate(
+        zip(("front", "side"), roots, projected, strict=True)
+    ):
+        image = _frame_image(
+            root,
+            projected=evidence,
+            frame=frame,
+            start=action_range[0],
+            end=action_range[1],
+            view=view,
+            detail=False,
+        )
         image.thumbnail((size, size), Image.Resampling.LANCZOS)
         tile_x = x + view_index * size
         canvas.paste(image, (tile_x, y))
         draw.text(
             (tile_x + 6, y + 6),
-            f"{label} {view}",
+            f"{label} {view[0].upper()}",
             fill="white",
             stroke_width=2,
             stroke_fill="black",
@@ -178,6 +366,7 @@ def _build_dual_sheet(
     output: Path,
     columns: int,
     size: int,
+    projected: dict[tuple[str, str], np.ndarray | None],
 ) -> None:
     take = item["take"]
     control = item["control"]
@@ -204,6 +393,12 @@ def _build_dual_sheet(
         fill="white",
         font=font,
     )
+    draw.text(
+        (10, 28),
+        f"FRONT {_direction_legend('front')} | SIDE {_direction_legend('side')}",
+        fill="#f3d35b",
+        font=font,
+    )
     pair_ids = (("EDIT", take), ("SOURCE", control))
     for chunk_index, chunk in enumerate(chunks):
         for pair_index, (kind, pair_id) in enumerate(pair_ids):
@@ -226,6 +421,12 @@ def _build_dual_sheet(
                     active=start <= frame < end,
                     event=frame == event,
                     font=font,
+                    projected=(
+                        projected[(pair_id, "front")],
+                        projected[(pair_id, "side")],
+                    ),
+                    frame=frame,
+                    action_range=(start, end),
                 )
     canvas.save(output / f"{take}_dual.jpg", quality=95)
 
@@ -242,19 +443,29 @@ def _review_tile(
     active: bool,
     event: bool,
     font: ImageFont.ImageFont,
+    projected: tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None],
+    frame: int,
+    action_range: tuple[int, int],
 ) -> None:
-    for view_index, (view, root) in enumerate(
-        zip(("F", "S", "D"), roots, strict=True)
+    for view_index, (view, root, evidence) in enumerate(
+        zip(("front", "side", "front"), roots, projected, strict=True)
     ):
-        image = Image.open(root).convert("RGB")
-        if view == "D":
-            image = _detail_crop(image)
+        detail = view_index == 2
+        image = _frame_image(
+            root,
+            projected=evidence,
+            frame=frame,
+            start=action_range[0],
+            end=action_range[1],
+            view=view,
+            detail=detail,
+        )
         image.thumbnail((size, size), Image.Resampling.LANCZOS)
         tile_x = x + view_index * size
         canvas.paste(image, (tile_x, y))
         draw.text(
             (tile_x + 6, y + 6),
-            f"{label} {view}",
+            f"{label} {('D' if detail else view[0].upper())}",
             fill="white",
             stroke_width=2,
             stroke_fill="black",
@@ -274,14 +485,22 @@ def _review_tile(
         draw.line((divider, y, divider, y + size - 1), fill="#888", width=1)
 
 
-def _delta_image(edit_path: Path, source_path: Path, *, detail: bool) -> Image.Image:
+def _delta_image(
+    edit_path: Path,
+    source_path: Path,
+    *,
+    detail: bool,
+    view: str,
+) -> Image.Image:
     edit = Image.open(edit_path).convert("RGB")
     source = Image.open(source_path).convert("RGB")
     if detail:
         edit = _detail_crop(edit)
         source = _detail_crop(source)
     difference = ImageChops.difference(edit, source)
-    return Image.eval(difference, lambda value: min(255, value * 4))
+    difference = Image.eval(difference, lambda value: min(255, value * 4))
+    _draw_direction_legend(difference, view)
+    return difference
 
 
 def _delta_tile(
@@ -304,6 +523,7 @@ def _delta_tile(
             edit_path,
             source_path,
             detail=view == "D",
+            view="side" if view == "S" else "front",
         )
         image.thumbnail((size, size), Image.Resampling.LANCZOS)
         tile_x = x + view_index * size
@@ -339,6 +559,7 @@ def _build_review_pages(
     size: int,
     audit_id: str,
     motion_fingerprint: str,
+    projected: dict[tuple[str, str], np.ndarray | None],
     page_frames: int = 4,
 ) -> None:
     take = item["take"]
@@ -371,6 +592,12 @@ def _build_review_pages(
             fill="white",
             font=font,
         )
+        draw.text(
+            (10, 28),
+            f"FRONT {_direction_legend('front')} | SIDE {_direction_legend('side')}",
+            fill="#f3d35b",
+            font=font,
+        )
         for pair_index, (kind, pair_id) in enumerate(pair_ids):
             y = header + pair_index * row_height
             draw.text((6, y + 6), kind, fill="#ddd", font=font)
@@ -398,6 +625,13 @@ def _build_review_pages(
                     active=start <= frame < end,
                     event=frame == event,
                     font=font,
+                    projected=(
+                        projected[(pair_id, "front")],
+                        projected[(pair_id, "side")],
+                        projected[(pair_id, "front")],
+                    ),
+                    frame=frame,
+                    action_range=(start, end),
                 )
         delta_y = header + 2 * row_height
         draw.text((6, delta_y + 6), "EDIT - SOURCE", fill="#ddd", font=font)
@@ -465,10 +699,16 @@ def _build_review_pages(
             "<!doctype html><meta charset=\"utf-8\">"
             f"<title>{take} synchronized review</title>"
             "<style>body{margin:0;background:#111;color:#eee;font-family:system-ui,sans-serif}"
-            "h1,p{padding:12px 18px;margin:0}img{display:block;width:100%;height:auto;margin:0 0 12px}"
+            "h1,p{padding:12px 18px;margin:0}.legend{position:sticky;top:0;z-index:2;"
+            "padding:10px 18px;background:#241f12;color:#f3d35b;font-weight:700}"
+            "img{display:block;width:100%;height:auto;margin:0 0 12px}"
             "</style>"
             f"<h1>{take}: synchronized front, side, upper-body, "
             "and edit-minus-source review</h1>"
+            "<div class=\"legend\">FRONT: screen-left = dancer right; "
+            "screen-right = dancer left. SIDE: screen-left = backward; "
+            "screen-right = forward. White skeleton = exact rendered Y-Bot joints; "
+            "cyan/magenta/yellow/green trails = root, hands, and feet.</div>"
             "<p id=\"comparison-status\">Loading comparison evidence...</p>"
             f"{page_images}"
             "<script>"
@@ -506,6 +746,28 @@ def build_sheets(
     review = json.loads((audit_dir / "review.json").read_text(encoding="utf-8"))
     output = audit_dir / "phase_sheets"
     output.mkdir(exist_ok=True)
+    protocol_nine = int(review.get("review_protocol_version", 0)) >= 9
+    frame_counts = {
+        item["take"]: int(item["frames"])
+        for item in review["takes"]
+    }
+    frame_counts.update({
+        item["control"]: int(item["frames"])
+        for item in review.get("controls", ())
+    })
+    for item in review["takes"]:
+        frame_counts.setdefault(item["control"], int(item["frames"]))
+    projected = {
+        (identifier, view): _load_projected(
+            audit_dir,
+            identifier,
+            view,
+            frames,
+            required=protocol_nine,
+        )
+        for identifier, frames in frame_counts.items()
+        for view in ("front", "side")
+    }
     for item in review["takes"]:
         selected = _selected_frames(item, stride=stride, context=context)
         for view in ("front", "side"):
@@ -517,6 +779,7 @@ def build_sheets(
                 output=output,
                 columns=max(1, int(columns)),
                 size=max(96, int(size)),
+                projected=projected,
             )
         _build_view_sheet(
             audit_dir,
@@ -526,6 +789,7 @@ def build_sheets(
             output=output,
             columns=max(1, int(columns)),
             size=max(96, int(size)),
+            projected=projected,
             detail=True,
         )
         _build_dual_sheet(
@@ -535,6 +799,7 @@ def build_sheets(
             output=output,
             columns=max(1, int(columns)),
             size=max(96, int(size)),
+            projected=projected,
         )
         _build_review_pages(
             audit_dir,
@@ -544,6 +809,7 @@ def build_sheets(
             size=max(96, int(size)),
             audit_id=str(review["audit_id"]),
             motion_fingerprint=str(review["motion_fingerprint"]),
+            projected=projected,
         )
     return output
 

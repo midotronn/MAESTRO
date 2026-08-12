@@ -340,12 +340,18 @@ def _machine_checks(
         start, end = map(int, report["action_range"])
         event = int(report["event_frame"])
         joints = compute_poses(edited)["fk_joints"]
+        host_joints = compute_poses(host)["fk_joints"]
         left_axis, _forward_axis = _dancer_axes(edited, joints, start)
         direction_sign = 1.0 if resolved_direction == "left" else -1.0
         root_lateral = (edited[start:end, :2] - edited[start, :2]) @ left_axis
         signed_root = float(np.max(direction_sign * root_lateral))
+        lead_ankle = 7 if direction_sign > 0.0 else 8
         lead_wrist = 20 if direction_sign > 0.0 else 21
         trail_wrist = 21 if direction_sign > 0.0 else 20
+        lead_foot = direction_sign * float(
+            (joints[event, lead_ankle, :2] - joints[start, lead_ankle, :2])
+            @ left_axis
+        )
         lead_lateral = direction_sign * float(
             (joints[event, lead_wrist, :2] - joints[event, 9, :2]) @ left_axis
         )
@@ -355,20 +361,30 @@ def _machine_checks(
         stance_width = abs(float(
             (joints[event, 7, :2] - joints[event, 8, :2]) @ left_axis
         ))
+        lead_arm_delta = float(np.linalg.norm(
+            (joints[event, lead_wrist] - joints[event, 9])
+            - (host_joints[event, lead_wrist] - host_joints[event, 9])
+        ))
+        locomotion_signal = signed_root + lead_foot
         direction_passed = (
             resolved_direction in {"left", "right"}
             and signed_root > 0.24
+            and lead_foot > 0.30
             and lead_lateral > 0.45
             and lead_lateral - trail_lateral > 0.35
             and stance_width > 0.40
+            and locomotion_signal > 1.05 * lead_arm_delta
         )
         checks.append({
             "name": "side_step_direction_signature",
             "passed": bool(direction_passed),
             "detail": (
                 f"{resolved_direction} signed root travel {signed_root:.4f} m, "
+                f"lead-foot travel {lead_foot:.4f} m, "
                 f"lead/trailing hand offsets {lead_lateral:.4f}/{trail_lateral:.4f} m, "
-                f"stance width {stance_width:.4f} m"
+                f"stance width {stance_width:.4f} m, locomotion signal "
+                f"{locomotion_signal:.4f} versus lead-arm delta "
+                f"{lead_arm_delta:.4f} m"
             ),
         })
 
@@ -405,6 +421,124 @@ def _machine_checks(
                 f"open/touch ankle gaps {open_gap:.4f}/{event_gap:.4f} m, "
                 f"sagittal touch stagger {sagittal_stagger:.4f} m, "
                 f"trailing-foot clearance {trailing_clearance:.4f} m"
+            ),
+        })
+
+    if spec.id in {"step_forward", "step_backward"}:
+        start, end = map(int, report["action_range"])
+        joints = compute_poses(edited)["fk_joints"]
+        _left_axis, forward_axis = _dancer_axes(edited, joints, start)
+        sign = 1.0 if spec.id == "step_forward" else -1.0
+        root = (
+            edited[start:end, :2] - edited[start, :2]
+        ) @ forward_axis
+        lead_foot = (
+            joints[start:end, 7, :2] - joints[start, 7, :2]
+        ) @ forward_axis
+        signed_root = sign * float(root[-1])
+        signed_foot = float(np.max(sign * lead_foot))
+        wrong_way = float(np.max(-sign * root))
+        step_passed = (
+            signed_root > 0.25
+            and signed_foot > 0.35
+            and wrong_way < 0.08
+        )
+        checks.append({
+            "name": "step_direction_signature",
+            "passed": bool(step_passed),
+            "detail": (
+                f"{spec.id} signed root/lead-foot travel "
+                f"{signed_root:.4f}/{signed_foot:.4f} m; wrong-way root "
+                f"excursion {wrong_way:.4f} m"
+            ),
+        })
+
+    if spec.id in {"turn_quarter", "turn_half"}:
+        start, end = map(int, report["action_range"])
+        joints = compute_poses(edited)["fk_joints"]
+        lateral = joints[start:end, 16, :2] - joints[start:end, 17, :2]
+        angles = np.unwrap(np.arctan2(lateral[:, 1], lateral[:, 0]))
+        sign = 1.0 if resolved_direction == "left" else -1.0
+        progress = sign * (angles - angles[0])
+        target = np.pi / 2.0 if spec.id == "turn_quarter" else np.pi
+        increments = np.diff(progress)
+        backward_fraction = (
+            float(np.mean(increments < -0.03))
+            if increments.size
+            else 1.0
+        )
+        final_progress = float(progress[-1])
+        turn_passed = (
+            resolved_direction in {"left", "right"}
+            and 0.78 * target < final_progress < 1.22 * target
+            and float(np.max(progress)) < 1.28 * target
+            and backward_fraction < 0.20
+        )
+        checks.append({
+            "name": "coherent_turn_progression",
+            "passed": bool(turn_passed),
+            "detail": (
+                f"{resolved_direction} final/peak turn "
+                f"{np.rad2deg(final_progress):.2f}/"
+                f"{np.rad2deg(float(np.max(progress))):.2f} degrees; "
+                f"backward-step fraction {backward_fraction:.3f}"
+            ),
+        })
+
+    if spec.id in {"bounce_in_place", "crouch_drop", "rise_reach"}:
+        start, end = map(int, report["action_range"])
+        joints = compute_poses(edited)["fk_joints"]
+        trim = min(4, max(0, (end - start - 2) // 2))
+        core = joints[start + trim:end - trim]
+        ankle_drift = [
+            float(np.max(np.linalg.norm(
+                core[:, ankle, :2] - core[0, ankle, :2],
+                axis=1,
+            )))
+            for ankle in (7, 8)
+        ]
+        checks.append({
+            "name": "planted_foot_stability",
+            "passed": max(ankle_drift) < 0.08,
+            "detail": (
+                f"core-phase left/right ankle-plane drift "
+                f"{ankle_drift[0]:.4f}/{ankle_drift[1]:.4f} m"
+            ),
+        })
+
+    if spec.id == "bounce_in_place":
+        start, end = map(int, report["action_range"])
+        pelvis = compute_poses(edited)["fk_joints"][start:end, 0, 2]
+        travel = float(np.ptp(pelvis))
+        threshold = float(np.min(pelvis) + 0.42 * travel)
+        runs = _true_runs(pelvis < threshold) if travel > 1e-6 else ()
+        cycle_passed = (
+            travel > 0.07
+            and len(runs) == 3
+            and all(run_end - run_start + 1 >= 2 for run_start, run_end in runs)
+        )
+        checks.append({
+            "name": "bounce_cycle_signature",
+            "passed": bool(cycle_passed),
+            "detail": (
+                f"pelvis range {travel:.4f} m with low-phase runs "
+                f"{list(runs)}"
+            ),
+        })
+
+    if spec.id == "crouch_drop":
+        start, end = map(int, report["action_range"])
+        event = int(report["event_frame"])
+        pelvis = compute_poses(edited)["fk_joints"][start:end, 0, 2]
+        event_local = int(np.clip(event - start, 0, len(pelvis) - 1))
+        event_above_low = float(pelvis[event_local] - np.min(pelvis))
+        crouch_passed = float(np.ptp(pelvis)) > 0.22 and event_above_low < 0.05
+        checks.append({
+            "name": "grounded_crouch_signature",
+            "passed": bool(crouch_passed),
+            "detail": (
+                f"pelvis range {float(np.ptp(pelvis)):.4f} m; event "
+                f"{event_above_low:.4f} m above lowest pose"
             ),
         })
 
@@ -628,6 +762,29 @@ def _machine_checks(
                 f"hand reach {reach[0]:.4f}/{reach[1]:.4f} m, "
                 f"lift {lift[0]:.4f}/{lift[1]:.4f} m, "
                 f"minimum contact sum {float(np.min(contacts)):.1f}"
+            ),
+        })
+        action = joints[start:end]
+        pelvis = action[:, 0, 2]
+        low = int(np.argmin(pelvis))
+        hand_lift = np.minimum(
+            action[:, 20, 2] - action[:, 9, 2],
+            action[:, 21, 2] - action[:, 9, 2],
+        )
+        high = np.flatnonzero(hand_lift > 0.35)
+        first_high = int(high[0]) if high.size else -1
+        sequencing_passed = (
+            first_high >= low + 3
+            and float(hand_lift[low]) < 0.25
+            and float(np.max(hand_lift)) > 0.45
+        )
+        checks.append({
+            "name": "rise_before_reach_signature",
+            "passed": bool(sequencing_passed),
+            "detail": (
+                f"lowest pelvis frame {low}, first dual-hand high frame "
+                f"{first_high}, hand lift at low/peak "
+                f"{float(hand_lift[low]):.4f}/{float(np.max(hand_lift)):.4f} m"
             ),
         })
 
@@ -916,6 +1073,10 @@ def _review_html(
             f"""
             <article class="take" data-take="{html.escape(key)}">
               <h2>{html.escape(key)}</h2>
+              <div class="direction-legend">
+                <strong>FRONT</strong>: screen-left = dancer right; screen-right = dancer left.
+                <strong>SIDE</strong>: screen-left = backward; screen-right = forward.
+              </div>
               <div class="pair">
                 <section>
                   <h3>Source choreography: front left, side right</h3>
@@ -955,6 +1116,8 @@ def _review_html(
                 <p class="direction-detail"></p>
                 <p>Must read as: <span class="recognizable"></span></p>
                 <ul class="phases"></ul>
+                <p><strong>Reject competing silhouettes</strong></p>
+                <ul class="negative-signatures"></ul>
                 <p><strong>Machine visual invariants</strong></p>
                 <ul class="machine-checks"></ul>
                 <section class="phase-review">
@@ -1002,6 +1165,9 @@ def _review_html(
     .instructions {{ max-width: 1000px; margin: 0 auto 24px; line-height: 1.5; }}
     .take {{ background: #26262d; border: 1px solid #444; border-radius: 12px;
              padding: 16px; }}
+    .direction-legend {{ position: sticky; top: 0; z-index: 2; margin: 0 0 10px;
+             padding: 8px 10px; color: #f3d35b; background: #241f12;
+             border: 1px solid #7d6a2b; border-radius: 6px; }}
     .pair {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
     h3 {{ margin: 0 0 8px; font-size: 0.95rem; color: #ccc; }}
     video {{ width: 100%; background: #000; }}
@@ -1169,6 +1335,11 @@ def _review_html(
         && state[take].requiredPhases.every(phase =>
           (state[take].verifiedPhases || []).includes(phase)
         )
+        && Array.isArray(state[take].requiredNegativeSignatures)
+        && state[take].requiredNegativeSignatures.length > 0
+        && state[take].requiredNegativeSignatures.every(signature =>
+          (state[take].verifiedNegativeSignatures || []).includes(signature)
+        )
       );
     }}
 
@@ -1281,6 +1452,8 @@ def _review_html(
         directionRecognized,
         requiredPhases: [...answer.visual_contract.required_phases],
         verifiedPhases: state[take].verifiedPhases || [],
+        requiredNegativeSignatures: [...answer.visual_contract.must_not_read_as],
+        verifiedNegativeSignatures: state[take].verifiedNegativeSignatures || [],
         revealedAt: state[take].revealedAt || new Date().toISOString(),
       }};
       card.querySelector(".answer-name").textContent = answer.name;
@@ -1307,6 +1480,30 @@ def _review_html(
         label.append(checkbox, ` Reviewed: ${{phase}}`);
         item.appendChild(label);
         phases.appendChild(item);
+      }});
+      const negativeSignatures = card.querySelector(".negative-signatures");
+      negativeSignatures.replaceChildren();
+      answer.visual_contract.must_not_read_as.forEach(signature => {{
+        const item = document.createElement("li");
+        const label = document.createElement("label");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.className = "negative-reviewed";
+        checkbox.checked = state[take].verifiedNegativeSignatures.includes(signature);
+        checkbox.addEventListener("change", () => {{
+          const reviewed = new Set(state[take].verifiedNegativeSignatures || []);
+          if (checkbox.checked) reviewed.add(signature);
+          else reviewed.delete(signature);
+          state[take] = {{
+            ...state[take],
+            verifiedNegativeSignatures: [...reviewed],
+          }};
+          save();
+          refreshExportAvailability();
+        }});
+        label.append(checkbox, ` Confirmed the edit does not read as: ${{signature}}`);
+        item.appendChild(label);
+        negativeSignatures.appendChild(item);
       }});
       const direction = answer.requested_direction || "not directional";
       card.querySelector(".direction-detail").textContent =
@@ -1669,6 +1866,7 @@ def _review_html(
           status: state[take].visualStatus,
           evidence: state[take].visualEvidence,
           verified_phases: state[take].verifiedPhases,
+          verified_negative_signatures: state[take].verifiedNegativeSignatures,
         }}])),
       }};
       const blob = new Blob([JSON.stringify(payload, null, 2)], {{type: "application/json"}});

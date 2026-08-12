@@ -28,6 +28,8 @@ backward steps, quarter and half turns, body roll, crouch or drop, and rise or r
   turn carries its root heading into the suffix;
 - optional event-pose joints that take the shortest path to the beat pose instead of replaying a
   long authored wind-up after beat compression;
+- optional phase joints that preserve authored approach, accent, and recovery timing under a
+  dedicated semantic blend envelope;
 - source, license, and attribution;
 - a declarative semantic validator contract.
 
@@ -489,15 +491,20 @@ run. The supported 20-motion vocabulary is visible to the reviewer, but no take-
 embedded in the page. Shuffled take ids prevent the manifest order or filename from giving away the
 answer.
 
-Protocol version 8 runs machine visual invariants on the exact composed host motion. Claps
+Protocol version 9 runs machine visual invariants on the exact composed host motion. Claps
 cannot enter review unless palm contact is below 1 cm, palm planes oppose, fingers are not vertical,
 both hands visibly approach, the torso heading stays within 3 degrees of the source, and every
 unowned source channel remains unchanged. The same pre-render gate requires guard-strike-recoil
 punch phases, open-step-touch-stagger foot phases, and sequential lower-to-upper body-roll crests
-and releases. Before reveal, the reviewer locks both the action name and observed direction using
-the action-specific direction rules shown in the UI. After reveal, the reviewer must mark every
-visual phase as reviewed and record pass or fail plus an evidence note for every take. These checks
-diagnose known failures but do not replace the human verdict. Finalize that exported result with:
+and releases. Protocol 9 additionally requires locomotion to dominate a side step's arm cue,
+forward and backward steps to travel in the named dancer-relative direction, turns to progress
+coherently without reversing, bounce to contain three readable low phases, planted level changes
+to keep both feet stable, crouch to arrive near its lowest pose, and rise/reach to load before both
+hands become high. Before reveal, the reviewer locks both the action name and observed direction
+using the action-specific direction rules shown in the UI. After reveal, the reviewer must mark
+every required visual phase and every prohibited competing silhouette as reviewed, then record
+pass or fail plus an evidence note for every take. These checks diagnose known failures but do not
+replace the human verdict. Finalize that exported result with:
 
 ```bash
 python scripts/finalize_motion_audit.py \
@@ -505,17 +512,19 @@ python scripts/finalize_motion_audit.py \
   --review-result /path/to/current-review-result.json
 ```
 
-The finalizer rejects missed blind guesses, failed phases, failed machine checks, missing direction
-variants, empty evidence, incomplete per-take playback or comparison proof, invalid timestamp order,
-stale audit artifacts, or a fingerprint mismatch. The render step clears old videos and frame
-directories first, captures exact posed Y-Bot joints, camera projections, mesh-floor clearance, and
-rendered-frame coverage for every source/edit front/side pass, then runs
+The finalizer rejects missed blind guesses, failed phases, unreviewed competing silhouettes, failed
+machine checks, missing direction variants, empty evidence, incomplete per-take playback or
+comparison proof, invalid timestamp order, stale audit artifacts, or a fingerprint mismatch. The
+render step clears old videos and frame directories first, captures exact posed Y-Bot joints,
+camera projections, mesh-floor clearance, and rendered-frame coverage for every source/edit
+front/side pass, then runs
 `scripts/validate_motion_audit_ybot.py`. That stage blocks incorrect jump clearance, airborne
-grounded actions, unreadable clap counts or direction separation, missing punch recoil, weak planted
-rises, and collapsed step-touch silhouettes. The atomic render receipt hashes the review manifest,
-hidden answer key, exact-rig report and NPZs, pose inputs, front/side/combined videos, and review
-sheets. A partial render or any artifact modified after rendering therefore cannot be finalized. It
-writes
+grounded actions, unreadable clap counts or direction separation, missing punch recoil, weak
+planted rises, collapsed step-touch silhouettes, reversed steps, incoherent turns, arm-dominant
+side steps, head-led chest pops, and rises that raise their hands before loading. The atomic render
+receipt hashes the review manifest, hidden answer key, exact-rig report and NPZs, pose inputs,
+front/side/combined videos, and review sheets. A partial render or any artifact modified after
+rendering therefore cannot be finalized. It writes
 `assets/motion_bank/audit_receipt.json`, which hashes the motion authoring, composition, planner,
 renderer and camera dependencies, FK template, audit code, manifest, contracts, and every clip.
 Text files are line-ending normalized so the same audited content has the same fingerprint on
@@ -538,7 +547,11 @@ must be judged in the same review pass. The primary static review strip adds tha
 every synchronized frame, so cadence, torso articulation, foot clearance, and hand contact remain
 visible together instead of requiring the reviewer to remember evidence from separate sheets. It is
 split into short horizontal pages so browser or terminal image scaling cannot compress a full action
-into unreadable thumbnails. Each page also contains an amplified edit-minus-source difference row.
+into unreadable thumbnails. Protocol 9 overlays the projected exact-Y-Bot skeleton, root and floor
+guides, and root, ankle, and wrist trails on those strips. The page includes persistent
+dancer-relative direction legends: in front view screen-left is dancer-right, while in side view
+screen-left is backward. Sheet generation fails if the required projected-joint evidence is missing
+or malformed. Each page also contains an amplified edit-minus-source difference row.
 Motion already present in the host cancels out there, while the named edit remains visible, preventing
 an existing host jump or step from being scored as the inserted action. These are the static-review
 fallback when video playback is unavailable. Do not
@@ -670,6 +683,26 @@ feet in depth, propagates body roll through signed lower/mid/upper crests, and g
 clearly leading arm. Protocol 8 binds the exact Y-Bot metric report and every underlying render
 artifact into receipt schema 2. Release still requires a new randomized 43/43 blind pass on the
 exact pushed commit; machine evidence may reject a take, but it may never waive a human failure.
+
+The completed protocol-8 audit demonstrated that exact geometry alone was still an inadequate
+oracle. All 43 exact-Y-Bot machine cases passed, but only 11/43 answer-hidden action guesses were
+correct. The finalizer rejected the review and wrote no release receipt. The misses included motions
+whose displacement or contact was numerically valid but whose full-body silhouette read as a
+different action, as well as direction judgments made without sufficiently persistent
+dancer-relative evidence.
+
+Protocol 9 and bank `1.1.5` treat those confusions as first-class release failures. Every one of the
+20 visual contracts now names at least two `must_not_read_as` alternatives, and the review export is
+blocked until the reviewer explicitly confirms that each competing silhouette is absent. Examples
+include a side step reading as a point, a jump reading as a crouch, and rise/reach reading as a
+celebration or overhead clap. Source-space and exact-rig discriminative checks cover the corresponding
+motion families, while the hidden answer key remains the only authority for scoring recognition.
+
+The current protocol-9 implementation passes all 43 seeded source-space cases and the audit/finalizer
+regressions. That is a development milestone, not a release authorization. Production remains
+blocked until a fresh seed is rendered on exact Y-Bot from the exact pushed commit, every rendered
+machine gate passes, all 43 action and direction guesses are locked before reveal, and the finalizer
+scores the full review 43/43 with complete positive-phase and negative-silhouette evidence.
 
 ## Adding a motion
 

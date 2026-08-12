@@ -14,21 +14,31 @@ from agentlodge.editor.motion_audit import (
     motion_fingerprint,
     record_audit_render_receipt,
     required_audit_cases,
+    required_negative_signatures,
     required_phases,
     validate_audit_receipt,
 )
 from agentlodge.editor.motion_bank import MotionBank
 from scripts.finalize_motion_audit import finalize
 from scripts.validate_motion_audit_ybot import (
+    _bounce_cycle_check,
+    _chest_pop_check,
     _clap_checks,
     _jump_check,
+    _planted_foot_check,
+    _punch_plane_check,
+    _rise_phase_check,
+    _side_step_check,
+    _step_direction_check,
     _step_touch_check,
+    _turn_check,
 )
 
 
 def _passing_receipt() -> dict:
     bank = MotionBank()
     phases = required_phases()
+    negative_signatures = required_negative_signatures()
     return {
         "schema_version": 2,
         "status": "pass",
@@ -59,6 +69,9 @@ def _passing_receipt() -> dict:
                 "normal_speed_playback": "pass",
                 "source_edit_comparison": "pass",
                 "verified_phases": list(phases[case_id.split("@", 1)[0]]),
+                "verified_negative_signatures": list(
+                    negative_signatures[case_id.split("@", 1)[0]]
+                ),
                 "evidence": "Source and edit were compared at normal speed; all phases read clearly.",
             }
             for case_id in required_audit_cases()
@@ -144,6 +157,91 @@ def test_exact_ybot_step_touch_requires_side_view_foot_separation():
     assert not _step_touch_check(joints, 0, event)["passed"]
 
 
+def _facing_forward(joints):
+    joints[:, 7, :2] = (0.18, 0.0)
+    joints[:, 8, :2] = (-0.18, 0.0)
+    joints[:, 10, :2] = (0.18, -0.30)
+    joints[:, 11, :2] = (-0.18, -0.30)
+    joints[:, 16, :2] = (0.25, 0.0)
+    joints[:, 17, :2] = (-0.25, 0.0)
+
+
+def test_protocol_nine_exact_rig_checks_reject_competing_silhouettes():
+    joints = np.zeros((30, 22, 3), dtype=np.float32)
+    _facing_forward(joints)
+
+    bounce = joints.copy()
+    bounce[:, 0, 2] = 1.0
+    for start in (3, 12, 21):
+        bounce[start:start + 3, 0, 2] = 0.80
+    assert _bounce_cycle_check(bounce, 0, 30)["passed"]
+    assert not _bounce_cycle_check(joints, 0, 30)["passed"]
+    assert _planted_foot_check(bounce, 0, 30)["passed"]
+    sliding = bounce.copy()
+    sliding[:, 7, 0] += np.linspace(0.0, 0.20, 30)
+    assert not _planted_foot_check(sliding, 0, 30)["passed"]
+
+    step = joints.copy()
+    step[:, 0, 1] = np.linspace(0.0, -0.34, 30)
+    step[:, 7, 1] += np.linspace(0.0, -0.50, 30)
+    assert _step_direction_check("step_forward", step, 0, 30)["passed"]
+    assert not _step_direction_check("step_backward", step, 0, 30)["passed"]
+
+    turn = joints.copy()
+    angles = np.linspace(0.0, np.pi / 2.0, 30)
+    turn[:, 16, 0] = 0.25 * np.cos(angles)
+    turn[:, 16, 1] = 0.25 * np.sin(angles)
+    turn[:, 17, :2] = -turn[:, 16, :2]
+    assert _turn_check("turn_quarter", turn, 0, 30, "left")["passed"]
+    assert not _turn_check("turn_quarter", turn, 0, 30, "right")["passed"]
+
+    punch = joints.copy()
+    punch[:, 17, :2] = (-0.20, 0.0)
+    punch[:, 21, :2] = (-0.20, -0.10)
+    punch[15, 21, :2] = (-0.20, -0.75)
+    assert _punch_plane_check(punch, 0, 30, "right")["passed"]
+    side_reach = punch.copy()
+    side_reach[15, 21, :2] = (-0.85, 0.0)
+    assert not _punch_plane_check(side_reach, 0, 30, "right")["passed"]
+
+    control = joints.copy()
+    chest = joints.copy()
+    chest[15, 9, 1] = -0.12
+    chest[15, 15, 1] = -0.03
+    assert _chest_pop_check(chest, control, 15)["passed"]
+    nod = chest.copy()
+    nod[15, 15, 1] = -0.11
+    assert not _chest_pop_check(nod, control, 15)["passed"]
+
+    side_step = joints.copy()
+    side_step[:, 0, 0] = np.linspace(0.0, 0.36, 30)
+    side_step[:, 7, 0] = np.linspace(0.18, 0.68, 30)
+    side_step[20:, 8, 0] = -0.18
+    side_step[20, 20, 0] += 0.30
+    assert _side_step_check(
+        side_step, control, 0, 30, 20, "left"
+    )["passed"]
+    pointing_step = side_step.copy()
+    pointing_step[20, 20, 0] += 0.80
+    assert not _side_step_check(
+        pointing_step, control, 0, 30, 20, "left"
+    )["passed"]
+
+    rise = joints.copy()
+    rise[:, 0, 2] = 1.0
+    rise[5:9, 0, 2] = 0.70
+    rise[:, 9, 2] = rise[:, 0, 2] + 0.40
+    rise[:, 20, 2] = rise[:, 9, 2] + 0.10
+    rise[:, 21, 2] = rise[:, 9, 2] + 0.10
+    rise[12:, 20, 2] = rise[12:, 9, 2] + 0.50
+    rise[12:, 21, 2] = rise[12:, 9, 2] + 0.50
+    assert _rise_phase_check(rise, 0, 30)["passed"]
+    early_reach = rise.copy()
+    early_reach[5:9, 20, 2] = early_reach[5:9, 9, 2] + 0.50
+    early_reach[5:9, 21, 2] = early_reach[5:9, 9, 2] + 0.50
+    assert not _rise_phase_check(early_reach, 0, 30)["passed"]
+
+
 @pytest.mark.parametrize(
     "mutation,match",
     [
@@ -194,6 +292,12 @@ def test_exact_ybot_step_touch_requires_side_view_foot_separation():
                 verified_phases=[]
             ),
             "every required visual phase",
+        ),
+        (
+            lambda receipt: next(iter(receipt["cases"].values())).update(
+                verified_negative_signatures=[]
+            ),
+            "competing silhouettes",
         ),
         (
             lambda receipt: next(iter(receipt["cases"].values())).update(evidence=""),
@@ -292,6 +396,7 @@ def test_pod_deployment_validates_before_replacing_exact_motion_bank_tree():
 def _complete_audit_export(tmp_path):
     bank = MotionBank()
     phases = required_phases()
+    negative_signatures = required_negative_signatures()
     specs = {spec.id: spec for spec in bank.specs}
     fingerprint = motion_fingerprint()
     takes = []
@@ -312,7 +417,10 @@ def _complete_audit_export(tmp_path):
             "aliases": list(spec.aliases),
             "requested_direction": requested or None,
             "resolved_direction": resolved,
-            "visual_contract": {"required_phases": list(phases[motion_id])},
+            "visual_contract": {
+                "required_phases": list(phases[motion_id]),
+                "must_not_read_as": list(negative_signatures[motion_id]),
+            },
             "machine_checks": [{"name": "test", "passed": True, "detail": "pass"}],
             "machine_status": "pass",
         }
@@ -343,6 +451,9 @@ def _complete_audit_export(tmp_path):
             "status": "pass",
             "evidence": "Compared the exact source and edit at normal speed.",
             "verified_phases": list(phases[motion_id]),
+            "verified_negative_signatures": list(
+                negative_signatures[motion_id]
+            ),
         }
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir(parents=True)
@@ -447,6 +558,17 @@ def test_finalizer_rejects_skipped_visual_phases_even_when_marked_pass(tmp_path)
     first["verified_phases"] = first["verified_phases"][:-1]
     result_path.write_text(json.dumps(result), encoding="utf-8")
     with pytest.raises(ValueError, match="every required visual phase"):
+        finalize(audit_dir, result_path, tmp_path / "receipt.json")
+
+
+def test_finalizer_rejects_unchecked_competing_silhouettes(tmp_path):
+    audit_dir, result_path, result = _complete_audit_export(tmp_path)
+    first = next(iter(result["takes"].values()))
+    first["verified_negative_signatures"] = (
+        first["verified_negative_signatures"][:-1]
+    )
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    with pytest.raises(ValueError, match="every competing silhouette"):
         finalize(audit_dir, result_path, tmp_path / "receipt.json")
 
 

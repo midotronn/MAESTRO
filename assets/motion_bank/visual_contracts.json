@@ -1,9 +1,10 @@
 {
-  "version": 5,
+  "version": 6,
   "acceptance_rule": "At normal speed, both the motion and its observed direction must be recognizable in the unlabeled edited render before its answer is revealed. Every automatic and explicit direction variant must compare the exact source and edit, review and pass all required phases, and include a written evidence note. Numeric metrics cannot override a failed recognition or phase review, and any failure blocks the production audit receipt.",
   "motions": {
     "clap_single": {
       "recognizable_as": "one chest-level clap directed with the surrounding dance or to the requested side",
+      "must_not_read_as": ["hands-up celebration", "prayer pose", "generic arm raise"],
       "required_phases": [
         "hands begin apart",
         "both hands rise into a visible open guard before approaching each other",
@@ -15,6 +16,7 @@
     },
     "clap_repeat": {
       "recognizable_as": "three chest-level claps directed with the surrounding dance or to the requested side",
+      "must_not_read_as": ["single clap", "bounce in place", "flapping arms"],
       "required_phases": [
         "hands rise to a chest-level guard",
         "three visibly closed contacts each persist across multiple rendered frames with relaxed diagonal fingers and clear recoil",
@@ -26,6 +28,7 @@
     },
     "clap_overhead": {
       "recognizable_as": "one directional overhead clap",
+      "must_not_read_as": ["hands-up celebration", "wave", "jump with arms up"],
       "required_phases": [
         "both arms rise above the head",
         "palms visibly meet above the head for a readable contact hold without intersecting it",
@@ -37,6 +40,7 @@
     },
     "jump_two_foot": {
       "recognizable_as": "a two-foot jump",
+      "must_not_read_as": ["crouch or drop", "turn", "grounded bounce"],
       "required_phases": [
         "both legs narrow into a stable stance",
         "hips and knees visibly load downward",
@@ -48,6 +52,7 @@
     },
     "jump_arms_up": {
       "recognizable_as": "a two-foot jump with both arms raised",
+      "must_not_read_as": ["rise and reach", "hands-up celebration", "overhead clap"],
       "required_phases": [
         "hips and knees visibly load downward",
         "both feet push off and leave the floor",
@@ -59,6 +64,7 @@
     },
     "bounce_in_place": {
       "recognizable_as": "a rhythmic bounce in place",
+      "must_not_read_as": ["crouch or drop", "jump", "motionless stance"],
       "required_phases": [
         "the feet remain planted",
         "knees and hips compress and extend repeatedly",
@@ -68,6 +74,7 @@
     },
     "wave": {
       "recognizable_as": "a hand wave",
+      "must_not_read_as": ["side point", "hands-up celebration", "arm punch"],
       "required_phases": [
         "one hand rises above shoulder level",
         "the raised hand changes direction repeatedly",
@@ -77,6 +84,7 @@
     },
     "point_side": {
       "recognizable_as": "a clear point to the side",
+      "must_not_read_as": ["side step", "forward punch", "generic reach"],
       "required_phases": [
         "one arm prepares from the host pose",
         "the arm extends dominantly sideways",
@@ -86,6 +94,7 @@
     },
     "celebrate_hands_up": {
       "recognizable_as": "a hands-up celebration",
+      "must_not_read_as": ["overhead clap", "jump with arms up", "rise and reach"],
       "required_phases": [
         "both arms rise",
         "the arms form a clear celebratory V",
@@ -95,6 +104,7 @@
     },
     "chest_pop": {
       "recognizable_as": "a chest pop",
+      "must_not_read_as": ["arm punch", "single clap", "head nod"],
       "required_phases": [
         "the chest drives forward sharply",
         "the pelvis remains comparatively stable",
@@ -105,6 +115,7 @@
     },
     "arm_punch": {
       "recognizable_as": "a forward arm punch",
+      "must_not_read_as": ["side point", "hands-up celebration", "held reach"],
       "required_phases": [
         "the punching arm prepares",
         "the elbow extends dominantly forward",
@@ -114,6 +125,7 @@
     },
     "side_step": {
       "recognizable_as": "a committed side step into a wide stance",
+      "must_not_read_as": ["side point", "step touch", "arm-led gesture"],
       "required_phases": [
         "the lead foot lifts and opens laterally",
         "the root travels sideways over the lead leg",
@@ -124,6 +136,7 @@
     },
     "step_touch": {
       "recognizable_as": "a clear step-and-touch",
+      "must_not_read_as": ["side step", "side point", "continuous lateral travel"],
       "required_phases": [
         "the lead foot steps laterally and accepts the weight",
         "the root settles over the lead leg",
@@ -133,6 +146,7 @@
     },
     "step_forward": {
       "recognizable_as": "a forward step",
+      "must_not_read_as": ["backward step", "moonwalk", "in-place leg lift"],
       "required_phases": [
         "the lead foot swings and plants ahead",
         "the root travels forward",
@@ -142,6 +156,7 @@
     },
     "step_backward": {
       "recognizable_as": "a backward step",
+      "must_not_read_as": ["forward step", "moonwalk", "in-place leg lift"],
       "required_phases": [
         "the lead foot reaches and plants behind",
         "the root travels backward",
@@ -151,6 +166,7 @@
     },
     "turn_quarter": {
       "recognizable_as": "a coordinated quarter turn",
+      "must_not_read_as": ["half turn", "side step", "torso-only twist"],
       "required_phases": [
         "the body prepares through the feet and hips",
         "the whole body rotates about 90 degrees",
@@ -160,6 +176,7 @@
     },
     "turn_half": {
       "recognizable_as": "a coordinated half turn",
+      "must_not_read_as": ["quarter turn", "side step", "torso-only twist"],
       "required_phases": [
         "the body prepares through the feet and hips",
         "the whole body rotates about 180 degrees",
@@ -169,6 +186,7 @@
     },
     "body_roll": {
       "recognizable_as": "a body roll",
+      "must_not_read_as": ["rigid bow", "turn", "single chest hit"],
       "required_phases": [
         "the wave begins in the hips or lower torso with a visible crest and release",
         "an S-curve travels sequentially through the spine rather than stacking same-direction bends",
@@ -178,6 +196,7 @@
     },
     "crouch_drop": {
       "recognizable_as": "a controlled crouch or drop",
+      "must_not_read_as": ["jump", "bounce in place", "airborne tuck"],
       "required_phases": [
         "both hips and knees bend",
         "the pelvis clearly lowers",
@@ -187,6 +206,7 @@
     },
     "rise_reach": {
       "recognizable_as": "a rise with an upward reach",
+      "must_not_read_as": ["jump with arms up", "hands-up celebration", "overhead clap"],
       "required_phases": [
         "the action begins from a visibly low level",
         "the legs extend while the torso rises",

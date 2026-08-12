@@ -30,21 +30,42 @@ if (-not $HostName) { throw "Set AGENTLODGE_POD_HOST (and _PORT/_KEY) or create 
 $Repo = Split-Path $PSScriptRoot -Parent
 $Target = "$User@$HostName"
 
-function Pod-SSH([string]$cmd) { ssh -o StrictHostKeyChecking=no -p $Port -i $Key $Target $cmd }
-function Pod-Push([string]$local, [string]$remote) { scp -P $Port -i $Key $local "${Target}:$remote" }
-function Pod-Pull([string]$remote, [string]$local) { scp -P $Port -i $Key "${Target}:$remote" $local }
+function Pod-SSH([string]$cmd) {
+  $output = & ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=20 `
+    -p $Port -i $Key $Target $cmd
+  if ($LASTEXITCODE -ne 0) { throw "pod SSH command failed with exit code $LASTEXITCODE" }
+  return $output
+}
+function Pod-Push([string]$local, [string]$remote) {
+  & scp -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=20 `
+    -P $Port -i $Key $local "${Target}:$remote"
+  if ($LASTEXITCODE -ne 0) { throw "pod upload failed with exit code $LASTEXITCODE" }
+}
+function Pod-Pull([string]$remote, [string]$local) {
+  & scp -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=20 `
+    -P $Port -i $Key "${Target}:$remote" $local
+  if ($LASTEXITCODE -ne 0) { throw "pod download failed with exit code $LASTEXITCODE" }
+}
 
 switch ($Command) {
   "ssh"  { Pod-SSH ($Args -join " ") }
   "push" { Pod-Push $Args[0] $Args[1] }
   "pull" { Pod-Pull $Args[0] $Args[1] }
   "setup" {
-    Write-Host "Uploading setup scripts..." -ForegroundColor Cyan
-    Pod-Push "$Repo\scripts\setup_pod.sh" "$WS/AgentLODGE/scripts/setup_pod.sh"
-    Pod-Push "$Repo\scripts\build_window_bank.py" "$WS/AgentLODGE/scripts/build_window_bank.py"
     $torch = if ($env:AGENTLODGE_TORCH_INDEX) { $env:AGENTLODGE_TORCH_INDEX } else { "cu128" }
-    Write-Host "Provisioning pod (system libs + venv + pytorch3d)... this takes a while." -ForegroundColor Cyan
-    Pod-SSH "cd $WS/AgentLODGE && sed -i 's/\r`$//' scripts/setup_pod.sh scripts/build_window_bank.py && WORKSPACE=$WS TORCH_INDEX=$torch bash scripts/setup_pod.sh"
+    $state = Pod-SSH "if [ -d '$WS/AgentLODGE/.git' ] && [ -f '$WS/.maestro_gen_pod_ready' ]; then echo EXISTING_WORKSPACE; else echo FRESH_WORKSPACE; fi"
+    if (($state -join "`n") -match "FRESH_WORKSPACE") {
+      Write-Host "Fresh workspace detected; uploading the full generation + rendering bootstrap..." -ForegroundColor Cyan
+      Pod-Push "$Repo\scripts\setup_gen_pod.sh" "$WS/setup_gen_pod.sh"
+      Pod-SSH "sed -i 's/\r`$//' '$WS/setup_gen_pod.sh' && WORKSPACE=$WS AGENTLODGE_TORCH_INDEX=$torch bash '$WS/setup_gen_pod.sh'"
+      Pod-SSH "cp '$WS/setup_gen_pod.sh' '$WS/AgentLODGE/scripts/setup_gen_pod.sh'"
+    } else {
+      Write-Host "Uploading restart setup scripts..." -ForegroundColor Cyan
+      Pod-Push "$Repo\scripts\setup_pod.sh" "$WS/AgentLODGE/scripts/setup_pod.sh"
+      Pod-Push "$Repo\scripts\build_window_bank.py" "$WS/AgentLODGE/scripts/build_window_bank.py"
+      Write-Host "Provisioning pod (system libs + venv + pytorch3d)... this takes a while." -ForegroundColor Cyan
+      Pod-SSH "cd $WS/AgentLODGE && sed -i 's/\r`$//' scripts/setup_pod.sh scripts/build_window_bank.py && WORKSPACE=$WS TORCH_INDEX=$torch bash scripts/setup_pod.sh"
+    }
   }
   "bank" {
     $sid = $Args[0]; $k = if ($Args[1]) { $Args[1] } else { "4" }

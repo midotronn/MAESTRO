@@ -28,6 +28,9 @@ PY="$VENV/bin/python"
 PIP="$VENV/bin/pip"
 TORCH_INDEX="${AGENTLODGE_TORCH_INDEX:-cu128}"        # cu128 verified on Blackwell; use 'cpu' for render-only
 AL="$WORK/AgentLODGE"
+BLENDER="$WORK/blender/blender"
+YBOT="$WORK/EDGE/SMPL-to-FBX/ybot.fbx"
+YBOT_SCENE="$WORK/ybot_scene.blend"
 step() { echo ""; echo "=== $* ==="; }
 die()  { echo "SETUP_FAILED: $*" >&2; exit 1; }
 
@@ -58,7 +61,7 @@ fi
 step "system libraries (ffmpeg + headless OpenGL/OSMesa for pyrender)"
 if command -v apt-get >/dev/null 2>&1; then
   apt-get update -qq || true
-  apt-get install -y -qq ffmpeg libsndfile1 build-essential git \
+  apt-get install -y -qq ffmpeg libsndfile1 build-essential git curl xz-utils \
     libosmesa6 libosmesa6-dev libgl1-mesa-glx libglu1-mesa freeglut3-dev libglib2.0-0 \
     libxrender1 libxi6 libxxf86vm1 libxfixes3 libxkbcommon0 >/dev/null 2>&1 || true
 fi
@@ -67,7 +70,22 @@ fi
 step "GPU"
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader || die "no GPU"
 
-# ---- 3. repos -----------------------------------------------------------------------------
+# ---- 3. Blender ---------------------------------------------------------------------------
+step "Blender 4.2.3"
+if [ ! -x "$BLENDER" ]; then
+  archive="/tmp/blender-4.2.3-linux-x64.tar.xz"
+  rm -rf "$WORK/blender"
+  mkdir -p "$WORK/blender"
+  curl -fL --retry 10 --retry-delay 5 --retry-all-errors \
+    -o "$archive" \
+    https://download.blender.org/release/Blender4.2/blender-4.2.3-linux-x64.tar.xz \
+    || die "Blender download"
+  tar -xf "$archive" -C "$WORK/blender" --strip-components=1 || die "Blender extract"
+  rm -f "$archive"
+fi
+"$BLENDER" --version 2>/dev/null | head -1 || die "Blender is not runnable"
+
+# ---- 4. repos -----------------------------------------------------------------------------
 step "repos"
 cd "$WORK"
 [ -d AgentLODGE ] || git clone -q https://github.com/midotronn/MAESTRO.git AgentLODGE
@@ -95,7 +113,7 @@ if [ ! -f EDGE/EDGE.py ]; then
 fi
 ( cd AgentLODGE && git pull --ff-only -q || true )
 
-# ---- 4. CUDA venv + PyTorch (Blackwell gate) ----------------------------------------------
+# ---- 5. CUDA venv + PyTorch (Blackwell gate) ----------------------------------------------
 step "CUDA venv + torch ($TORCH_INDEX)"
 # The venv MUST live physically on /workspace to survive a pod restart. An earlier setup symlinked
 # it to /root/al_venv (fast local disk, but /root is wiped on restart) -- replace such a symlink with
@@ -112,19 +130,36 @@ else
   "$PIP" install -q torch torchvision torchaudio --index-url "https://download.pytorch.org/whl/$TORCH_INDEX"
 fi
 
-# ---- 5. python deps (pyrender is REQUIRED: LODGE render.py imports it at load) -------------
+# ---- 6. python deps (pyrender is REQUIRED: LODGE render.py imports it at load) -------------
 step "python deps"
 "$PIP" install -q -r "$AL/requirements.txt"
 "$PIP" install -q gdown omegaconf pytorch-lightning einops tqdm soundfile librosa \
   opencv-python-headless pyrender PyOpenGL trimesh smplx p_tqdm h5py imageio imageio-ffmpeg psutil \
   torchmetrics accelerate wandb fire
 # pytorch3d (transforms only -> CPU build is fine; no nvcc). Build isolation OFF so it sees torch.
-"$PIP" show pytorch3d >/dev/null 2>&1 || \
-  CUDA_VISIBLE_DEVICES="" FORCE_CUDA=0 MAX_JOBS="$(nproc)" "$PIP" install -q --no-build-isolation \
-    "git+https://github.com/facebookresearch/pytorch3d.git@stable" || \
-  echo "  (pytorch3d build skipped/failed -- LODGE/EDGE rotation ops may need it)"
+if ! "$PIP" show pytorch3d >/dev/null 2>&1; then
+  CUDA_VISIBLE_DEVICES="" FORCE_CUDA=0 MAX_JOBS="$(nproc)" \
+    "$PIP" install -q --no-build-isolation \
+      "git+https://github.com/facebookresearch/pytorch3d.git@stable" \
+    || die "pytorch3d build"
+fi
+"$PY" - <<'PY' || die "Python dependency import gate"
+import importlib
 
-# ---- 6. LODGE + EDGE weights (via robust gdrive helper; gdown fails on the virus-scan page) -
+for module in (
+    "torch",
+    "pytorch3d",
+    "pyrender",
+    "OpenGL",
+    "smplx",
+    "librosa",
+    "omegaconf",
+):
+    importlib.import_module(module)
+print("  Python dependency imports: OK")
+PY
+
+# ---- 7. LODGE + EDGE weights (via robust gdrive helper; gdown fails on the virus-scan page) -
 step "LODGE weights"
 cd "$WORK/LODGE"
 mkdir -p configs && cp -f "$AL/scripts/lodge_infer_local.yaml" configs/infer_local.yaml
@@ -142,8 +177,7 @@ cd "$WORK/EDGE"
 EDGE_CODE_PATH="$WORK/EDGE" "$PY" "$AL/scripts/patch_edge_pod.py" || true
 [ -f checkpoint.pt ] || "$PY" "$AL/scripts/download_gdrive.py" 1BAR712cVEqB8GR37fcEihRV_xOC-fZrZ checkpoint.pt || die "EDGE checkpoint download"
 
-# ---- 7. EDGE venv (shares CUDA venv via .pth) + Jukebox --------------------------------------
-# ---- 7. EDGE venv (shares CUDA venv via .pth) + Jukebox --------------------------------------
+# ---- 8. EDGE venv (shares CUDA venv via .pth) + Jukebox -----------------------------------
 step "EDGE venv (shares CUDA venv via .pth)"
 PYVER="$("$PY" -c 'import sys;print(f"python{sys.version_info.major}.{sys.version_info.minor}")')"
 if [ ! -x "$WORK/EDGE/.venv/bin/python" ]; then
@@ -161,13 +195,15 @@ else
     "$WORK/EDGE/.venv/bin/pip" install -q --no-deps "git+https://github.com/rodrigo-castellon/jukemirlib.git"
     "$WORK/EDGE/.venv/bin/pip" install -q fire unidecode wget
   }
+  "$WORK/EDGE/.venv/bin/python" -c "import jukemirlib" \
+    || die "EDGE Jukebox import"
 fi
 
-# ---- 8. LODGE runs in the CUDA venv (GPU), not a CPU venv ----------------------------------
+# ---- 9. LODGE runs in the CUDA venv (GPU), not a CPU venv ----------------------------------
 step "point LODGE at the CUDA venv (GPU)"
 ln -sfn "$VENV" "$WORK/LODGE/.venv"
 
-# ---- 9. Blackwell GPU gate ----------------------------------------------------------------
+# ---- 10. Blackwell GPU gate ---------------------------------------------------------------
 step "GPU gate (torch matmul on this card)"
 "$PY" - <<'PY' || die "CUDA torch not usable on this GPU"
 import torch
@@ -177,6 +213,22 @@ torch.cuda.synchronize()
 print(f"  OK torch {torch.__version__} on {torch.cuda.get_device_name(0)} sm_{torch.cuda.get_device_capability(0)}")
 PY
 
+# ---- 11. exact Y-Bot render scene ---------------------------------------------------------
+step "exact Y-Bot render scene"
+[ -f "$YBOT" ] || die "missing $YBOT after cloning EDGE"
+if [ ! -f "$YBOT_SCENE" ] \
+  || [ "$AL/scripts/blender_render_ybot.py" -nt "$YBOT_SCENE" ] \
+  || [ "$YBOT" -nt "$YBOT_SCENE" ]; then
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+    "$BLENDER" -b -noaudio -P "$AL/scripts/blender_render_ybot.py" -- \
+      --build-scene "$YBOT_SCENE" --ybot "$YBOT" \
+      --width 448 --height 448 --samples 8 \
+      >/tmp/maestro_ybot_scene.log 2>&1 \
+    || { tail -n 80 /tmp/maestro_ybot_scene.log; die "Y-Bot scene build"; }
+fi
+echo "  ready: $YBOT_SCENE"
+
+touch "$WORK/.maestro_gen_pod_ready"
 echo ""
 echo "GEN_POD_READY"
 echo "Next: WORKSPACE=$WORK bash scripts/setup_gen_pod.sh --song <sid>   # then gen_take.py / live mode"

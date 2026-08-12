@@ -14,6 +14,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 from fastapi.testclient import TestClient  # noqa: E402
 
+from agentlodge.editor.motion_bank import MotionBank  # noqa: E402
 from agentlodge.editor.window_edit import MockWindowGenerator  # noqa: E402
 
 
@@ -59,7 +60,7 @@ def test_lists_songs_and_opens_session(client):
 
 def test_lists_named_motions_from_the_shared_manifest(client):
     data = client.get("/api/motions").json()
-    assert data["version"] == "1.1.4"
+    assert data["version"] == MotionBank().version
     assert len(data["motions"]) == 20
     clap = next(m for m in data["motions"] if m["id"] == "clap_single")
     assert clap["name"] == "Single clap"

@@ -279,6 +279,19 @@ def finalize(audit_dir: Path, review_result: Path, output: Path) -> dict:
             or set(reviewed_phases) != set(expected_phases)
         ):
             raise ValueError(f"{case_id}: every required visual phase must be reviewed")
+        expected_negative_signatures = tuple(
+            answer["visual_contract"]["must_not_read_as"]
+        )
+        reviewed_negative_signatures = tuple(
+            decision.get("verified_negative_signatures") or ()
+        )
+        if (
+            len(reviewed_negative_signatures) != len(expected_negative_signatures)
+            or set(reviewed_negative_signatures) != set(expected_negative_signatures)
+        ):
+            raise ValueError(
+                f"{case_id}: every competing silhouette must be explicitly rejected"
+            )
         if answer.get("machine_status") != "pass":
             raise ValueError(f"{case_id}: machine visual invariants failed")
         if not all(check.get("passed") is True for check in answer.get("machine_checks", ())):
@@ -293,6 +306,7 @@ def finalize(audit_dir: Path, review_result: Path, output: Path) -> dict:
             "normal_speed_playback": "pass",
             "source_edit_comparison": "pass",
             "verified_phases": list(expected_phases),
+            "verified_negative_signatures": list(expected_negative_signatures),
             "evidence": evidence,
         }
 

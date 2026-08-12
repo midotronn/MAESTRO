@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RECEIPT = ROOT / "assets" / "motion_bank" / "audit_receipt.json"
 RENDER_RECEIPT_NAME = "render_receipt.json"
 YBOT_METRICS_REPORT_NAME = "ybot_metrics_report.json"
-REVIEW_PROTOCOL_VERSION = 8
+REVIEW_PROTOCOL_VERSION = 9
 REVIEWER_ATTESTATION_STATEMENT = (
     "I independently reviewed every source/edit pair at normal speed with answers hidden "
     "until all guesses were locked, and I did not waive any failed or ambiguous case."
@@ -81,6 +81,18 @@ def required_phases(root: Path = ROOT) -> dict[str, tuple[str, ...]]:
     )
     return {
         motion_id: tuple(str(phase) for phase in contract["required_phases"])
+        for motion_id, contract in payload["motions"].items()
+    }
+
+
+def required_negative_signatures(root: Path = ROOT) -> dict[str, tuple[str, ...]]:
+    payload = json.loads(
+        (Path(root) / "assets" / "motion_bank" / "visual_contracts.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    return {
+        motion_id: tuple(str(value) for value in contract["must_not_read_as"])
         for motion_id, contract in payload["motions"].items()
     }
 
@@ -341,6 +353,7 @@ def validate_audit_receipt(
         raise RuntimeError("motion audit receipt has no case results")
     required = set(required_audit_cases(bank))
     phases = required_phases(root)
+    negative_signatures = required_negative_signatures(root)
     actual = set(cases)
     if actual != required:
         missing = sorted(required - actual)
@@ -364,6 +377,13 @@ def validate_audit_receipt(
         motion_id = case_id.split("@", 1)[0]
         if tuple(result.get("verified_phases") or ()) != phases[motion_id]:
             raise RuntimeError(f"{case_id}: not every required visual phase was reviewed")
+        if (
+            tuple(result.get("verified_negative_signatures") or ())
+            != negative_signatures[motion_id]
+        ):
+            raise RuntimeError(
+                f"{case_id}: competing silhouettes were not explicitly rejected"
+            )
         if not str(result.get("evidence", "")).strip():
             raise RuntimeError(f"{case_id}: visual review has no evidence note")
     return payload

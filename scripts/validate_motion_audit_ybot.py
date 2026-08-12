@@ -116,12 +116,14 @@ def _clap_checks(
     expected = 3 if motion_id == "clap_repeat" else 1
     timing_passed = (
         len(runs) == expected
-        and all(run_end - run_start + 1 >= 2 for run_start, run_end in runs)
+        and all(run_end - run_start + 1 >= 3 for run_start, run_end in runs)
     )
     if timing_passed and len(runs) > 1:
         timing_passed = all(
-            float(np.max(ratio[start + left_end + 1:start + right_start]))
-            > threshold + 0.12
+            int(np.count_nonzero(
+                ratio[start + left_end + 1:start + right_start]
+                > threshold + 0.12
+            )) >= 3
             for (_left_start, left_end), (right_start, _right_end)
             in zip(runs, runs[1:])
         )
@@ -146,7 +148,8 @@ def _clap_checks(
             timing_passed,
             (
                 f"Y-Bot wrist/shoulder closure runs {list(runs)} below ratio "
-                f"{threshold:.2f}; expected {expected} readable run(s)"
+                f"{threshold:.2f}; expected {expected} readable run(s) of at "
+                "least 3 frames with at least 3 visibly open frames between contacts"
             ),
         ),
         _check(
@@ -207,6 +210,227 @@ def _grounded_check(floor: np.ndarray, start: int, end: int) -> dict:
     )
 
 
+def _body_axes(joints: np.ndarray, frame: int) -> tuple[np.ndarray, np.ndarray]:
+    toe = (
+        joints[frame, 10, :2] - joints[frame, 7, :2]
+        + joints[frame, 11, :2] - joints[frame, 8, :2]
+    )
+    norm = float(np.linalg.norm(toe))
+    if norm < 1e-6:
+        lateral = joints[frame, 16, :2] - joints[frame, 17, :2]
+        lateral /= np.linalg.norm(lateral) + 1e-9
+        forward = np.array([lateral[1], -lateral[0]], dtype=np.float32)
+    else:
+        forward = toe / norm
+    left = np.array([-forward[1], forward[0]], dtype=np.float32)
+    return left, forward
+
+
+def _planted_foot_check(
+    joints: np.ndarray,
+    start: int,
+    end: int,
+) -> dict:
+    trim = min(4, max(0, (end - start - 2) // 2))
+    action = joints[start + trim:end - trim]
+    drift = [
+        float(np.max(np.linalg.norm(
+            action[:, ankle, :2] - action[0, ankle, :2],
+            axis=1,
+        )))
+        for ankle in (7, 8)
+    ]
+    passed = max(drift) < 0.08
+    return _check(
+        "rendered_planted_foot_stability",
+        passed,
+        (
+            f"maximum core-phase left/right ankle-plane drift "
+            f"{drift[0]:.4f}/{drift[1]:.4f} m"
+        ),
+    )
+
+
+def _bounce_cycle_check(
+    joints: np.ndarray,
+    start: int,
+    end: int,
+) -> dict:
+    pelvis = joints[start:end, 0, 2]
+    travel = float(np.ptp(pelvis))
+    threshold = float(np.min(pelvis) + 0.42 * travel)
+    runs = _true_runs(pelvis < threshold) if travel > 1e-6 else ()
+    passed = (
+        travel > 0.07
+        and len(runs) == 3
+        and all(run_end - run_start + 1 >= 2 for run_start, run_end in runs)
+    )
+    return _check(
+        "rendered_bounce_cycle_count",
+        passed,
+        (
+            f"pelvis range {travel:.4f} m with low-phase runs {list(runs)} "
+            f"below {threshold:.4f} m"
+        ),
+    )
+
+
+def _level_change_check(
+    motion_id: str,
+    joints: np.ndarray,
+    start: int,
+    end: int,
+    event: int,
+) -> dict:
+    pelvis = joints[start:end, 0, 2]
+    event_local = int(np.clip(event - start, 0, len(pelvis) - 1))
+    travel = float(np.ptp(pelvis))
+    if motion_id == "crouch_drop":
+        event_position = float(pelvis[event_local] - np.min(pelvis))
+        passed = travel > 0.22 and event_position < 0.05
+        detail = (
+            f"pelvis range {travel:.4f} m; event is {event_position:.4f} m "
+            "above the lowest pose"
+        )
+    else:
+        passed = travel > 0.20
+        detail = f"pelvis range {travel:.4f} m"
+    return _check("rendered_level_change_signature", passed, detail)
+
+
+def _rise_phase_check(
+    joints: np.ndarray,
+    start: int,
+    end: int,
+) -> dict:
+    action = joints[start:end]
+    pelvis = action[:, 0, 2]
+    low = int(np.argmin(pelvis))
+    hand_lift = np.minimum(
+        action[:, 20, 2] - action[:, 9, 2],
+        action[:, 21, 2] - action[:, 9, 2],
+    )
+    high = np.flatnonzero(hand_lift > 0.35)
+    first_high = int(high[0]) if high.size else -1
+    passed = (
+        first_high >= low + 3
+        and float(hand_lift[low]) < 0.25
+        and float(np.max(hand_lift)) > 0.45
+    )
+    return _check(
+        "rendered_rise_before_reach",
+        passed,
+        (
+            f"lowest pelvis frame {low}, first dual-hand high frame {first_high}, "
+            f"hand lift at low/peak {float(hand_lift[low]):.4f}/"
+            f"{float(np.max(hand_lift)):.4f} m"
+        ),
+    )
+
+
+def _side_step_check(
+    joints: np.ndarray,
+    control: np.ndarray,
+    start: int,
+    end: int,
+    event: int,
+    direction: str,
+) -> dict:
+    left, _forward = _body_axes(joints, start)
+    sign = 1.0 if direction == "left" else -1.0
+    lead_ankle = 7 if direction == "left" else 8
+    lead_wrist = 20 if direction == "left" else 21
+    root = (joints[start:end, 0, :2] - joints[start, 0, :2]) @ left
+    foot = (
+        joints[event, lead_ankle, :2] - joints[start, lead_ankle, :2]
+    ) @ left
+    stance = abs(float(
+        (joints[event, 7, :2] - joints[event, 8, :2]) @ left
+    ))
+    arm_delta = float(np.linalg.norm(
+        (joints[event, lead_wrist] - joints[event, 9])
+        - (control[event, lead_wrist] - control[event, 9])
+    ))
+    signed_root = float(np.max(sign * root))
+    signed_foot = sign * float(foot)
+    locomotion = signed_root + signed_foot
+    passed = (
+        direction in {"left", "right"}
+        and signed_root > 0.24
+        and signed_foot > 0.30
+        and stance > 0.40
+        and locomotion > 1.05 * arm_delta
+    )
+    return _check(
+        "rendered_side_step_locomotion_dominance",
+        passed,
+        (
+            f"{direction} signed root/lead-foot travel "
+            f"{signed_root:.4f}/{signed_foot:.4f} m, stance {stance:.4f} m, "
+            f"combined locomotion {locomotion:.4f} versus lead-arm delta "
+            f"{arm_delta:.4f} m"
+        ),
+    )
+
+
+def _step_direction_check(
+    motion_id: str,
+    joints: np.ndarray,
+    start: int,
+    end: int,
+) -> dict:
+    _left, forward = _body_axes(joints, start)
+    sign = 1.0 if motion_id == "step_forward" else -1.0
+    action = joints[start:end]
+    root = (action[:, 0, :2] - action[0, 0, :2]) @ forward
+    lead = (action[:, 7, :2] - action[0, 7, :2]) @ forward
+    signed_root = sign * float(root[-1])
+    signed_foot = float(np.max(sign * lead))
+    wrong_way = float(np.max(-sign * root))
+    passed = signed_root > 0.25 and signed_foot > 0.35 and wrong_way < 0.08
+    return _check(
+        "rendered_step_direction_signature",
+        passed,
+        (
+            f"{motion_id} signed root/lead-foot travel "
+            f"{signed_root:.4f}/{signed_foot:.4f} m; wrong-way root excursion "
+            f"{wrong_way:.4f} m"
+        ),
+    )
+
+
+def _turn_check(
+    motion_id: str,
+    joints: np.ndarray,
+    start: int,
+    end: int,
+    direction: str,
+) -> dict:
+    lateral = joints[start:end, 16, :2] - joints[start:end, 17, :2]
+    angles = np.unwrap(np.arctan2(lateral[:, 1], lateral[:, 0]))
+    sign = 1.0 if direction == "left" else -1.0
+    progress = sign * (angles - angles[0])
+    target = np.pi / 2.0 if motion_id == "turn_quarter" else np.pi
+    increments = np.diff(progress)
+    backward_fraction = float(np.mean(increments < -0.03)) if increments.size else 1.0
+    final = float(progress[-1])
+    passed = (
+        direction in {"left", "right"}
+        and 0.78 * target < final < 1.22 * target
+        and float(np.max(progress)) < 1.28 * target
+        and backward_fraction < 0.20
+    )
+    return _check(
+        "rendered_turn_progression",
+        passed,
+        (
+            f"{direction} final/peak heading progress "
+            f"{np.rad2deg(final):.2f}/{np.rad2deg(float(np.max(progress))):.2f} "
+            f"degrees; backward-step fraction {backward_fraction:.3f}"
+        ),
+    )
+
+
 def _punch_check(
     joints: np.ndarray,
     start: int,
@@ -243,6 +467,67 @@ def _punch_check(
             f"Y-Bot strike peak local frame {peak}, arm length "
             f"{float(extension[peak]):.4f} m versus pre/post "
             f"{before:.4f}/{after:.4f} m and guard {guard:.4f} m"
+        ),
+    )
+
+
+def _punch_plane_check(
+    joints: np.ndarray,
+    start: int,
+    end: int,
+    direction: str,
+) -> dict:
+    action = joints[start:end]
+    wrist, shoulder = ((20, 16) if direction == "left" else (21, 17))
+    extension = np.linalg.norm(action[:, wrist] - action[:, shoulder], axis=1)
+    peak = int(np.argmax(extension))
+    left, forward = _body_axes(action, peak)
+    reach = action[peak, wrist, :2] - action[peak, shoulder, :2]
+    forward_reach = float(reach @ forward)
+    lateral_reach = abs(float(reach @ left))
+    passed = (
+        direction in {"left", "right"}
+        and forward_reach > 0.35
+        and forward_reach > 1.5 * lateral_reach
+    )
+    return _check(
+        "rendered_forward_punch_plane",
+        passed,
+        (
+            f"strike shoulder-to-wrist forward/lateral reach "
+            f"{forward_reach:.4f}/{lateral_reach:.4f} m"
+        ),
+    )
+
+
+def _chest_pop_check(
+    joints: np.ndarray,
+    control: np.ndarray,
+    event: int,
+) -> dict:
+    _left, forward = _body_axes(control, event)
+
+    def delta(joint: int) -> np.ndarray:
+        return (
+            (joints[event, joint] - joints[event, 0])
+            - (control[event, joint] - control[event, 0])
+        )
+
+    chest = delta(9)
+    head = delta(15)
+    chest_forward = float(chest[:2] @ forward)
+    head_forward = float(head[:2] @ forward)
+    passed = (
+        chest_forward > 0.08
+        and abs(head_forward) < 0.65 * chest_forward
+        and float(head[2]) > -0.07
+    )
+    return _check(
+        "rendered_chest_pop_isolation",
+        passed,
+        (
+            f"chest/head forward delta {chest_forward:.4f}/{head_forward:.4f} m; "
+            f"head vertical delta {float(head[2]):.4f} m"
         ),
     )
 
@@ -315,12 +600,15 @@ def build_report(audit_dir: Path) -> dict:
         if motion_id in {"jump_two_foot", "jump_arms_up"}:
             checks.append(_jump_check(front["mesh_floor"], start, end))
         if motion_id == "bounce_in_place":
-            travel = float(np.ptp(front["joints"][start:end, 0, 2]))
-            checks.append(_check(
-                "rendered_bounce_height",
-                travel > 0.07,
-                f"Y-Bot pelvis height range {travel:.4f} m while grounded",
-            ))
+            checks.extend([
+                _bounce_cycle_check(front["joints"], start, end),
+                _planted_foot_check(front["joints"], start, end),
+            ])
+        if motion_id == "crouch_drop":
+            checks.extend([
+                _level_change_check(motion_id, front["joints"], start, end, event),
+                _planted_foot_check(front["joints"], start, end),
+            ])
         if motion_id == "rise_reach":
             joints = front["joints"]
             travel = float(np.ptp(joints[start:end, 0, 2]))
@@ -333,6 +621,10 @@ def build_report(audit_dir: Path) -> dict:
                 travel > 0.20 and min(lift) > 0.30,
                 f"Y-Bot pelvis range {travel:.4f} m; hand lift {lift}",
             ))
+            checks.extend([
+                _planted_foot_check(joints, start, end),
+                _rise_phase_check(joints, start, end),
+            ])
         if motion_id.startswith("clap_"):
             clap_checks, lateral = _clap_checks(
                 motion_id,
@@ -349,14 +641,42 @@ def build_report(audit_dir: Path) -> dict:
                 resolved,
             )
         if motion_id == "arm_punch":
-            checks.append(_punch_check(
+            checks.extend([
+                _punch_check(front["joints"], start, end, resolved),
+                _punch_plane_check(front["joints"], start, end, resolved),
+            ])
+        if motion_id == "side_step":
+            checks.append(_side_step_check(
+                front["joints"],
+                control["joints"],
+                start,
+                end,
+                event,
+                resolved,
+            ))
+        if motion_id == "step_touch":
+            checks.append(_step_touch_check(front["joints"], start, event))
+        if motion_id in {"step_forward", "step_backward"}:
+            checks.append(_step_direction_check(
+                motion_id,
+                front["joints"],
+                start,
+                end,
+            ))
+        if motion_id in {"turn_quarter", "turn_half"}:
+            checks.append(_turn_check(
+                motion_id,
                 front["joints"],
                 start,
                 end,
                 resolved,
             ))
-        if motion_id == "step_touch":
-            checks.append(_step_touch_check(front["joints"], start, event))
+        if motion_id == "chest_pop":
+            checks.append(_chest_pop_check(
+                front["joints"],
+                control["joints"],
+                event,
+            ))
 
         records[take] = {
             "case_id": answer["case_id"],
