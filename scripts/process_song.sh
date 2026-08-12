@@ -11,10 +11,11 @@ set -uo pipefail
 SID="$1"
 WORKSPACE="${WORKSPACE:-/workspace}"
 K="${AGENTLODGE_BANK_K:-4}"
-PY="${AL_PY:-/root/al_venv/bin/python}"
+PY="${AL_PY:-$WORKSPACE/AgentLODGE/.venv/bin/python}"
 cd "$WORKSPACE"
 export PYTHONUNBUFFERED=1 WORKSPACE
 fail() { echo "PROCESS_${SID}_FAILED: $1" >&2; exit 1; }
+[ -x "$PY" ] || fail "Python environment not found: $PY"
 
 find_script() {  # look in $WORKSPACE then the repo scripts dir
   for p in "$WORKSPACE/$1" "$WORKSPACE/AgentLODGE/scripts/$1"; do

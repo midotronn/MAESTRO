@@ -29,7 +29,7 @@ $env:AGENTLODGE_POD_KEY="$HOME\.ssh\id_ed25519"
 .\scripts\pod.ps1 setup
 ```
 
-`setup_pod.sh` installs, idempotently:
+For an existing workspace after a restart, `setup_pod.sh` installs, idempotently:
 1. the system libs Blender/ffmpeg need, `libXrender/libXi/libEGL/libglvnd/...` + `libOSMesa`
    (which LODGE's PyOpenGL import needs, not Blender) + `ffmpeg`
    (these are wiped on **every** restart);
@@ -42,8 +42,9 @@ Set `AGENTLODGE_TORCH_INDEX=cpu` for a render-only box (no GPU generation), else
 
 On a **new `/workspace` volume**, `pod.ps1 setup` detects that the repository is absent and runs
 `setup_gen_pod.sh` as the full bootstrap. It clones MAESTRO, LODGE, and EDGE; downloads the model
-weights; installs Blender; builds the reusable exact-Y-Bot scene; and verifies CUDA with a real GPU
-matrix multiplication. On later pod restarts, the same command uses the lighter restart setup.
+weights; installs Blender; creates the persistent `/workspace/AgentLODGE/.venv`; builds the reusable
+exact-Y-Bot scene; and verifies CUDA with a real GPU matrix multiplication. On later pod restarts,
+the same command uses the lighter restart setup.
 
 ## 3. Build a real candidate bank for a song
 

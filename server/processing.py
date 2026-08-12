@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 import threading
 import time
@@ -239,10 +240,12 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
         _scp_to(cfg, str(REPO / "scripts" / "build_window_bank.py"), f"{ws}/AgentLODGE/scripts/build_window_bank.py")
 
         _set(sid, progress=22, message="generating the dance on the pod (several minutes)…")
+        pod_python = shlex.quote(_venv_python(cfg))
         run = _ssh(
             cfg,
             f"cd {ws}/AgentLODGE && sed -i 's/\\r$//' scripts/process_song.sh scripts/build_window_bank.py && "
-            f"WORKSPACE={ws} AGENTLODGE_BANK_K={cfg.bank_k} bash scripts/process_song.sh {sid}",
+            f"WORKSPACE={ws} AL_PY={pod_python} AGENTLODGE_BANK_K={cfg.bank_k} "
+            f"bash scripts/process_song.sh {sid}",
             timeout=60 * 40)
         if run.returncode != 0 or f"PROCESS_{sid}_DONE" not in run.stdout:
             tail = (run.stdout[-400:] + "\n" + run.stderr[-400:]).strip()

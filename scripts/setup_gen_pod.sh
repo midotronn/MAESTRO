@@ -120,6 +120,8 @@ step "CUDA venv + torch ($TORCH_INDEX)"
 # a real venv so the whole gen+render stack persists.
 if [ -L "$VENV" ]; then echo "  replacing $VENV symlink -> real venv (persist across restarts)"; rm -f "$VENV"; fi
 [ -x "$VENV/bin/python" ] || { rm -rf "$VENV"; python3 -m venv "$VENV"; }
+# Keep legacy pod commands functional while all callers migrate to the persistent workspace venv.
+[ -e /root/al_venv ] || ln -s "$VENV" /root/al_venv
 "$PIP" install -q -U pip wheel "setuptools<82"
 # CRITICAL: uninstall any pre-existing torch first. A leftover '2.13.0+cpu' has a higher version
 # string than every cu128 wheel, so 'pip install torch --index-url .../cu128' becomes a no-op.

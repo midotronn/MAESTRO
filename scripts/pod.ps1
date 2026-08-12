@@ -71,7 +71,7 @@ switch ($Command) {
     $sid = $Args[0]; $k = if ($Args[1]) { $Args[1] } else { "4" }
     if (-not $sid) { throw "usage: pod.ps1 bank <sid> [K]" }
     Write-Host "Generating $k real LODGE/EDGE takes for '$sid' on the pod (this is the real work)..." -ForegroundColor Cyan
-    Pod-SSH "cd $WS/AgentLODGE && WORKSPACE=$WS AGENTLODGE_BANK_K=$k /root/al_venv/bin/python scripts/build_window_bank.py $sid"
+    Pod-SSH "cd $WS/AgentLODGE && WORKSPACE=$WS AGENTLODGE_BANK_K=$k $WS/AgentLODGE/.venv/bin/python scripts/build_window_bank.py $sid"
     $dst = "$Repo\server\media\$sid\bank"
     New-Item -ItemType Directory -Force -Path $dst | Out-Null
     Write-Host "Pulling bank into $dst ..." -ForegroundColor Cyan

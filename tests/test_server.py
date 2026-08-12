@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -56,6 +58,49 @@ def test_lists_songs_and_opens_session(client):
     st = client.post("/api/session/sng").json()
     assert st["n_frames"] == 300 and st["duration"] == 10.0 and st["n_beats"] == 20
     assert st["head"] and len(st["timeline"]) == 1
+
+
+def test_uploaded_song_pipeline_uses_configured_pod_python(tmp_path, monkeypatch):
+    import server.processing as P
+
+    cfg = P.PodConfig(host="127.0.0.1", ws="/workspace")
+    wav = tmp_path / "source.wav"
+    wav.write_bytes(b"wav")
+    media = tmp_path / "media"
+    commands: list[str] = []
+
+    monkeypatch.setenv(
+        "AGENTLODGE_POD_PYTHON",
+        "/workspace/AgentLODGE/.venv/bin/python",
+    )
+    monkeypatch.setattr(P, "pod_config", lambda: cfg)
+
+    def fake_ssh(_cfg, command, timeout=60):
+        commands.append(command)
+        stdout = "ok" if command == "echo ok" else ""
+        if "scripts/process_song.sh" in command:
+            stdout = "PROCESS_test_song_DONE"
+        return subprocess.CompletedProcess([], 0, stdout=stdout, stderr="")
+
+    def fake_scp_to(_cfg, _local, _remote, timeout=300):
+        return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+    def fake_scp_from(_cfg, _remote, local, timeout=300):
+        path = Path(local)
+        if path.suffix:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"result")
+        return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+    monkeypatch.setattr(P, "_ssh", fake_ssh)
+    monkeypatch.setattr(P, "_scp_to", fake_scp_to)
+    monkeypatch.setattr(P, "_scp_from", fake_scp_from)
+
+    P._process("test_song", wav, media, "Test song")
+
+    process_command = next(c for c in commands if "scripts/process_song.sh" in c)
+    assert "AL_PY=/workspace/AgentLODGE/.venv/bin/python" in process_command
+    assert P.get_job("test_song")["status"] == "done"
 
 
 def test_lists_named_motions_from_the_shared_manifest(client):
