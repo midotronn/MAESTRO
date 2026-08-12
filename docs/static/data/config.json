@@ -1,4 +1,4 @@
 {
-  "editorUrl": "https://c4xfuchw6q6bl7-8888.proxy.runpod.net/",
+  "editorUrl": "",
   "note": "Public URL of the live MAESTRO editor. To point the site at a different RunPod pod, change editorUrl (the scripts/host_on_pod.ps1 launcher updates this automatically). Empty string hides the launch buttons."
 }
