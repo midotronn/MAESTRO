@@ -27,7 +27,7 @@ from agentlodge.editor.window_edit import (
 )
 
 _ASSETS = "assets.json"
-_NAMED_MOTION_HANDOFF_FRAMES = 8
+_NAMED_MOTION_HANDOFF_FRAMES = 16
 
 
 def _edit_label(instruction: str, a: int, b: int) -> str:

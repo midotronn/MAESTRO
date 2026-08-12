@@ -3233,6 +3233,26 @@ def test_a_motion_that_can_repeat_still_repeats():
     assert ctx["_motion_bank_report"]["dropped"] == []
 
 
+def test_repeatable_motion_reduces_repetitions_to_fit_a_short_window():
+    spec = default_motion_bank().resolve("clap_repeat")
+    ctx = {"wbeats": None}
+    clip = _base(spec.frames + 16)
+    out, note = AE._tool_motion_bank(
+        clip,
+        ctx,
+        motion_id=spec.id,
+        repeats=3,
+    )
+
+    assert out.shape == clip.shape
+    assert ctx["_motion_bank_report"]["repeats"] == 1
+    assert ctx["_motion_bank_report"]["dropped"] == []
+    assert ctx["_motion_bank_report"]["adjustments"] == [
+        "repetition reduced from 3 to 1 to fit the selected window"
+    ]
+    assert "repetition reduced from 3 to 1" in note
+
+
 def test_the_planner_tells_the_model_which_motions_repeat_or_mirror():
     """The model cannot avoid asking for repetition it will not get unless it is told."""
     import inspect

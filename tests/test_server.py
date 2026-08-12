@@ -217,10 +217,31 @@ def test_every_named_motion_accepts_a_natural_command_on_a_collapsed_window(
     ).json()["result"]
 
     assert result["ok"], (motion_id, result["feedback"], result["log"])
-    assert result["window"][1] - result["window"][0] == spec.frames + 8
+    assert result["window"][1] - result["window"][0] == spec.frames + 16
     step = next(item for item in result["log"] if item["tool"] == "motion_bank")
     assert step["status"] == "applied"
     assert step["motion_bank"]["id"] == motion_id
+
+
+def test_short_jump_window_keeps_enough_slack_to_land_on_a_fractional_beat(
+    client,
+    tmp_path,
+):
+    beats = np.arange(0.483, 300, 15.325, dtype=np.float32)
+    np.save(tmp_path / "media" / "sng" / "beats.npy", beats)
+    client.post("/api/session/sng")
+    result = client.post(
+        "/api/session/sng/edit",
+        json={
+            "a_sec": 5.0,
+            "b_sec": 5.0,
+            "instruction": "add a two-foot jump here",
+        },
+    ).json()["result"]
+
+    report = next(step["motion_bank"] for step in result["log"] if "motion_bank" in step)
+    assert result["ok"], result["trace"]["final"]["checks"]
+    assert report["beat_error_frames"] <= 0.51
 
 
 def test_edit_commits_and_moves_metrics(client):

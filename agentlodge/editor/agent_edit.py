@@ -171,11 +171,22 @@ def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
     bank = default_motion_bank()
     spec = bank.resolve(motion_id)
     dropped = []
+    adjustments = []
     # The bank refuses repetition or mirroring it cannot do, which would sink the whole edit.
     # Doing the nearest valid thing and saying so beats handing the user back an unchanged window.
-    if int(repeats) > 1 and not spec.repeatable:
+    repeats = int(np.clip(int(repeats), 1, 8))
+    if repeats > 1 and not spec.repeatable:
         repeats = 1
         dropped.append("repetition")
+    elif repeats > 1:
+        join_tail = min(8, len(clip) // 8)
+        available = max(1, len(clip) - join_tail)
+        maximum = max(1, available // max(1, spec.minimum_frames))
+        if repeats > maximum:
+            adjustments.append(
+                f"repetition reduced from {repeats} to {maximum} to fit the selected window"
+            )
+            repeats = maximum
     if bool(mirror) and not spec.mirrorable:
         mirror = False
         dropped.append("mirroring")
@@ -191,6 +202,7 @@ def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
         blend_frames=int(ctx.get("blend_frames", 8)),
     )
     report["dropped"] = dropped
+    report["adjustments"] = adjustments
     ctx["_motion_bank_report"] = report
     # The bank now layers only the channels the named action owns onto this exact host window.
     # It is therefore an edit of the original choreography, not a foreign generated segment that
@@ -205,6 +217,8 @@ def _tool_motion_bank(clip, ctx, *, motion_id: str, mode: str = "replace",
         note += f", directed {report['direction']}"
     if dropped:
         note += f"; {spec.name} does not support {' or '.join(dropped)}, so that option was ignored"
+    if adjustments:
+        note += "; " + "; ".join(adjustments)
     return out, note
 
 
