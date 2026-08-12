@@ -178,6 +178,41 @@ def test_single_clap_smoothing_is_reproducible_across_render_platforms():
         assert float(np.max(np.abs(scaled - np.rint(scaled)))) < 1e-3, direction
 
 
+@needs_fk
+def test_clap_arm_targets_rotate_with_the_torso_instead_of_staying_world_fixed():
+    """Clap IK is authored in the dancer's frame, not against a fixed point in the room."""
+    from scripts.build_motion_bank import (
+        _apply_stance,
+        _clap_arms,
+        _identity_clip,
+        _native_joint_pose,
+    )
+
+    axis_angles, _trans, _contacts = _identity_clip(2)
+    _apply_stance(axis_angles)
+    axis_angles[1, 9, 1] = 0.65
+    _clap_arms(
+        axis_angles,
+        np.ones(2, dtype=np.float32),
+        orientation_signal=np.ones(2, dtype=np.float32),
+        respect_parent_pose=True,
+    )
+
+    world_hands = []
+    local_hands = []
+    local_wrists = []
+    for frame in range(2):
+        global_r, joints = _native_joint_pose(axis_angles[frame])
+        hands = 0.5 * (joints[20] + joints[21]) - joints[9]
+        world_hands.append(hands)
+        local_hands.append(global_r[9].T @ hands)
+        local_wrists.append(global_r[9].T @ global_r[20])
+
+    assert np.linalg.norm(world_hands[1] - world_hands[0]) > 0.12
+    assert np.allclose(local_hands[1], local_hands[0], atol=2e-4)
+    assert np.allclose(local_wrists[1], local_wrists[0], atol=2e-4)
+
+
 def test_every_wrist_owning_motion_has_an_explicit_hand_contract():
     wrist_owners = {
         spec.id

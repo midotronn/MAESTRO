@@ -270,7 +270,11 @@ def _solve_leg(aa: np.ndarray, side: str, ankle_targets: np.ndarray) -> None:
 _ELBOW_OUT = np.array([1.0, 0.15, 0.0], dtype=np.float32)
 
 
-def _clap_wrist_rotation(side: str, forearm_global: np.ndarray) -> np.ndarray:
+def _clap_wrist_rotation(
+    side: str,
+    forearm_global: np.ndarray,
+    body_global: np.ndarray,
+) -> np.ndarray:
     """Return a local wrist rotation with relaxed raised fingers and inward-facing palms."""
     sign = 1.0 if side == "left" else -1.0
     rest_finger = np.array([sign, 0.0, 0.0], dtype=np.float32)
@@ -282,7 +286,7 @@ def _clap_wrist_rotation(side: str, forearm_global: np.ndarray) -> np.ndarray:
     desired_width = np.cross(desired_finger, desired_palm)
     rest_basis = np.stack([rest_finger, rest_palm, rest_width], axis=1)
     desired_basis = np.stack([desired_finger, desired_palm, desired_width], axis=1)
-    hand_global = desired_basis @ rest_basis.T
+    hand_global = body_global @ desired_basis @ rest_basis.T
     return forearm_global.T @ hand_global
 
 
@@ -304,10 +308,13 @@ def _solve_arm(
     sign = 1.0 if side == "left" else -1.0
     elbow_hint = np.asarray(elbow_hint, dtype=np.float32)
     for frame, hand in enumerate(targets):
+        body_global = np.eye(3, dtype=np.float32)
         if respect_parent_pose:
             current_global, current_positions = _native_joint_pose(aa[frame])
             parent_global = current_global[BODY_PARENTS[shoulder]]
             origin = current_positions[shoulder]
+            body_global = parent_global
+            hand = origin + body_global @ (hand - J[shoulder])
         else:
             parent_global = np.eye(3, dtype=np.float32)
             origin = J[shoulder]
@@ -326,7 +333,7 @@ def _solve_arm(
         aa[frame, shoulder] = _matrix_to_axis_angle(parent_global.T @ upper_global)
         aa[frame, elbow] = _matrix_to_axis_angle(elbow_local)
         if clap_orientation is not None:
-            wrist_local = _clap_wrist_rotation(side, fore_global)
+            wrist_local = _clap_wrist_rotation(side, fore_global, body_global)
             weight = float(np.clip(clap_orientation[frame], 0.0, 1.0))
             aa[frame, wrist] = _matrix_to_axis_angle(wrist_local) * weight
 
@@ -343,8 +350,8 @@ _CLAP_HALF_GAP = 0.003
 _CLAP_POINT = (-0.045, 0.26)                        # (height, distance in front)
 _CLAP_SIDE_OFFSET = 0.22
 _CLAP_OVERHEAD_SIDE_OFFSET = 0.20
-_CLAP_OVERHEAD_POINT = (0.48, 0.20)
-_CLAP_OVERHEAD_SIDE_POINT = (0.42, 0.20)
+_CLAP_OVERHEAD_POINT = (0.495, 0.12)
+_CLAP_OVERHEAD_SIDE_POINT = (0.435, 0.12)
 
 # Clapping hands are carried in front of the sternum, so the elbows hang DOWN and only a little
 # outward. Left to the default outward hint the solver lifts them to shoulder height and the
@@ -354,7 +361,7 @@ _CLAP_ELBOW = np.array([0.55, -1.0, -0.1], dtype=np.float32)
 # How far towards the meeting point the hands stay BETWEEN repeated claps: 1.0 would leave them
 # touching, 0.0 drops them to the hips. Sets the parting of the hands, so it trades readability
 # of each clap (needs travel) against the hands staying up (needs little).
-_CLAP_GUARD = 0.48
+_CLAP_GUARD = 0.485
 
 
 def _smooth_clap_wrists(

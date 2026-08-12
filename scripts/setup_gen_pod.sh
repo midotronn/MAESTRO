@@ -39,8 +39,8 @@ if [ "${1:-}" = "--song" ]; then
   SID="${2:?--song needs a <sid>}"
   MODE="${3:-}"
   # EDGE features need Jukebox's ~10GB 5B prior. jukemirlib fetches it with a NON-resumable wget that
-  # routinely dies mid-download; pre-fetch it resumably (curl -C -) to the cache path jukemirlib checks,
-  # so setup_models() finds it and skips its own fragile download.
+  # routinely dies mid-download; pre-fetch it resumably (parallel aria2, or curl as a fallback) to
+  # the cache path jukemirlib checks, so setup_models() skips its own fragile download.
   if [ "$MODE" != "--lodge-only" ]; then
     PRIOR="$HOME/.cache/jukemirlib/prior_level_2.pth.tar"; PRIOR_SIZE=10288727721
     mkdir -p "$(dirname "$PRIOR")"
@@ -48,8 +48,18 @@ if [ "${1:-}" = "--song" ]; then
       TMP=$(ls "$(dirname "$PRIOR")"/prior_level_2.pth.tar*.tmp 2>/dev/null | head -1)
       [ -n "$TMP" ] && mv -f "$TMP" "$PRIOR"        # reuse any partial jukemirlib download
       step "fetching Jukebox 5B prior (~10GB, resumable, one-time)"
-      curl -L -C - --retry 20 --retry-delay 5 --retry-all-errors -o "$PRIOR" \
-        https://openaipublic.azureedge.net/jukebox/models/5b/prior_level_2.pth.tar || die "prior download"
+      PRIOR_URL=https://openaipublic.azureedge.net/jukebox/models/5b/prior_level_2.pth.tar
+      if command -v aria2c >/dev/null 2>&1; then
+        aria2c --continue=true --max-connection-per-server=16 --split=16 \
+          --min-split-size=16M --file-allocation=none --auto-file-renaming=false \
+          --dir="$(dirname "$PRIOR")" --out="$(basename "$PRIOR")" "$PRIOR_URL" \
+          || die "prior download"
+      else
+        curl -L -C - --retry 20 --retry-delay 5 --retry-all-errors -o "$PRIOR" \
+          "$PRIOR_URL" || die "prior download"
+      fi
+      [ "$(stat -c%s "$PRIOR" 2>/dev/null || echo 0)" -eq "$PRIOR_SIZE" ] \
+        || die "prior download is incomplete"
     fi
   fi
   step "preprocess $SID (LODGE feats + EDGE Jukebox slices)"
@@ -61,7 +71,7 @@ fi
 step "system libraries (ffmpeg + headless OpenGL/OSMesa for pyrender)"
 if command -v apt-get >/dev/null 2>&1; then
   apt-get update -qq || true
-  apt-get install -y -qq ffmpeg libsndfile1 build-essential git curl xz-utils \
+  apt-get install -y -qq aria2 ffmpeg libsndfile1 build-essential git curl xz-utils \
     libosmesa6 libosmesa6-dev libgl1-mesa-glx libglu1-mesa freeglut3-dev libglib2.0-0 \
     libxrender1 libxi6 libxxf86vm1 libxfixes3 libxkbcommon0 >/dev/null 2>&1 || true
 fi
