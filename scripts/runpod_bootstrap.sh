@@ -42,7 +42,7 @@ if [ ! -d .venv ]; then
   python3 -m venv .venv
 fi
 source .venv/bin/activate
-pip install -U pip wheel setuptools
+pip install -U pip wheel "setuptools<82"
 
 pip install -r requirements.txt
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128

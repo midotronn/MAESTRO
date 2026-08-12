@@ -43,7 +43,7 @@ if [ ! -x "$VENV/bin/python" ]; then
 fi
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
-pip install -q -U pip wheel setuptools
+pip install -q -U pip wheel "setuptools<82"
 if [ "$TORCH_INDEX" = "cpu" ]; then
   pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
 else
