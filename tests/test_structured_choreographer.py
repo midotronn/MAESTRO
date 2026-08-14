@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -65,6 +66,60 @@ def test_prompt_exposes_exact_motion_bank_catalog():
     assert prompt.count("category=") == 20
     for spec in bank.specs:
         assert f"- {spec.id}:" in prompt
+
+
+def test_author_storyboard_uses_llm_catalog_and_completes_empty_cues(monkeypatch):
+    structure = _structure(
+        [0, 1, 1],
+        ["intro", "chorus", "chorus"],
+    )
+    payload = {
+        "arc": "build to recurring chorus",
+        "reasoning": "mock LLM plan",
+        "plans": [
+            {
+                "section_index": idx,
+                "role": section.role,
+                "target_intensity": section.energy,
+                "vocabulary": "flowing_smooth",
+                "generator_bias": "auto",
+                "reuse_of": 1 if idx == 2 else None,
+                "variation": {},
+                "common_motions": [],
+            }
+            for idx, section in enumerate(structure.sections)
+        ],
+    }
+    captured = {}
+
+    class Completions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(choices=[
+                SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))
+            ])
+
+    class Client:
+        def __init__(self, api_key=None):
+            captured["api_key"] = api_key
+            self.chat = SimpleNamespace(completions=Completions())
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=Client))
+    board = SB.author_storyboard(
+        structure,
+        SimpleNamespace(duration_seconds=21.0, bpm=120.0),
+        None,
+        "test-key",
+        chat_model="test-model",
+    )
+
+    assert not board.used_fallback
+    assert captured["api_key"] == "test-key"
+    assert captured["model"] == "test-model"
+    assert captured["max_tokens"] == 2400
+    assert "Available common motions" in captured["messages"][0]["content"]
+    assert len(board.plans[1].common_motions) == 1
+    assert board.plans[2].common_motions == []
 
 
 def test_all_twenty_motion_ids_parse_and_realize_through_story_assembly():

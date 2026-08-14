@@ -155,7 +155,14 @@ def test_packaged_song_generator_writes_expected_outputs(tmp_path, monkeypatch):
     monkeypatch.setattr(M, "analyze_structure", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(M.librosa, "load", lambda *_args, **_kwargs: (np.zeros(10), 22050))
     monkeypatch.setattr(M, "extract_audio_descriptor", lambda *_args: object())
-    monkeypatch.setattr(M, "author_storyboard", lambda *_args, **_kwargs: object())
+    planner_call = {}
+
+    def fake_storyboard(*_args, **kwargs):
+        planner_call["api_key"] = kwargs.get("api_key")
+        return SimpleNamespace(to_dict=lambda: {"plans": []})
+
+    monkeypatch.setenv("OPENAI_API_KEY", "runtime-test-key")
+    monkeypatch.setattr(M, "author_storyboard", fake_storyboard)
     monkeypatch.setattr(
         M,
         "build_story_dance",
@@ -163,6 +170,7 @@ def test_packaged_song_generator_writes_expected_outputs(tmp_path, monkeypatch):
             motion=story,
             reasoning="assembled",
             schedule=[(0, 600, "lodge", "body")],
+            section_scores=[{"common_motion_ids": ["wave"]}],
         ),
     )
 
@@ -172,6 +180,9 @@ def test_packaged_song_generator_writes_expected_outputs(tmp_path, monkeypatch):
     assert np.array_equal(np.load(tmp_path / f"lodge_fd_{sid}_full.npy"), lodge)
     assert np.array_equal(np.load(tmp_path / f"edge_fd_{sid}_full.npy"), edge)
     assert np.array_equal(np.load(tmp_path / f"fd_{sid}_STORY_bestofk.npy"), story)
+    assert planner_call["api_key"] == "runtime-test-key"
+    assert report["storyboard"] == {"plans": []}
+    assert report["section_scores"] == [{"common_motion_ids": ["wave"]}]
 
 
 def test_lists_named_motions_from_the_shared_manifest(client):
