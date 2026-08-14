@@ -145,6 +145,7 @@ def apply_planned_common_motions(
     section_start: int = 0,
     music_beat_frames: np.ndarray | None = None,
     motion_bank: MotionBank | None = None,
+    occupied_cues: list[CommonMotionCue] | None = None,
 ) -> tuple[np.ndarray, list[dict]]:
     """Compose validated storyboard cues into a section without changing its duration."""
     out = np.ascontiguousarray(clip, dtype=np.float32).copy()
@@ -157,6 +158,12 @@ def apply_planned_common_motions(
         else np.zeros(0, dtype=np.int64)
     )
     occupied: list[tuple[int, int]] = []
+    for cue in occupied_cues or []:
+        try:
+            spec = bank.resolve(cue.motion_id)
+        except KeyError:
+            continue
+        occupied.append(_motion_window(spec, cue.repeats, out.shape[0], cue.position))
     reports: list[dict] = []
 
     for cue in sorted(cues, key=lambda item: item.position):
@@ -168,6 +175,14 @@ def apply_planned_common_motions(
                     f"section has {out.shape[0]} frames; {spec.name} needs at least {minimum}"
                 )
             start, end = _motion_window(spec, cue.repeats, out.shape[0], cue.position)
+            if _overlaps((start, end), occupied):
+                reports.append({
+                    **cue.to_dict(),
+                    "name": spec.name,
+                    "status": "skipped",
+                    "detail": "overlaps an earlier or inherited common motion",
+                })
+                continue
             global_start = int(section_start + start)
             local_beats = beats[
                 (beats >= global_start) & (beats < section_start + end)
@@ -357,6 +372,7 @@ def select_sources(lodge_z: np.ndarray, edge_z: np.ndarray, structure: MusicStru
             section_start=a,
             music_beat_frames=music_beat_frames,
             motion_bank=motion_bank,
+            occupied_cues=inherited_cues,
         )
         applied_keys = {
             (

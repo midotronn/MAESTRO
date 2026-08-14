@@ -265,12 +265,20 @@ def test_reused_section_inherits_common_motion_without_applying_it_twice():
         intensity=0.65,
         motif="chorus_wave",
     )
+    extra = SB.CommonMotionCue(
+        motion_id="clap_single",
+        position=0.5,
+        anchor="beat",
+        intensity=0.7,
+        motif="overlapping_accent",
+    )
     board = SB.Storyboard(
         arc="repeat",
         plans=[
             SB.SectionPlan(0, "chorus", 0.0, "flowing_smooth", "lodge",
                            common_motions=[cue]),
-            SB.SectionPlan(1, "chorus", 1.0, "flowing_smooth", "auto", reuse_of=0),
+            SB.SectionPlan(1, "chorus", 1.0, "flowing_smooth", "auto", reuse_of=0,
+                           common_motions=[extra]),
         ],
     )
     base = _identity_motion(structure.total_frames)
@@ -284,9 +292,10 @@ def test_reused_section_inherits_common_motion_without_applying_it_twice():
 
     assert decisions[0]["common_motion_ids"] == ["wave"]
     assert decisions[1]["source"] == "reuse:0"
-    assert decisions[1]["common_motions"] == []
     assert decisions[1]["inherited_common_motion_ids"] == ["wave"]
     assert decisions[1]["common_motion_ids"] == ["wave"]
+    assert decisions[1]["common_motions"][0]["status"] == "skipped"
+    assert "inherited common motion" in decisions[1]["common_motions"][0]["detail"]
 
 
 def test_fresh_source_reapplies_structural_motion_motif():
