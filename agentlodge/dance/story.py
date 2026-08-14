@@ -20,10 +20,16 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from agentlodge.audio.structure import MusicStructure, Section
-from agentlodge.agent.storyboard import Storyboard, SectionPlan
+from agentlodge.agent.storyboard import CommonMotionCue, Storyboard, SectionPlan
 from agentlodge.agent.segment_caption import caption_segment, plan_realization_alignment
 from agentlodge.dance.format import ensure_lodge139, to_agentlodge139
 from agentlodge.dance.transition import amplitude_scale, blend_onto, mirror, retime, retrograde, to_zup
+from agentlodge.editor.motion_bank import (
+    MotionBank,
+    MotionSpec,
+    default_motion_bank,
+    minimum_window_frames,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from agentlodge.audio.preprocess import SongMetadata
@@ -102,6 +108,144 @@ def _bias_bonus(source: str, plan: SectionPlan) -> float:
     return bonus
 
 
+def _motion_window(spec: MotionSpec, repeats: int, n_frames: int,
+                   position: float) -> tuple[int, int]:
+    minimum = minimum_window_frames(spec.minimum_frames * repeats)
+    preferred = spec.frames * repeats + 16
+    width = min(n_frames, max(minimum, preferred))
+    center = int(round(float(np.clip(position, 0.0, 1.0)) * max(0, n_frames - 1)))
+    start = int(np.clip(center - width // 2, 0, max(0, n_frames - width)))
+    return start, start + width
+
+
+def _overlaps(interval: tuple[int, int], occupied: list[tuple[int, int]]) -> bool:
+    a, b = interval
+    return any(a < y and x < b for x, y in occupied)
+
+
+def _cue_key(cue: CommonMotionCue) -> tuple[str, str, int]:
+    return cue.motion_id, cue.motif, int(round(cue.position * 1000))
+
+
+def _merge_cues(base: list[CommonMotionCue],
+                extra: list[CommonMotionCue]) -> list[CommonMotionCue]:
+    merged = list(base)
+    seen = {_cue_key(cue) for cue in merged}
+    for cue in extra:
+        if _cue_key(cue) not in seen:
+            merged.append(cue)
+            seen.add(_cue_key(cue))
+    return merged
+
+
+def apply_planned_common_motions(
+    clip: np.ndarray,
+    cues: list[CommonMotionCue],
+    *,
+    section_start: int = 0,
+    music_beat_frames: np.ndarray | None = None,
+    motion_bank: MotionBank | None = None,
+) -> tuple[np.ndarray, list[dict]]:
+    """Compose validated storyboard cues into a section without changing its duration."""
+    out = np.ascontiguousarray(clip, dtype=np.float32).copy()
+    if not cues:
+        return out, []
+    bank = motion_bank or default_motion_bank()
+    beats = (
+        np.asarray(music_beat_frames, dtype=np.int64).reshape(-1)
+        if music_beat_frames is not None
+        else np.zeros(0, dtype=np.int64)
+    )
+    occupied: list[tuple[int, int]] = []
+    reports: list[dict] = []
+
+    for cue in sorted(cues, key=lambda item: item.position):
+        try:
+            spec = bank.resolve(cue.motion_id)
+            minimum = minimum_window_frames(spec.minimum_frames * cue.repeats)
+            if out.shape[0] < minimum:
+                raise ValueError(
+                    f"section has {out.shape[0]} frames; {spec.name} needs at least {minimum}"
+                )
+            start, end = _motion_window(spec, cue.repeats, out.shape[0], cue.position)
+            global_start = int(section_start + start)
+            local_beats = beats[
+                (beats >= global_start) & (beats < section_start + end)
+            ] - global_start
+
+            def apply_once(intensity: float, *, use_beats: bool) -> tuple[np.ndarray, dict]:
+                return bank.apply(
+                    out[start:end],
+                    cue.motion_id,
+                    beats=local_beats if use_beats and local_beats.size else None,
+                    mode="replace",
+                    anchor=cue.anchor,
+                    mirror=cue.mirror,
+                    direction=cue.direction,
+                    intensity=intensity,
+                    repeats=cue.repeats,
+                    blend_frames=8,
+                )
+
+            applied_intensity = cue.intensity
+            beat_lock_relaxed = False
+            try:
+                edited, raw_report = apply_once(applied_intensity, use_beats=True)
+            except ValueError as exc:
+                if "failed semantic validation" not in str(exc):
+                    raise
+                if applied_intensity < 1.0:
+                    applied_intensity = 1.0
+                    try:
+                        edited, raw_report = apply_once(applied_intensity, use_beats=True)
+                    except ValueError as retry_exc:
+                        if "failed semantic validation" not in str(retry_exc):
+                            raise
+                        beat_lock_relaxed = True
+                        edited, raw_report = apply_once(applied_intensity, use_beats=False)
+                else:
+                    beat_lock_relaxed = True
+                    edited, raw_report = apply_once(applied_intensity, use_beats=False)
+            action_start, action_end = (int(value) for value in raw_report["action_range"])
+            section_range = (start + action_start, start + action_end)
+            if _overlaps(section_range, occupied):
+                reports.append({
+                    **cue.to_dict(),
+                    "name": spec.name,
+                    "status": "skipped",
+                    "detail": "overlaps an earlier planned common motion",
+                })
+                continue
+            out[start:end] = edited
+            occupied.append(section_range)
+            reports.append({
+                **raw_report,
+                "status": "applied",
+                "position": round(cue.position, 3),
+                "planned_intensity": round(cue.intensity, 3),
+                "intensity_adjusted": applied_intensity > cue.intensity + 1e-6,
+                "beat_lock_relaxed": beat_lock_relaxed,
+                "motif": cue.motif,
+                "rationale": cue.rationale,
+                "section_action_range": list(section_range),
+                "global_action_range": [
+                    int(section_start + section_range[0]),
+                    int(section_start + section_range[1]),
+                ],
+            })
+        except (FileNotFoundError, KeyError, ValueError) as exc:
+            logger.warning(
+                "Could not realize common motion %s in section starting at frame %d: %s",
+                cue.motion_id, section_start, exc,
+            )
+            reports.append({
+                **cue.to_dict(),
+                "status": "skipped",
+                "detail": str(exc),
+            })
+    return np.ascontiguousarray(out, dtype=np.float32), reports
+
+
 # --------------------------------------------------------------------------- section selection
 def _clip_sections(structure: MusicStructure, n: int) -> list[Section]:
     """Clip/trim sections to the available frame count ``n`` (drop empties)."""
@@ -124,7 +268,9 @@ def _clip_sections(structure: MusicStructure, n: int) -> list[Section]:
 def select_sources(lodge_z: np.ndarray, edge_z: np.ndarray, structure: MusicStructure,
                    storyboard: Storyboard, *, motif_reuse: bool = True,
                    energy_shaping: bool = False, recapitulate: bool = False,
-                   post_variations: dict | None = None) -> list[dict]:
+                   post_variations: dict | None = None,
+                   music_beat_frames: np.ndarray | None = None,
+                   motion_bank: MotionBank | None = None) -> list[dict]:
     """Choose, per section, the material realizing the storyboard (pure numpy, no blending).
 
     Returns an ordered list of dicts: ``{a, b, source, role, clip, costs}``. ``source`` is
@@ -133,12 +279,14 @@ def select_sources(lodge_z: np.ndarray, edge_z: np.ndarray, structure: MusicStru
     OPENING section as a strong candidate, imposing an ABA ("reuse the intro, mirror it at the
     end") close even when the music does not strictly repeat. ``post_variations`` maps a section
     index to length-preserving edits ``{mirror, retrograde, amplitude}`` applied to that section's
-    chosen clip (used by the editing agent).
+    chosen clip (used by the editing agent). Planned common motions are composed after source
+    selection and cached in ``chosen_raw`` so reused sections inherit them exactly once.
     """
     n = min(lodge_z.shape[0], edge_z.shape[0])
     sections = _clip_sections(structure, n)
     plans_by_idx = {p.section_index: p for p in storyboard.plans}
     chosen_raw: dict[int, np.ndarray] = {}   # section_index -> selected raw clip (for reuse)
+    effective_cues: dict[int, list[CommonMotionCue]] = {}
     decisions: list[dict] = []
 
     for i, sec in enumerate(sections):
@@ -184,11 +332,50 @@ def select_sources(lodge_z: np.ndarray, edge_z: np.ndarray, structure: MusicStru
 
         gen = "reuse" if source.startswith("reuse") else source
         matched_bias = plan.generator_bias in {"lodge", "edge"} and gen == plan.generator_bias
-        chosen_raw[i] = cands[source]
+        inherited_common_motion_ids: list[str] = []
+        recalled_common_motion_ids: list[str] = []
+        inherited_cues: list[CommonMotionCue] = []
+        cues_to_apply = list(plan.common_motions)
+        if source.startswith("reuse:"):
+            reused_idx = int(source.split(":", 1)[1])
+            inherited_cues = list(effective_cues.get(reused_idx, []))
+            inherited_common_motion_ids = list(dict.fromkeys(
+                cue.motion_id for cue in inherited_cues
+            ))
+        elif plan.reuse_of is not None and plan.reuse_of in effective_cues:
+            # The source selector may prefer fresh LODGE/EDGE material despite a structural reuse
+            # plan. Reapply the earlier named-motion motif so the chorus/hook identity still recurs.
+            recalled_cues = list(effective_cues[plan.reuse_of])
+            recalled_common_motion_ids = list(dict.fromkeys(
+                cue.motion_id for cue in recalled_cues
+            ))
+            cues_to_apply = _merge_cues(recalled_cues, cues_to_apply)
 
-        # length-preserving per-section edits (editing agent): applied to the OUTPUT clip only,
-        # leaving chosen_raw (used for reuse/recap) unvaried.
-        out_clip = cands[source]
+        out_clip, common_motion_reports = apply_planned_common_motions(
+            cands[source],
+            cues_to_apply,
+            section_start=a,
+            music_beat_frames=music_beat_frames,
+            motion_bank=motion_bank,
+        )
+        applied_keys = {
+            (
+                str(report["id"]),
+                str(report.get("motif", "")),
+                int(round(float(report.get("position", 0.5)) * 1000)),
+            )
+            for report in common_motion_reports
+            if report.get("status") == "applied"
+        }
+        applied_cues = [cue for cue in cues_to_apply if _cue_key(cue) in applied_keys]
+        effective_cues[i] = _merge_cues(inherited_cues, applied_cues)
+        common_motion_ids = list(dict.fromkeys(
+            cue.motion_id for cue in effective_cues[i]
+        ))
+        chosen_raw[i] = out_clip
+
+        # Length-preserving per-section edits from the editing agent are applied to the output
+        # only, leaving chosen_raw available as the stable motif for later reuse.
         pv = (post_variations or {}).get(i) or {}
         applied_pv: list[str] = []
         if pv.get("mirror"):
@@ -214,6 +401,12 @@ def select_sources(lodge_z: np.ndarray, edge_z: np.ndarray, structure: MusicStru
             "caption": caption_segment(out_clip, energy_norm=erel[source]),
             "plan_alignment": round(plan_realization_alignment(plan, erel[source]), 4),
             "post_variation": applied_pv,
+            "planned_common_motions": [cue.to_dict() for cue in plan.common_motions],
+            "effective_common_motions": [cue.to_dict() for cue in effective_cues[i]],
+            "common_motions": common_motion_reports,
+            "common_motion_ids": common_motion_ids,
+            "inherited_common_motion_ids": inherited_common_motion_ids,
+            "recalled_common_motion_ids": recalled_common_motion_ids,
         })
     return decisions
 
@@ -263,7 +456,8 @@ def build_story_dance(lodge_motion: np.ndarray, edge_motion: np.ndarray,
 
     decisions = select_sources(lodge, edge, structure, storyboard,
                                motif_reuse=motif_reuse, energy_shaping=energy_shaping,
-                               recapitulate=recapitulate, post_variations=post_variations)
+                               recapitulate=recapitulate, post_variations=post_variations,
+                               music_beat_frames=getattr(metadata, "beat_frames", None))
     if not decisions:
         raise ValueError("no usable sections for story assembly")
 
@@ -271,13 +465,22 @@ def build_story_dance(lodge_motion: np.ndarray, edge_motion: np.ndarray,
     schedule = [(d["a"], d["b"], d["source"], d["role"]) for d in decisions]
     _score_keys = ("a", "b", "source", "role", "costs", "target_intensity",
                    "plan_bias", "matched_bias", "vocabulary", "energies", "chosen_cost",
-                   "caption", "plan_alignment", "post_variation")
+                   "caption", "plan_alignment", "post_variation", "planned_common_motions",
+                   "effective_common_motions", "common_motions", "common_motion_ids",
+                   "inherited_common_motion_ids", "recalled_common_motion_ids")
     section_scores = [{k: d[k] for k in _score_keys} for d in decisions]
     n_reuse = sum(1 for d in decisions if d["source"].startswith("reuse"))
     n_lodge = sum(1 for d in decisions if d["source"] == "lodge")
     n_edge = sum(1 for d in decisions if d["source"] == "edge")
     n_honored = sum(1 for d in decisions if d["matched_bias"])
     n_biased = sum(1 for d in decisions if d["plan_bias"] in {"lodge", "edge"})
+    n_common_applied = sum(
+        1
+        for d in decisions
+        for report in d["common_motions"]
+        if report.get("status") == "applied"
+    )
+    n_common_sections = sum(1 for d in decisions if d["common_motion_ids"])
 
     from agentlodge.config import FPS
     arc = storyboard.arc if storyboard is not None else "?"
@@ -287,9 +490,11 @@ def build_story_dance(lodge_motion: np.ndarray, edge_motion: np.ndarray,
         mark = "=bias" if d["matched_bias"] else ("~auto" if d["plan_bias"] == "auto" else "!=bias")
         cost_str = " ".join(f"{k}:{v:.3f}" for k, v in d["costs"].items())
         logger.info(
-            "  %5.1f-%5.1fs %-8s -> %-8s (%s) plan[bias=%-5s tgtE=%.2f] chose_cost=%.3f | costs %s",
+            "  %5.1f-%5.1fs %-8s -> %-8s (%s) plan[bias=%-5s tgtE=%.2f] "
+            "motions=%s chose_cost=%.3f | costs %s",
             a / FPS, b / FPS, d["role"], d["source"], mark,
-            d["plan_bias"], d["target_intensity"], d["chosen_cost"], cost_str,
+            d["plan_bias"], d["target_intensity"],
+            ",".join(d["common_motion_ids"]) or "-", d["chosen_cost"], cost_str,
         )
 
     schedule_summary = ", ".join(
@@ -299,6 +504,7 @@ def build_story_dance(lodge_motion: np.ndarray, edge_motion: np.ndarray,
         f"story assembly: {len(decisions)} sections "
         f"({n_lodge} LODGE, {n_edge} EDGE, {n_reuse} motif-reuse); "
         f"storyboard bias honored in {n_honored}/{n_biased} explicitly-biased sections; "
+        f"{n_common_applied} common-motion cues applied across {n_common_sections} sections; "
         f"schedule: {schedule_summary}"
     )
     logger.info("Story schedule: %s", schedule_summary)

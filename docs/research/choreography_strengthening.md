@@ -273,6 +273,16 @@ beat), plus per-section `post_variations` in the assembler. Tested offline. *Opt
 **Phase 5 (stretch), Guidance & learned components.**
 Universal-Guidance beat steering (B4); learned captioner (MotionGPT); TMR fine-tuned on dance.
 
+**Phase 6, Curated common-motion choreography.** ✅ **DONE**
+`SectionPlan.common_motions` exposes the live 20-motion manifest to the whole-song LLM planner.
+Plans carry sparse beat-aware cues with intensity, direction, repetition, motif identity, and
+rationale. The assembler composes cues without changing section duration, caches composed sections
+for exact chorus/hook recurrence, and prevents double application on reused sections. Invalid or
+invented cues are rejected against the manifest; failed readability at an overly compressed beat
+first retries at full intensity, then relaxes beat compression while preserving the planned
+section position. The fresh-pod `make_song_bestofk.py` path now passes the runtime OpenAI key and
+records storyboard and cue-level section scores.
+
 Suggested order: **Phase 0 → 1 → 2** give the biggest structural + beat-alignment wins with the
 least risk; 3–4 add the reasoning/interactivity the user asked for.
 

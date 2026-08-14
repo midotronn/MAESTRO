@@ -432,7 +432,7 @@ class MotionBank:
             raise ValueError("selected window is too short for insertion; use replace or select at least 0.8s")
         required_minimum = spec.minimum_frames * count
         if n - _join_tail(n) < required_minimum:
-            minimum_window = _minimum_window_frames(required_minimum)
+            minimum_window = minimum_window_frames(required_minimum)
             raise ValueError(
                 f"selected window is too short for {spec.name}; select at least "
                 f"{minimum_window / _FPS:.1f}s so it can play at a natural speed"
@@ -1043,12 +1043,15 @@ def _join_tail(n: int) -> int:
     return int(min(8, max(0, int(n) // 8)))
 
 
-def _minimum_window_frames(action_frames: int) -> int:
+def minimum_window_frames(action_frames: int) -> int:
     """Smallest selection that leaves both the action and its blend-back room."""
     n = int(max(1, action_frames))
     while n - _join_tail(n) < action_frames:
         n += 1
     return n
+
+
+_minimum_window_frames = minimum_window_frames
 
 
 def _dance_flow_direction(base: np.ndarray) -> str:

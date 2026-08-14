@@ -129,7 +129,7 @@ def generate_song(sid: str) -> dict:
         structure,
         metadata,
         descriptor,
-        api_key=None,
+        api_key=os.environ.get("OPENAI_API_KEY") or None,
         motif_reuse=True,
     )
     assembled = build_story_dance(
@@ -158,6 +158,8 @@ def generate_song(sid: str) -> dict:
         "edge_summary": edge_result.get("summary", ""),
         "reasoning": assembled.reasoning,
         "schedule": schedule,
+        "storyboard": storyboard.to_dict(),
+        "section_scores": assembled.section_scores,
     }
     (WORKSPACE / f"fd_{sid}_STORY_bestofk.json").write_text(
         json.dumps(report, indent=2) + "\n",

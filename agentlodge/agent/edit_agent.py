@@ -180,7 +180,8 @@ class EditAgent:
 
     def _decisions(self, sb, recap, pv):
         return select_sources(self.lodge, self.edge, self.structure, sb,
-                              recapitulate=recap, post_variations=pv)
+                              recapitulate=recap, post_variations=pv,
+                              music_beat_frames=self.beats)
 
     def _section_bas(self, clip, a, b) -> float:
         if self.beats is None:

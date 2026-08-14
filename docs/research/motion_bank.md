@@ -36,6 +36,30 @@ backward steps, quarter and half turns, body roll, crouch or drop, and rise or r
 The agent exposes one generic `motion_bank` tool. It does not contain one tool or branch per action.
 The offline planner resolves aliases from the manifest, and the LLM receives the same vocabulary.
 
+## Whole-song storyboard use
+
+The structure-aware choreographer uses the same manifest as the interactive editor. Each
+`SectionPlan` may contain a sparse `common_motions` list whose cues declare:
+
+- an exact manifest `motion_id`;
+- normalized section position plus a musical anchor;
+- bounded intensity, supported direction or mirroring, and repeat count;
+- a short motif identity and choreographic rationale.
+
+The LLM sees all 20 live manifest entries with their category, recommended beats, stationarity,
+repeatability, and directions. Its output is coerced back through the manifest: invented IDs are
+discarded, unsupported directions and repetitions are corrected, cues are capped at three per
+section, and motions that cannot fit at their natural minimum duration are rejected before
+assembly.
+
+`agentlodge/dance/story.py` composes accepted cues after choosing the LODGE/EDGE source and before
+caching that section for motif reuse. A repeated chorus or hook therefore inherits the exact
+already-composed motion with its reused section, rather than layering the same action twice.
+If source scoring deliberately chooses fresh LODGE/EDGE material for the return, the earlier cue
+plan is reapplied once so the named motif still recurs. Additional cues on a reused section are
+treated as intentional variation accents. Applied, skipped, inherited, and recalled cue metadata
+is retained in the section scores and pipeline log.
+
 ## Timing semantics
 
 Replacement is the default interpretation for ordinary wording such as "add a clap here". The

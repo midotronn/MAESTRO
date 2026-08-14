@@ -54,9 +54,10 @@ AGENTLODGE_HYBRID=1 python run_pipeline.py --audio path/to/song.wav --output_dir
 `AGENTLODGE_STORY=1` adds a **long-horizon structure** layer on top of hybrid assembly, so the
 dance reads as a *composed* piece rather than freestyle: it is organized around the song's
 **musical form** (intro / verse / chorus / bridge / drop / outro) with a deliberate energy arc
-(build → climax → resolution), sectional contrast, and optional recurring motifs. It remains
-**training-free**, an LLM agent authors a high-level plan, which is realized by arranging LODGE
-and EDGE material with inertialized joins.
+(build → climax → resolution), sectional contrast, recurring motifs, and sparse accents from the
+curated 20-motion bank. It remains **training-free**, an LLM agent authors a high-level plan,
+which is realized by arranging LODGE and EDGE material, composing named motions, and adding
+inertialized joins.
 
 ![Story choreography pipeline](docs/story_pipeline_diagram.png)
 
@@ -68,18 +69,23 @@ How it works:
    downbeats; a robust fallback yields downbeat/uniform sections.
 2. **Storyboard agent** (`agentlodge/agent/storyboard.py`), an LLM authors a `SectionPlan` per
    section (role, target intensity along the arc, movement vocabulary, preferred generator, and
-   optional motif reuse). A deterministic rule-based fallback runs when no `OPENAI_API_KEY` is set,
-   so the mode works offline.
+   optional motif reuse), plus 0-3 validated common-motion cues with beat-aware placement,
+   direction, intensity, and a recurring motif identity. It receives the exact live catalog from
+   `assets/motion_bank/manifest.json`, so it cannot drift from the editor vocabulary. A sparse,
+   role-aware deterministic fallback runs when no `OPENAI_API_KEY` is set.
 3. **Structure-aware assembly** (`agentlodge/dance/story.py`), per section it picks the material
    (LODGE / EDGE / a retimed·mirrored·retrograded motif reuse) that best matches the plan while
-   staying smooth, and joins source changes with the same inertialized (Bollo 2016) transition as
-   the hybrid.
+   staying smooth, composes each cue without changing section duration, and joins source changes
+   with the same inertialized (Bollo 2016) transition as the hybrid. Reused chorus/hook sections
+   inherit the already-composed named-motion motif instead of applying it twice; if the selector
+   deliberately chooses fresh generator material, it reapplies the same cue plan once.
 
 The assembled dance becomes `selected_dance.npy` (`selected_model = "story"`); the detected
 structure, storyboard, and structure metrics (arc adherence, sectional contrast, motif recurrence,
 boundary alignment, seam jerk, and, when beats are available, **beat alignment (BAS)**, beat
-coverage, and foot-contact consistency) are logged to `pipeline_log.json`. On any failure the
-pipeline falls back to hybrid, then single-model selection.
+coverage, and foot-contact consistency) are logged to `pipeline_log.json`, together with planned,
+applied, skipped, and inherited common-motion cues. On any failure the pipeline falls back to
+hybrid, then single-model selection.
 
 ```bash
 AGENTLODGE_STORY=1 python run_pipeline.py --audio path/to/song.wav --output_dir ./outputs
