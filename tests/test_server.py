@@ -71,6 +71,22 @@ def test_editor_prewarm_starts_the_blender_pool(monkeypatch):
     assert not A._motion_audit_required()
 
 
+def test_warm_daemon_liveness_requires_its_process(tmp_path, monkeypatch):
+    import server.warm_render as warm_render
+
+    (tmp_path / "daemon.pid").write_text("12345")
+    (tmp_path / "daemon.ready").touch()
+    (tmp_path / "daemon.hb").touch()
+    monkeypatch.setattr(warm_render.os, "kill", lambda pid, sig: None)
+    assert warm_render._alive(tmp_path)
+
+    def missing_process(_pid, _sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(warm_render.os, "kill", missing_process)
+    assert not warm_render._alive(tmp_path)
+
+
 def test_lists_songs_and_opens_session(client):
     songs = client.get("/api/songs").json()["songs"]
     assert any(s["sid"] == "sng" for s in songs)

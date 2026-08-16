@@ -61,10 +61,24 @@ def _dir(i: int) -> Path:
     return DAEMON_ROOT / f"d{i}"
 
 
+def _pid_alive(d: Path) -> bool:
+    try:
+        pid = int((d / "daemon.pid").read_text().strip())
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def _alive(d: Path) -> bool:
     hb = d / "daemon.hb"
     try:
-        return (d / "daemon.ready").exists() and hb.exists() and (time.time() - hb.stat().st_mtime) < _HB_STALE
+        return (
+            _pid_alive(d)
+            and (d / "daemon.ready").exists()
+            and hb.exists()
+            and (time.time() - hb.stat().st_mtime) < _HB_STALE
+        )
     except OSError:
         return False
 
@@ -72,7 +86,7 @@ def _alive(d: Path) -> bool:
 def _start_daemon(i: int, *, width: int, height: int, samples: int) -> None:
     d = _dir(i)
     d.mkdir(parents=True, exist_ok=True)
-    for name in ("daemon.ready", "daemon.hb"):
+    for name in ("daemon.ready", "daemon.hb", "daemon.pid"):
         try:
             (d / name).unlink()
         except OSError:
@@ -84,8 +98,14 @@ def _start_daemon(i: int, *, width: int, height: int, samples: int) -> None:
         f"> {d}/daemon.log 2>&1"
     )
     # setsid so the daemon outlives the request that started it (and this editor worker thread).
-    subprocess.Popen(["setsid", "bash", "-c", cmd], stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, close_fds=True)
+    proc = subprocess.Popen(
+        ["setsid", "bash", "-c", cmd],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        close_fds=True,
+    )
+    (d / "daemon.pid").write_text(str(proc.pid))
 
 
 def ensure_pool(*, width: int = 448, height: int = 448, samples: int = 8, wait_ready: float = 0.0) -> int:
@@ -95,7 +115,8 @@ def ensure_pool(*, width: int = 448, height: int = 448, samples: int = 8, wait_r
         return 0
     with _START_LOCK:
         for i in range(POOL_SIZE):
-            if not _alive(_dir(i)):
+            d = _dir(i)
+            if not _alive(d) and not _pid_alive(d):
                 try:
                     _start_daemon(i, width=width, height=height, samples=samples)
                 except Exception as exc:  # noqa: BLE001 - best-effort warm-up
