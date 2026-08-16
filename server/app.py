@@ -132,6 +132,11 @@ def _prewarm() -> None:
         rendering.prewarm_pod()
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from server import warm_render
+        warm_render.ensure_pool(wait_ready=0)
+    except Exception:  # noqa: BLE001 - cold rendering remains available
+        pass
 
 
 @app.on_event("startup")

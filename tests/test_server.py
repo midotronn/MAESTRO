@@ -53,6 +53,20 @@ def test_live_editor_enables_the_blocking_motion_audit(monkeypatch):
     assert not A._motion_audit_required()
     monkeypatch.setenv("AGENTLODGE_LIVE", "1")
     assert A._motion_audit_required()
+
+
+def test_editor_prewarm_starts_the_blender_pool(monkeypatch):
+    import server.app as A
+    import server.rendering as rendering
+    import server.warm_render as warm_render
+
+    calls = []
+    monkeypatch.setattr(rendering, "prewarm_pod", lambda: None)
+    monkeypatch.setattr(warm_render, "ensure_pool", lambda *, wait_ready=0: calls.append(wait_ready))
+
+    A._prewarm()
+
+    assert calls == [0]
     monkeypatch.setenv("MAESTRO_ALLOW_UNAUDITED_RESEARCH", "1")
     assert not A._motion_audit_required()
 

@@ -485,7 +485,8 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
     True on success; False (with no side effects on the job) if the pool can't serve it."""
     from server import warm_render as wr
     from server import fk
-    if not wr.available():
+    needed = min(2, wr.POOL_SIZE)
+    if wr.ensure_pool(wait_ready=20) < needed:
         return False
     media_dir.mkdir(parents=True, exist_ok=True)
     frames = int(max(before_motion.shape[0], after_motion.shape[0]))
