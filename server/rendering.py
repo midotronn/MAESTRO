@@ -261,8 +261,16 @@ def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
 # =========================================================================== before/after compare
 # Renders the edited window twice -- the pre-edit ("before") and current ("after") motion -- as two
 # short window clips, launched in PARALLEL on the pod so the wall time stays close to a single render.
-# The UI plays them side by side, synced, with the before/after window metrics.
+# The UI uses the exact after-render joint projection to highlight changed body parts, while retaining
+# the synchronized side-by-side clips as a secondary view.
 _CJOBS: dict[str, dict] = {}
+_BODY_PART_JOINTS = {
+    "torso": ("Torso", (0, 3, 6, 9, 12, 15)),
+    "left_arm": ("Left arm", (13, 16, 18, 20)),
+    "right_arm": ("Right arm", (14, 17, 19, 21)),
+    "left_leg": ("Left leg", (1, 4, 7, 10)),
+    "right_leg": ("Right leg", (2, 5, 8, 11)),
+}
 
 
 def get_compare_job(sid: str) -> dict:
@@ -280,7 +288,7 @@ def start_compare_render(sid: str, before_motion: np.ndarray, after_motion: np.n
                          audio_wav: str | None = None, audio_start: float = 0.0,
                          audio_dur: float = 0.0) -> None:
     _cset(sid, status="queued", message="queued", progress=3, started=time.time(),
-          metrics=metrics or {}, before_video=None, after_video=None, audio=None)
+          metrics=metrics or {}, before_video=None, after_video=None, audio=None, highlight=None)
     threading.Thread(
         target=_compare_render,
         args=(sid, np.asarray(before_motion), np.asarray(after_motion), media_dir),
@@ -365,6 +373,111 @@ def _ffmpeg_frames(frames_dir: str, out_mp4: Path, fps: int = 30) -> bool:
         return False
 
 
+def _smooth(values: np.ndarray, radius: int = 3) -> np.ndarray:
+    if values.size < 3 or radius <= 0:
+        return values
+    width = min(values.size, 2 * radius + 1)
+    kernel = np.ones(width, dtype=np.float64) / width
+    return np.convolve(values, kernel, mode="same")
+
+
+def _build_change_highlight(before_poses: str, after_poses: str,
+                            after_rig_metrics: str, *, fps: int = 30) -> dict | None:
+    """Build exact screen-space body-part halos from FK deltas and the rendered Y-Bot projection."""
+    with np.load(before_poses) as data:
+        before = data["fk_joints"].astype(np.float64)
+    with np.load(after_poses) as data:
+        after = data["fk_joints"].astype(np.float64)
+    with np.load(after_rig_metrics) as data:
+        projected = data["projected"].astype(np.float64)
+    n = min(before.shape[0], after.shape[0], projected.shape[0])
+    if n < 2 or before.shape[1] < 22 or after.shape[1] < 22 or projected.shape[1] < 22:
+        return None
+
+    before = before[:n]
+    after = after[:n]
+    projected = projected[:n]
+    before_rel = before - before[:, :1]
+    after_rel = after - after[:, :1]
+    joint_delta = np.linalg.norm(after_rel - before_rel, axis=-1)
+
+    scores: dict[str, np.ndarray] = {}
+    for part, (_label, joints) in _BODY_PART_JOINTS.items():
+        values = np.sqrt(np.mean(np.square(joint_delta[:, joints]), axis=1))
+        scores[part] = _smooth(values)
+
+    root_path = (after[:, 0] - after[:1, 0]) - (before[:, 0] - before[:1, 0])
+    scores["travel"] = _smooth(np.linalg.norm(root_path, axis=1))
+    aggregates = {
+        part: float(np.percentile(values, 90))
+        for part, values in scores.items()
+    }
+    peak = max(aggregates.values(), default=0.0)
+    if not np.isfinite(peak) or peak < 0.006:
+        return None
+
+    gate = max(0.008, peak * 0.28)
+    selected = [part for part, value in aggregates.items() if value >= gate]
+    if not selected:
+        selected = [max(aggregates, key=aggregates.get)]
+
+    frames: list[list[dict]] = []
+    combined = np.zeros(n, dtype=np.float64)
+    for frame in range(n):
+        markers = []
+        for part in selected:
+            denom = max(aggregates[part], 1e-8)
+            strength = float(np.clip(scores[part][frame] / denom, 0.0, 1.0))
+            if strength < 0.16:
+                continue
+            if part == "travel":
+                label = "Travel / lower body"
+                joints = (0, 1, 2, 4, 5, 7, 8, 10, 11)
+            else:
+                label, joints = _BODY_PART_JOINTS[part]
+            points = projected[frame, joints]
+            valid = (
+                np.isfinite(points).all(axis=1)
+                & (points[:, 2] > 0)
+                & (points[:, 0] > -0.2)
+                & (points[:, 0] < 1.2)
+                & (points[:, 1] > -0.2)
+                & (points[:, 1] < 1.2)
+            )
+            if not valid.any():
+                continue
+            xy = points[valid, :2].copy()
+            xy[:, 1] = 1.0 - xy[:, 1]
+            low = xy.min(axis=0)
+            high = xy.max(axis=0)
+            center = 0.5 * (low + high)
+            pad = 0.05 if part in ("torso", "travel") else 0.04
+            radius = np.maximum(0.5 * (high - low) + pad, (0.065, 0.085))
+            radius = np.minimum(radius, (0.30, 0.34))
+            markers.append({
+                "part": part,
+                "label": label,
+                "x": round(float(np.clip(center[0], 0.0, 1.0)), 4),
+                "y": round(float(np.clip(center[1], 0.0, 1.0)), 4),
+                "rx": round(float(radius[0]), 4),
+                "ry": round(float(radius[1]), 4),
+                "strength": round(strength, 3),
+            })
+            combined[frame] += strength
+        frames.append(markers)
+
+    labels = [
+        ("Travel / lower body" if part == "travel" else _BODY_PART_JOINTS[part][0])
+        for part in selected
+    ]
+    return {
+        "fps": int(fps),
+        "parts": labels,
+        "peak_frame": int(np.argmax(combined)),
+        "frames": frames,
+    }
+
+
 def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
                   media_dir: Path) -> bool:
     """Fast compare via the warm Blender pool: server-FK both windows, render before/after in
@@ -379,9 +492,23 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
     _cset(sid, status="rendering", progress=25, frames=frames,
           message=f"rendering before & after ({frames} frames each) on the warm GPU\u2026")
     try:
+        after_rig = media_dir / "_cmp_after_rig.npz"
+        after_rig.unlink(missing_ok=True)
         specs = [
-            ("before", str(media_dir / "_cmp_before_poses.npz"), str(media_dir / "_cmp_before_frames"), 0),
-            ("after", str(media_dir / "_cmp_after_poses.npz"), str(media_dir / "_cmp_after_frames"), 1),
+            (
+                "before",
+                str(media_dir / "_cmp_before_poses.npz"),
+                str(media_dir / "_cmp_before_frames"),
+                0,
+                "",
+            ),
+            (
+                "after",
+                str(media_dir / "_cmp_after_poses.npz"),
+                str(media_dir / "_cmp_after_frames"),
+                1,
+                str(after_rig),
+            ),
         ]
         fk.save_poses_npz(before_motion, specs[0][1])
         fk.save_poses_npz(after_motion, specs[1][1])
@@ -390,8 +517,14 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
         return False
     results: dict[str, bool] = {}
 
-    def _run(tag: str, npz: str, frames_dir: str, didx: int) -> None:
-        results[tag] = wr.warm_render(npz, frames_dir, daemon=didx, samples=8)
+    def _run(tag: str, npz: str, frames_dir: str, didx: int, rig_metrics: str) -> None:
+        results[tag] = wr.warm_render(
+            npz,
+            frames_dir,
+            daemon=didx,
+            samples=8,
+            rig_metrics=rig_metrics,
+        )
 
     threads = [threading.Thread(target=_run, args=s) for s in specs]
     for t in threads:
@@ -400,6 +533,12 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
         t.join()
     if not (results.get("before") and results.get("after")):
         return False
+    try:
+        highlight = _build_change_highlight(specs[0][1], specs[1][1], str(after_rig))
+        if highlight:
+            _cset(sid, highlight=highlight)
+    except (OSError, ValueError, KeyError) as exc:
+        logger.warning("compare body-part highlight metadata failed: %s", exc)
     _cset(sid, progress=90, message="encoding before & after\u2026")
     enc: dict[str, bool] = {}
 

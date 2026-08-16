@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260804-3" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@500;700;800&family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="/static/style.css?v=20260807-3" />
+<link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
 <div class="app">
@@ -50,9 +50,9 @@
           <span>Render only when you want a polished character preview.</span>
         </div>
         <div class="review-actions">
-          <button id="compareBtn" class="review-btn primary" title="Render this edited window beside an earlier version, synchronized to the music">
+          <button id="compareBtn" class="review-btn primary" title="Render this edited window and highlight the body areas that changed">
             <span class="review-icon">⇄</span>
-            <span><strong>Review edit</strong><small>Before and after with music</small></span>
+            <span><strong>Review edit</strong><small>Changed body areas highlighted</small></span>
           </button>
           <button id="fullRenderBtn" class="review-btn" title="Render the complete edited dance with its music for a final review">
             <span class="review-icon">♪</span>
@@ -73,13 +73,27 @@
         </div>
         <div id="cmpStatus" class="render-status"></div>
         <div id="cmpProgWrap" class="progwrap cmp-prog" hidden><div id="cmpProg" class="progbar"></div></div>
-        <div class="cmp-vids">
+        <div class="cmp-viewbar" aria-label="Comparison view">
+          <span>View</span>
+          <button id="cmpModeHighlight" class="cmp-view-btn active" type="button" aria-pressed="true">Highlight changes</button>
+          <button id="cmpModeSide" class="cmp-view-btn" type="button" aria-pressed="false">Side by side</button>
+        </div>
+        <div id="cmpHighlight" class="cmp-highlight">
+          <div class="cmp-highlight-stage">
+            <canvas id="cmpHighlightCanvas" aria-label="Edited dance with changed body areas highlighted"></canvas>
+            <span id="cmpHighlightBadge" class="cmp-highlight-badge">After · cyan = changed body area</span>
+            <span class="cmp-highlight-legend"><i></i> changed body area</span>
+          </div>
+          <p>MAESTRO follows the changed joints through the render and places a cyan focus directly on the affected arms, torso, legs, or travel.</p>
+        </div>
+        <div id="cmpSideBySide" class="cmp-vids" hidden>
           <figure><figcaption id="cmpCapBefore">Before</figcaption><video id="cmpBefore" muted playsinline preload="auto" loop></video></figure>
           <figure><figcaption>After (current)</figcaption><video id="cmpAfter" muted playsinline preload="auto" loop></video></figure>
         </div>
         <audio id="cmpAudio" preload="auto" loop></audio>
         <div class="cmp-ctl">
           <button id="cmpPlay" class="ghost-btn">▶ Play both</button>
+          <button id="cmpHoldBefore" class="ghost-btn" type="button" title="Press and hold to temporarily show the original">Hold for original</button>
           <input id="cmpScrub" type="range" min="0" max="1000" value="0" title="Scrub both clips" />
         </div>
         <table id="cmpMetrics" class="metrics"></table>
@@ -154,6 +168,7 @@
     </div>
   </div>
 </div>
-<script src="/static/app.js?v=20260807-3"></script>
+<script src="/static/compare_highlight.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>

@@ -6,6 +6,17 @@ const api = async (url, opts) => {
   return r.json();
 };
 let ST = { sid: null, fps: 30, dur: 0, nframes: 0, beats: 0, head: null, sel: null };
+const CMP_HIGHLIGHT = {
+  mode: "highlight",
+  raf: 0,
+  holdOriginal: false,
+  failed: false,
+  beforeCanvas: document.createElement("canvas"),
+  afterCanvas: document.createElement("canvas"),
+  overlayCanvas: document.createElement("canvas"),
+  overlayImage: null,
+  metadata: null,
+};
 
 const METRIC_LABELS = { energy: "energy", bas: "beat align (BAS)", jerk: "smoothness", foot: "foot contact" };
 const HIGHER_BETTER = { energy: null, bas: true, jerk: false, foot: true }; // null = neutral (raw metrics)
@@ -129,7 +140,7 @@ async function pollCompare() {
   st.textContent = (j.status === "rendering" ? "\u{1F3AC} " : "") + (j.message || j.status);
   $("cmpProgWrap").hidden = false; $("cmpProg").style.width = (j.progress || 0) + "%";
   if (j.status === "done") {
-    setupCompareVideos(j.before_video, j.after_video, j.metrics || {}, j.audio);
+    setupCompareVideos(j.before_video, j.after_video, j.metrics || {}, j.audio, j.highlight || null);
     st.className = "render-status ok";
     st.textContent = `\u2714 comparison ready${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
     $("cmpProgWrap").hidden = true;
@@ -160,7 +171,184 @@ function showCompareMetrics(m) {
   });
 }
 
-function setupCompareVideos(beforeName, afterName, metrics, audioName) {
+function stopCompareHighlightLoop() {
+  if (CMP_HIGHLIGHT.raf) cancelAnimationFrame(CMP_HIGHLIGHT.raf);
+  CMP_HIGHLIGHT.raf = 0;
+}
+
+function failCompareHighlight(message) {
+  if (CMP_HIGHLIGHT.failed) return;
+  CMP_HIGHLIGHT.failed = true;
+  setCompareMode("side");
+  const st = $("cmpStatus");
+  st.style.display = "block";
+  st.className = "render-status bad";
+  st.textContent = "\u26a0 change highlighting unavailable: " + message;
+  toast("Change highlighting unavailable; showing side by side");
+}
+
+function ensureCompareHighlightCanvases(width, height) {
+  const canvases = [
+    $("cmpHighlightCanvas"),
+    CMP_HIGHLIGHT.beforeCanvas,
+    CMP_HIGHLIGHT.afterCanvas,
+    CMP_HIGHLIGHT.overlayCanvas,
+  ];
+  canvases.forEach((canvas) => {
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+  });
+  const overlayCtx = CMP_HIGHLIGHT.overlayCanvas.getContext("2d");
+  if (!CMP_HIGHLIGHT.overlayImage
+      || CMP_HIGHLIGHT.overlayImage.width !== width
+      || CMP_HIGHLIGHT.overlayImage.height !== height) {
+    CMP_HIGHLIGHT.overlayImage = overlayCtx.createImageData(width, height);
+  }
+}
+
+function drawProjectedBodyHighlights(ctx, width, height, currentTime) {
+  const metadata = CMP_HIGHLIGHT.metadata;
+  if (!metadata || !Array.isArray(metadata.frames) || !metadata.frames.length) return null;
+  const fps = Number(metadata.fps) || 30;
+  const frame = Math.max(0, Math.min(metadata.frames.length - 1, Math.round(currentTime * fps)));
+  const markers = metadata.frames[frame] || [];
+  const labels = [];
+
+  markers.forEach((marker) => {
+    const x = Number(marker.x) * width;
+    const y = Number(marker.y) * height;
+    const rx = Math.max(20, Number(marker.rx) * width);
+    const ry = Math.max(24, Number(marker.ry) * height);
+    const strength = Math.max(0.2, Math.min(1, Number(marker.strength) || 0));
+    if (![x, y, rx, ry].every(Number.isFinite)) return;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(24, 211, 238, ${0.07 + 0.09 * strength})`;
+    ctx.shadowColor = "rgba(24, 211, 238, .95)";
+    ctx.shadowBlur = 12 + 18 * strength;
+    ctx.lineWidth = 2.5 + 2.5 * strength;
+    ctx.strokeStyle = `rgba(24, 211, 238, ${0.62 + 0.30 * strength})`;
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    const label = String(marker.label || "Changed area");
+    labels.push(label);
+    ctx.save();
+    ctx.font = `600 ${Math.max(11, Math.round(width / 40))}px "Noto Sans", sans-serif`;
+    const textWidth = ctx.measureText(label).width;
+    const lx = Math.max(6, Math.min(width - textWidth - 18, x - textWidth / 2 - 9));
+    const ly = Math.max(25, y - ry - 9);
+    ctx.fillStyle = "rgba(15, 23, 42, .82)";
+    ctx.fillRect(lx, ly - 20, textWidth + 18, 25);
+    ctx.fillStyle = "#8ff3ff";
+    ctx.fillText(label, lx + 9, ly - 3);
+    ctx.restore();
+  });
+  return [...new Set(labels)];
+}
+
+function renderCompareHighlight() {
+  if (CMP_HIGHLIGHT.mode !== "highlight" || CMP_HIGHLIGHT.failed || $("compare").hidden) return;
+  const A = $("cmpAfter"), B = $("cmpBefore"), canvas = $("cmpHighlightCanvas");
+  if (A.readyState < 2 || B.readyState < 2 || !A.videoWidth || !A.videoHeight) return;
+
+  try {
+    const width = A.videoWidth, height = A.videoHeight;
+    ensureCompareHighlightCanvases(width, height);
+    const ctx = canvas.getContext("2d");
+    const badge = $("cmpHighlightBadge");
+
+    if (CMP_HIGHLIGHT.holdOriginal) {
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(B, 0, 0, width, height);
+      badge.textContent = "Original · release to see highlighted edit";
+      return;
+    }
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(A, 0, 0, width, height);
+    const partLabels = drawProjectedBodyHighlights(ctx, width, height, A.currentTime || 0);
+    if (partLabels) {
+      badge.textContent = partLabels.length
+        ? "After · highlighting " + partLabels.join(" + ")
+        : "After · edited body areas will glow cyan";
+      return;
+    }
+
+    const beforeCtx = CMP_HIGHLIGHT.beforeCanvas.getContext("2d", { willReadFrequently: true });
+    const afterCtx = CMP_HIGHLIGHT.afterCanvas.getContext("2d", { willReadFrequently: true });
+    const overlayCtx = CMP_HIGHLIGHT.overlayCanvas.getContext("2d");
+    beforeCtx.drawImage(B, 0, 0, width, height);
+    afterCtx.drawImage(A, 0, 0, width, height);
+    const before = beforeCtx.getImageData(0, 0, width, height).data;
+    const after = afterCtx.getImageData(0, 0, width, height).data;
+    const kernel = window.MAESTRO_COMPARE_HIGHLIGHT;
+    if (!kernel || typeof kernel.colorizeChangedPixels !== "function") {
+      failCompareHighlight("pixel comparison module did not load");
+      return;
+    }
+    const changed = kernel.colorizeChangedPixels(
+      before,
+      after,
+      CMP_HIGHLIGHT.overlayImage.data,
+      kernel.DEFAULT_THRESHOLD,
+    );
+    overlayCtx.putImageData(CMP_HIGHLIGHT.overlayImage, 0, 0);
+
+    ctx.save();
+    ctx.globalAlpha = 0.58;
+    ctx.filter = "blur(5px)";
+    ctx.drawImage(CMP_HIGHLIGHT.overlayCanvas, 0, 0);
+    ctx.filter = "none";
+    ctx.globalAlpha = 0.92;
+    ctx.drawImage(CMP_HIGHLIGHT.overlayCanvas, 0, 0);
+    ctx.restore();
+    badge.textContent = changed
+      ? "After · cyan = changed body area"
+      : "After · no visible pixel change at this frame";
+  } catch (error) {
+    failCompareHighlight(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function startCompareHighlightLoop() {
+  stopCompareHighlightLoop();
+  if (CMP_HIGHLIGHT.mode !== "highlight" || CMP_HIGHLIGHT.failed) return;
+  const tick = () => {
+    CMP_HIGHLIGHT.raf = 0;
+    renderCompareHighlight();
+    if (!$("cmpAfter").paused && CMP_HIGHLIGHT.mode === "highlight" && !$("compare").hidden) {
+      CMP_HIGHLIGHT.raf = requestAnimationFrame(tick);
+    }
+  };
+  CMP_HIGHLIGHT.raf = requestAnimationFrame(tick);
+}
+
+function setCompareMode(mode) {
+  const useHighlight = mode === "highlight" && !CMP_HIGHLIGHT.failed;
+  CMP_HIGHLIGHT.mode = useHighlight ? "highlight" : "side";
+  $("cmpHighlight").hidden = !useHighlight;
+  $("cmpSideBySide").hidden = useHighlight;
+  $("cmpHoldBefore").hidden = !useHighlight;
+  $("cmpModeHighlight").classList.toggle("active", useHighlight);
+  $("cmpModeHighlight").setAttribute("aria-pressed", String(useHighlight));
+  $("cmpModeSide").classList.toggle("active", !useHighlight);
+  $("cmpModeSide").setAttribute("aria-pressed", String(!useHighlight));
+  if (useHighlight) startCompareHighlightLoop();
+  else stopCompareHighlightLoop();
+}
+
+function setCompareOriginalHeld(held) {
+  CMP_HIGHLIGHT.holdOriginal = held;
+  if (CMP_HIGHLIGHT.mode === "highlight") renderCompareHighlight();
+}
+
+function setupCompareVideos(beforeName, afterName, metrics, audioName, highlight) {
   const A = $("cmpAfter"), B = $("cmpBefore"), AU = $("cmpAudio");
   const bust = "?t=" + Date.now();
   A.src = `/api/session/${ST.sid}/media/${afterName}${bust}`;
@@ -175,13 +363,28 @@ function setupCompareVideos(beforeName, afterName, metrics, audioName) {
     if (haveAudio) AU.load();
   }
   showCompareMetrics(metrics);
+  CMP_HIGHLIGHT.failed = false;
+  CMP_HIGHLIGHT.holdOriginal = false;
+  CMP_HIGHLIGHT.metadata = highlight || null;
+  setCompareMode("highlight");
   const setPlayLabel = () => { $("cmpPlay").textContent = A.paused ? "\u25b6 Play both" : "\u23f8 Pause"; };
   const playAudio = () => { if (haveAudio) { try { AU.currentTime = A.currentTime || 0; } catch (e) {} AU.play().catch(() => {}); } };
   const playBoth = () => { A.play().catch(() => {}); B.play().catch(() => {}); playAudio(); setPlayLabel(); };
   const pauseBoth = () => { A.pause(); B.pause(); if (haveAudio) AU.pause(); setPlayLabel(); };
   $("cmpPlay").onclick = () => { A.paused ? playBoth() : pauseBoth(); };
-  A.onplay = () => { if (B.paused) B.play().catch(() => {}); playAudio(); setPlayLabel(); };
-  A.onpause = () => { if (!B.paused) B.pause(); if (haveAudio) AU.pause(); setPlayLabel(); };
+  A.onplay = () => {
+    if (B.paused) B.play().catch(() => {});
+    playAudio();
+    setPlayLabel();
+    startCompareHighlightLoop();
+  };
+  A.onpause = () => {
+    if (!B.paused) B.pause();
+    if (haveAudio) AU.pause();
+    setPlayLabel();
+    stopCompareHighlightLoop();
+    renderCompareHighlight();
+  };
   A.ontimeupdate = () => {                                  // keep "before" + music locked to "after"
     const d = A.duration || 1;
     $("cmpScrub").value = Math.round((A.currentTime / d) * 1000);
@@ -191,12 +394,17 @@ function setupCompareVideos(beforeName, afterName, metrics, audioName) {
     if (haveAudio && isFinite(A.currentTime) && Math.abs((AU.currentTime || 0) - A.currentTime) > 0.18) {
       try { AU.currentTime = A.currentTime; } catch (e) {}
     }
+    if (!CMP_HIGHLIGHT.raf) renderCompareHighlight();
   };
   $("cmpScrub").oninput = () => {
     const d = A.duration || 1, t = ($("cmpScrub").value / 1000) * d;
     try { A.currentTime = t; B.currentTime = t; if (haveAudio) AU.currentTime = t; } catch (e) {}
+    requestAnimationFrame(renderCompareHighlight);
   };
-  A.onloadeddata = () => { playBoth(); };
+  A.onseeked = renderCompareHighlight;
+  B.onseeked = renderCompareHighlight;
+  B.onloadeddata = renderCompareHighlight;
+  A.onloadeddata = () => { renderCompareHighlight(); playBoth(); };
 }
 
 // -------------------------------------------------------------- load songs + session
@@ -206,8 +414,29 @@ function wireControls() {
   $("apply").onclick = runEdit;
   $("fullRenderBtn").onclick = startFullRender;
   $("compareBtn").onclick = startCompare;
+  $("cmpModeHighlight").onclick = () => setCompareMode("highlight");
+  $("cmpModeSide").onclick = () => setCompareMode("side");
+  const holdBefore = $("cmpHoldBefore");
+  const releaseOriginal = () => setCompareOriginalHeld(false);
+  holdBefore.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    setCompareOriginalHeld(true);
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach((name) =>
+    holdBefore.addEventListener(name, releaseOriginal));
+  holdBefore.addEventListener("keydown", (e) => {
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      setCompareOriginalHeld(true);
+    }
+  });
+  holdBefore.addEventListener("keyup", (e) => {
+    if (e.key === " " || e.key === "Enter") releaseOriginal();
+  });
+  window.addEventListener("blur", releaseOriginal);
   $("cmpClose").onclick = () => {
     $("compare").hidden = true;
+    stopCompareHighlightLoop();
     try { $("cmpAfter").pause(); $("cmpBefore").pause(); $("cmpAudio").pause(); } catch (e) {}
   };
   const cmpVer = $("cmpVersion");
@@ -218,6 +447,7 @@ function wireControls() {
     if (!confirm("Clear the edit history and start over from the original dance? This cannot be undone.")) return;
     const st = await api(`/api/session/${ST.sid}/reset`, { method: "POST" });
     $("compare").hidden = true;
+    stopCompareHighlightLoop();
     try { $("cmpAfter").pause(); $("cmpBefore").pause(); $("cmpAudio").pause(); } catch (e) {}
     $("video").src = st.preview_url + "?t=" + Date.now();     // back to the original dance
     applyState(st);
@@ -240,7 +470,7 @@ const TOUR_STEPS = [
   { el: "apply", title: "4 · Apply the edit",
     text: "The agent plans the right tools, applies them, and verifies the result actually hit your goal. If needed, it refines the edit." },
   { el: "compareBtn", title: "5 · Review the result",
-    text: "Review the edited window beside an earlier version, synchronized to the music. Use Render full dance only when you want a slower final review of the complete performance." },
+    text: "Review the edited dancer with changed body areas glowing cyan. Hold for the original or switch to side by side, all synchronized to the music." },
   { el: "history", title: "6 · Iterate freely",
     text: "Every edit is a checkpoint. Undo, redo, compare versions, or reset to start over. Edit, listen, refine." },
   { el: "song", title: "That\u2019s it. Have fun!",

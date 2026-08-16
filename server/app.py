@@ -311,7 +311,7 @@ class CompareBody(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
     html = (STATIC / "index.html").read_text(encoding="utf-8")
-    # Cache-bust app.js / style.css by file mtime so a redeploy is picked up on a normal refresh
+    # Cache-bust editor assets by file mtime so a redeploy is picked up on a normal refresh
     # (the assets are served without Cache-Control, so browsers were pinning the old versions).
     def _v(name: str) -> str:
         try:
@@ -319,6 +319,10 @@ def index() -> HTMLResponse:
         except OSError:
             return "1"
     html = html.replace("/static/app.js", f"/static/app.js?v={_v('app.js')}")
+    html = html.replace(
+        "/static/compare_highlight.js",
+        f"/static/compare_highlight.js?v={_v('compare_highlight.js')}",
+    )
     html = html.replace("/static/style.css", f"/static/style.css?v={_v('style.css')}")
     return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 

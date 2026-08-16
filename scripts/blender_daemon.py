@@ -10,7 +10,8 @@ build is paid ONCE and every subsequent render skips it::
 The daemon watches ``<requests-dir>`` for ``*.req`` files (JSON), each describing one render::
 
     {"id": "abc", "poses": "/path/poses.npz", "frames_dir": "/path/frames",
-     "width": 448, "height": 448, "samples": 8, "color": "0.5,0.5,0.52", "yaw": 0}
+     "width": 448, "height": 448, "samples": 8, "color": "0.5,0.5,0.52", "yaw": 0,
+     "rig_metrics": "/optional/path/rig_metrics.npz"}
 
 For each request it renders the poses to ``frames_dir`` (reusing the warm scene) and writes
 ``<id>.done`` (or ``<id>.fail`` with the error). A client then muxes the frames with ffmpeg. The
@@ -78,6 +79,7 @@ def _render_request(req, cfg):
         fast=bool(req.get("fast", True)),
         lock_root=bool(req.get("lock_root", False)),
         fixed_camera=bool(req.get("fixed_camera", False)),
+        rig_metrics=req.get("rig_metrics", ""),
     )
     os.makedirs(args.frames_dir, exist_ok=True)
     ybot.render_take(args, color)

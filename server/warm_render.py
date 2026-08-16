@@ -112,16 +112,24 @@ def available() -> bool:
 
 
 def warm_render(poses_npz: str, frames_dir: str, *, daemon: int, samples: int = 8,
-                width: int = 448, height: int = 448, timeout: float = 600.0) -> bool:
-    """Submit one render to daemon ``daemon`` and wait for it. Returns True on success."""
+                width: int = 448, height: int = 448, timeout: float = 600.0,
+                rig_metrics: str = "") -> bool:
+    """Submit one render and optionally capture exact projected rig metrics. Returns True on success."""
     d = _dir(daemon % POOL_SIZE)
     if not _alive(d):
         return False
-    Path(frames_dir).mkdir(parents=True, exist_ok=True)
+    frames_path = Path(frames_dir)
+    frames_path.mkdir(parents=True, exist_ok=True)
+    for old_frame in frames_path.glob("frame_*.png"):
+        try:
+            old_frame.unlink()
+        except OSError:
+            return False
     rid = "r" + uuid.uuid4().hex[:10]
     done, fail = d / f"{rid}.done", d / f"{rid}.fail"
     req = {"id": rid, "poses": str(poses_npz), "frames_dir": str(frames_dir),
-           "width": width, "height": height, "samples": samples, "fast": False}
+           "width": width, "height": height, "samples": samples, "fast": False,
+           "rig_metrics": str(rig_metrics)}
     tmp = d / f"{rid}.req.tmp"
     tmp.write_text(json.dumps(req))
     tmp.rename(d / f"{rid}.req")          # atomic publish so the daemon never reads a half-written file

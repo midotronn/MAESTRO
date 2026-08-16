@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -313,7 +314,7 @@ def test_editor_review_actions_explain_the_user_flow():
     js = (STATIC / "app.js").read_text(encoding="utf-8")
 
     assert "Review edit" in html
-    assert "Before and after with music" in html
+    assert "Changed body areas highlighted" in html
     assert "Render full dance" in html
     assert "Slower, for the final review" in html
     assert 'rel="icon"' in html
@@ -328,12 +329,92 @@ def test_editor_review_actions_explain_the_user_flow():
     assert "clap to the right" in js
     assert "insertion is unavailable until it has its own visual audit" in js
     assert "follows the dance flow" in js
+    assert 'id="cmpHighlightCanvas"' in html
+    assert 'id="cmpModeHighlight"' in html
+    assert 'id="cmpModeSide"' in html
+    assert 'id="cmpHoldBefore"' in html
+    assert "MAESTRO follows the changed joints through the render" in html
+    assert "/static/compare_highlight.js" in html
+    assert (STATIC / "compare_highlight.js").is_file()
+    assert "renderCompareHighlight" in js
+    assert "drawProjectedBodyHighlights" in js
+    assert "setCompareMode" in js
 
     tour = js[js.index("const TOUR_STEPS"):js.index("let tourIdx")]
     assert "\\u2014" not in tour and "—" not in tour
     assert 'el: "motionPicker"' in tour
     assert "slightly exaggerated so they read clearly" in tour
     assert "strongest beat in the selected window" in tour
+
+
+def test_compare_highlight_kernel_marks_only_changed_pixels():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is required to execute comparison highlight JavaScript")
+    from server.app import STATIC
+
+    script = (STATIC / "compare_highlight.js").as_posix()
+    harness = f"""
+const fs = require("fs");
+const vm = require("vm");
+vm.runInThisContext(fs.readFileSync({script!r}, "utf8"));
+const fn = globalThis.MAESTRO_COMPARE_HIGHLIGHT.colorizeChangedPixels;
+const before = Uint8ClampedArray.from([
+  30, 30, 30, 255,
+  50, 50, 50, 255,
+]);
+const after = Uint8ClampedArray.from([
+  32, 31, 30, 255,
+  210, 200, 190, 255,
+]);
+const overlay = new Uint8ClampedArray(8);
+overlay.fill(255);
+const changed = fn(before, after, overlay, 42);
+if (changed !== 1) throw new Error(`expected one changed pixel, got ${{changed}}`);
+if (overlay[3] !== 0) throw new Error("unchanged pixel was highlighted");
+if (overlay[4] !== 24 || overlay[5] !== 211 || overlay[6] !== 238 || overlay[7] === 0) {{
+  throw new Error("changed pixel did not receive the cyan highlight");
+}}
+"""
+    subprocess.run([node, "-e", harness], check=True, capture_output=True, text=True)
+
+
+def test_change_highlight_localizes_a_changed_right_arm(tmp_path):
+    import server.rendering as rendering
+
+    n = 12
+    before = np.zeros((n, 22, 3), dtype=np.float32)
+    after = before.copy()
+    after[:, [14, 17, 19, 21], 0] = np.linspace(0.0, 0.24, n)[:, None]
+    projected = np.zeros((n, 22, 3), dtype=np.float32)
+    projected[..., 0] = 0.5
+    projected[..., 1] = 0.5
+    projected[..., 2] = 1.0
+    projected[:, 14, :2] = (0.61, 0.58)
+    projected[:, 17, :2] = (0.69, 0.55)
+    projected[:, 19, :2] = (0.76, 0.49)
+    projected[:, 21, :2] = (0.82, 0.44)
+
+    before_path = tmp_path / "before.npz"
+    after_path = tmp_path / "after.npz"
+    rig_path = tmp_path / "after_rig.npz"
+    np.savez(before_path, fk_joints=before)
+    np.savez(after_path, fk_joints=after)
+    np.savez(rig_path, projected=projected)
+
+    highlight = rendering._build_change_highlight(
+        str(before_path),
+        str(after_path),
+        str(rig_path),
+    )
+
+    assert highlight is not None
+    assert "Right arm" in highlight["parts"]
+    assert "Left leg" not in highlight["parts"]
+    active = [marker for frame in highlight["frames"] for marker in frame]
+    assert active
+    assert {marker["part"] for marker in active} == {"right_arm"}
+    assert all(0 <= marker["x"] <= 1 and 0 <= marker["y"] <= 1 for marker in active)
 
 
 def test_basic_auth_middleware_guards_when_env_set():
