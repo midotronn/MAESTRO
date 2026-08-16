@@ -87,6 +87,33 @@ def test_warm_daemon_liveness_requires_its_process(tmp_path, monkeypatch):
     assert not warm_render._alive(tmp_path)
 
 
+def test_warm_daemon_launch_tracks_the_blender_pid(tmp_path, monkeypatch):
+    import server.warm_render as warm_render
+
+    class FakeProcess:
+        pid = 24680
+
+    captured = {}
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr(warm_render, "DAEMON_ROOT", tmp_path)
+    monkeypatch.setattr(warm_render.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(warm_render, "_blender", lambda: tmp_path / "blender")
+    monkeypatch.setattr(warm_render, "_scene", lambda: tmp_path / "scene.blend")
+    monkeypatch.setattr(warm_render, "_ybot", lambda: tmp_path / "ybot.fbx")
+    monkeypatch.setattr(warm_render, "_daemon_script", lambda: tmp_path / "daemon.py")
+
+    warm_render._start_daemon(0, width=320, height=240, samples=2)
+
+    assert captured["command"][0] == str(tmp_path / "blender")
+    assert captured["kwargs"]["start_new_session"] is True
+    assert (tmp_path / "d0" / "daemon.pid").read_text() == "24680"
+
+
 def test_lists_songs_and_opens_session(client):
     songs = client.get("/api/songs").json()["songs"]
     assert any(s["sid"] == "sng" for s in songs)

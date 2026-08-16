@@ -91,20 +91,40 @@ def _start_daemon(i: int, *, width: int, height: int, samples: int) -> None:
             (d / name).unlink()
         except OSError:
             pass
-    cmd = (
-        f"__EGL_VENDOR_LIBRARY_FILENAMES={_EGL} {_blender()} -b {_scene()} -noaudio "
-        f"-P {_daemon_script()} -- --ybot {_ybot()} --requests-dir {d} "
-        f"--width {width} --height {height} --samples {samples} --idle-exit 0 "
-        f"> {d}/daemon.log 2>&1"
-    )
-    # setsid so the daemon outlives the request that started it (and this editor worker thread).
+    cmd = [
+        str(_blender()),
+        "-b",
+        str(_scene()),
+        "-noaudio",
+        "-P",
+        str(_daemon_script()),
+        "--",
+        "--ybot",
+        str(_ybot()),
+        "--requests-dir",
+        str(d),
+        "--width",
+        str(width),
+        "--height",
+        str(height),
+        "--samples",
+        str(samples),
+        "--idle-exit",
+        "0",
+    ]
+    env = os.environ.copy()
+    env["__EGL_VENDOR_LIBRARY_FILENAMES"] = _EGL
+    log = (d / "daemon.log").open("wb")
     proc = subprocess.Popen(
-        ["setsid", "bash", "-c", cmd],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        cmd,
+        stdout=log,
+        stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
         close_fds=True,
+        start_new_session=True,
+        env=env,
     )
+    log.close()
     (d / "daemon.pid").write_text(str(proc.pid))
 
 
