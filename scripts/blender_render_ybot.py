@@ -55,6 +55,36 @@ def clear_animation(obj):
         bpy.data.actions.remove(action)
 
 
+def install_animation(obj, frames, channels):
+    """Install dense keyframes with bulk FCurve writes instead of per-frame bpy operators."""
+    if obj is None or not channels:
+        return
+    clear_animation(obj)
+    action = bpy.data.actions.new(name=f"MAESTRO_{obj.name}")
+    obj.animation_data_create()
+    obj.animation_data.action = action
+    frame_values = np.asarray(frames, dtype=np.float64)
+    for data_path, values, group in channels:
+        values = np.asarray(values, dtype=np.float64)
+        if values.ndim != 2 or values.shape[0] != frame_values.size:
+            raise ValueError(
+                f"animation channel {data_path} has shape {values.shape}, "
+                f"expected ({frame_values.size}, components)"
+            )
+        for index in range(values.shape[1]):
+            kwargs = {"data_path": data_path, "index": index}
+            if group:
+                kwargs["action_group"] = group
+            curve = action.fcurves.new(**kwargs)
+            points = curve.keyframe_points
+            points.add(frame_values.size)
+            coordinates = np.empty(frame_values.size * 2, dtype=np.float64)
+            coordinates[0::2] = frame_values
+            coordinates[1::2] = values[:, index]
+            points.foreach_set("co", coordinates)
+            curve.update()
+
+
 def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     p = argparse.ArgumentParser()
@@ -592,25 +622,46 @@ def render_take(args, color):
 
     rendered_frames = list(range(0, L, stride))
     if bool(getattr(args, "batch_render", False)):
-        for i in rendered_frames:
+        driven_bones = [JOINT_NAMES[j] for j in range(n_body) if JOINT_NAMES[j] in rest]
+        bone_quaternions = {
+            name: np.empty((len(rendered_frames), 4), dtype=np.float64)
+            for name in driven_bones
+        }
+        arm_locations = np.empty((len(rendered_frames), 3), dtype=np.float64)
+        object_locations = {
+            obj.name: np.empty((len(rendered_frames), 3), dtype=np.float64)
+            for obj in (target, cam, spot)
+            if obj is not None
+        }
+        for out_i, i in enumerate(rendered_frames):
             scene.frame_set(i)
             place_frame(i)
-            for j in range(n_body):
-                name = JOINT_NAMES[j]
-                if name in rest:
-                    arm.pose.bones[name].keyframe_insert(
-                        data_path="rotation_quaternion",
-                        frame=i,
-                        group=name,
-                    )
-            arm.keyframe_insert(data_path="location", frame=i)
-            if target is not None:
-                target.keyframe_insert(data_path="location", frame=i)
-            if cam is not None:
-                cam.keyframe_insert(data_path="location", frame=i)
-            if spot is not None:
-                spot.keyframe_insert(data_path="location", frame=i)
+            for name in driven_bones:
+                bone_quaternions[name][out_i] = tuple(
+                    arm.pose.bones[name].rotation_quaternion
+                )
+            arm_locations[out_i] = tuple(arm.location)
+            for obj in (target, cam, spot):
+                if obj is not None:
+                    object_locations[obj.name][out_i] = tuple(obj.location)
             capture_metrics(i)
+        arm_channels = [("location", arm_locations, "Object")]
+        arm_channels.extend(
+            (
+                f'pose.bones["{name}"].rotation_quaternion',
+                bone_quaternions[name],
+                name,
+            )
+            for name in driven_bones
+        )
+        install_animation(arm, rendered_frames, arm_channels)
+        for obj in (target, cam, spot):
+            if obj is not None:
+                install_animation(
+                    obj,
+                    rendered_frames,
+                    [("location", object_locations[obj.name], "Object")],
+                )
         scene.frame_start = rendered_frames[0]
         scene.frame_end = rendered_frames[-1]
         scene.frame_step = stride
@@ -624,6 +675,8 @@ def render_take(args, color):
             scene.render.fps_base = float(stride)
             scene.render.filepath = os.path.abspath(args.video_path)
         else:
+            scene.render.image_settings.file_format = "PNG"
+            scene.render.use_file_extension = True
             scene.render.filepath = f"{frames_dir}/frame_"
         scene.frame_set(rendered_frames[0])
         bpy.ops.render.render(animation=True)

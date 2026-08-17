@@ -52,8 +52,9 @@ fi
 # runtime + generation deps (LODGE uses pytorch-lightning; EDGE uses accelerate)
 pip install -q numpy scipy librosa soundfile matplotlib tqdm smplx trimesh einops omegaconf \
   imageio imageio-ffmpeg pytorch-lightning torchmetrics accelerate wandb fire p_tqdm h5py \
-  opencv-python-headless psutil gdown
+  opencv-python-headless psutil gdown pytest==9.1.1
 [ -f "$AL/requirements.txt" ] && pip install -q -r "$AL/requirements.txt" || true
+[ -f "$AL/server/requirements.txt" ] && pip install -q -r "$AL/server/requirements.txt" || true
 
 echo "--- [3/4] pytorch3d (CPU build; no nvcc needed) ---"
 pip install -q ninja fvcore iopath

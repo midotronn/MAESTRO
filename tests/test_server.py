@@ -174,6 +174,8 @@ def test_warm_render_sends_sparse_direct_video_options(tmp_path, monkeypatch):
         width=384,
         height=384,
         samples=1,
+        engine="cycles",
+        denoise=0,
         fast=True,
         stride=5,
         projection_only=True,
@@ -183,29 +185,34 @@ def test_warm_render_sends_sparse_direct_video_options(tmp_path, monkeypatch):
     request = json.loads((d / f"{rid}.req").read_text())
     assert request["fast"] is True
     assert request["stride"] == 5
+    assert request["engine"] == "cycles"
+    assert request["denoise"] == 0
     assert request["projection_only"] is True
     assert request["batch_render"] is True
     assert request["video_path"] == str(raw_video)
 
 
-def test_full_warm_render_uses_fast_preview_defaults(tmp_path, monkeypatch):
+def test_full_warm_render_preserves_quality_defaults_and_caches(tmp_path, monkeypatch):
     import server.fk as fk
     import server.rendering as rendering
     import server.warm_render as warm_render
 
     for name in (
-        "AGENTLODGE_FULL_FAST_SIZE",
-        "AGENTLODGE_FULL_FAST_SAMPLES",
-        "AGENTLODGE_FULL_FAST_STRIDE",
+        "AGENTLODGE_RENDER_FULL_W",
+        "AGENTLODGE_RENDER_FULL_H",
+        "AGENTLODGE_RENDER_FULL_SAMPLES",
+        "AGENTLODGE_RENDER_ENGINE",
+        "AGENTLODGE_RENDER_DENOISE",
     ):
         monkeypatch.delenv(name, raising=False)
-    captured = {}
+    captured = {"renders": 0, "pool_calls": 0}
     audio = tmp_path / "song.wav"
     audio.write_bytes(b"wav")
 
     monkeypatch.setattr(warm_render, "on_pod", lambda: True)
 
     def fake_ensure_pool(**kwargs):
+        captured["pool_calls"] += 1
         captured["pool"] = kwargs
         return 2
 
@@ -213,19 +220,19 @@ def test_full_warm_render_uses_fast_preview_defaults(tmp_path, monkeypatch):
         Path(path).write_bytes(b"poses")
 
     def fake_render(_poses, _frames, **kwargs):
+        captured["renders"] += 1
         captured["render"] = kwargs
-        Path(kwargs["video_path"]).write_bytes(b"raw")
         return True
 
-    def fake_smooth(_raw, output, _duration, **kwargs):
-        captured["smooth"] = kwargs
+    def fake_encode(frames, output, **kwargs):
+        captured["encode"] = {"frames": frames, **kwargs}
         Path(output).write_bytes(b"video")
         return True
 
     monkeypatch.setattr(warm_render, "ensure_pool", fake_ensure_pool)
     monkeypatch.setattr(warm_render, "warm_render", fake_render)
     monkeypatch.setattr(fk, "save_poses_npz", fake_save)
-    monkeypatch.setattr(rendering, "_smooth_preview_video", fake_smooth)
+    monkeypatch.setattr(rendering, "_ffmpeg_frames", fake_encode)
 
     assert rendering._render_warm_local(
         "sng",
@@ -234,16 +241,88 @@ def test_full_warm_render_uses_fast_preview_defaults(tmp_path, monkeypatch):
         "full",
         audio_wav=str(audio),
     )
-    assert captured["pool"]["width"] == 512
-    assert captured["pool"]["height"] == 512
-    assert captured["pool"]["samples"] == 1
-    assert captured["render"]["width"] == 512
-    assert captured["render"]["height"] == 512
-    assert captured["render"]["samples"] == 1
-    assert captured["render"]["stride"] == 4
+    assert captured["pool"]["width"] == 1080
+    assert captured["pool"]["height"] == 1080
+    assert captured["pool"]["samples"] == 96
+    assert captured["render"]["width"] == 1080
+    assert captured["render"]["height"] == 1080
+    assert captured["render"]["samples"] == 96
+    assert captured["render"]["engine"] == "eevee"
+    assert captured["render"]["denoise"] == 1
+    assert captured["render"]["fast"] is False
+    assert captured["render"]["stride"] == 1
     assert captured["render"]["batch_render"] is True
-    assert captured["smooth"]["size"] == 512
-    assert captured["smooth"]["audio_wav"] == str(audio)
+    assert "video_path" not in captured["render"]
+    assert captured["encode"]["audio_wav"] == str(audio)
+    assert (tmp_path / "edited.mp4").read_bytes() == b"video"
+
+    assert rendering._render_warm_local(
+        "sng",
+        np.zeros((120, 139), dtype=np.float32),
+        tmp_path,
+        "full",
+        audio_wav=str(audio),
+    )
+    assert captured["renders"] == 1
+    assert captured["pool_calls"] == 1
+
+
+def test_compare_warm_preserves_window_quality_defaults(tmp_path, monkeypatch):
+    import server.fk as fk
+    import server.rendering as rendering
+    import server.warm_render as warm_render
+
+    for name in (
+        "AGENTLODGE_RENDER_WIN_W",
+        "AGENTLODGE_RENDER_WIN_H",
+        "AGENTLODGE_RENDER_WIN_SAMPLES",
+        "AGENTLODGE_RENDER_ENGINE",
+        "AGENTLODGE_RENDER_DENOISE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    calls = []
+
+    monkeypatch.setattr(warm_render, "on_pod", lambda: True)
+    monkeypatch.setattr(warm_render, "ensure_pool", lambda **_kwargs: 2)
+
+    def fake_save(motion, path):
+        np.savez(path, fk_joints=np.zeros((motion.shape[0], 22, 3), dtype=np.float32))
+
+    def fake_render(_poses, frames, **kwargs):
+        calls.append(kwargs)
+        Path(frames).mkdir(parents=True, exist_ok=True)
+        if kwargs["rig_metrics"]:
+            n = 6
+            np.savez(
+                kwargs["rig_metrics"],
+                projected=np.ones((n, 22, 3), dtype=np.float32),
+                rendered_frames=np.arange(n, dtype=np.int32),
+            )
+        return True
+
+    def fake_encode(_frames, output, **_kwargs):
+        Path(output).write_bytes(b"video")
+        return True
+
+    monkeypatch.setattr(fk, "save_poses_npz", fake_save)
+    monkeypatch.setattr(warm_render, "warm_render", fake_render)
+    monkeypatch.setattr(rendering, "_ffmpeg_frames", fake_encode)
+
+    before = np.zeros((6, 139), dtype=np.float32)
+    after = before.copy()
+    after[:, 10] = 0.1
+    assert rendering._compare_warm("sng", before, after, tmp_path)
+    assert len(calls) == 2
+    for call in calls:
+        assert call["width"] == 448
+        assert call["height"] == 448
+        assert call["samples"] == 8
+        assert call["engine"] == "eevee"
+        assert call["denoise"] == 1
+        assert call["fast"] is False
+        assert call["stride"] == 1
+        assert call["batch_render"] is True
+        assert "video_path" not in call
 
 
 def test_sparse_projected_joints_are_interpolated_for_highlights(tmp_path):
@@ -283,77 +362,57 @@ def test_sparse_projected_joints_are_interpolated_for_highlights(tmp_path):
     assert {marker["part"] for frame in highlight["frames"] for marker in frame} == {"right_arm"}
 
 
-def test_sparse_preview_is_smoothed_to_30_fps(tmp_path):
-    ffmpeg = shutil.which("ffmpeg")
-    ffprobe = shutil.which("ffprobe")
-    if not ffmpeg or not ffprobe:
-        pytest.skip("ffmpeg and ffprobe are required")
+def test_render_cache_keys_include_quality_settings():
     import server.rendering as rendering
 
-    raw = tmp_path / "raw.mp4"
-    output = tmp_path / "smooth.mp4"
-    subprocess.run(
-        [
-            ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi",
-            "-i", "color=c=gray:s=64x64:r=6:d=1", "-c:v", "libx264",
-            "-pix_fmt", "yuv420p", str(raw),
-        ],
-        check=True,
-    )
+    window = np.arange(10 * 6, dtype=np.float32).reshape(10, 6)
 
-    assert rendering._smooth_preview_video(raw, output, 1.0, size=64)
-    probe = subprocess.run(
-        [
-            ffprobe, "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=r_frame_rate,nb_frames,duration",
-            "-of", "default=nw=1", str(output),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    assert "r_frame_rate=30/1" in probe
-    assert "nb_frames=30" in probe
-
-
-def test_original_window_and_render_cache_keys_are_detected(tmp_path):
-    import server.rendering as rendering
-
-    base = np.arange(40 * 6, dtype=np.float32).reshape(40, 6)
-    np.save(tmp_path / "base_motion.npy", base)
-    window = base[10:20].copy()
-
-    assert rendering._matches_base_window(tmp_path, window, 10)
-    assert not rendering._matches_base_window(tmp_path, window + 1, 10)
     key = rendering._render_cache_key(
         window,
-        render_size=320,
-        output_size=448,
+        width=448,
+        height=448,
         samples=1,
         stride=3,
     )
     assert key == rendering._render_cache_key(
         window.copy(),
-        render_size=320,
-        output_size=448,
+        width=448,
+        height=448,
         samples=1,
         stride=3,
     )
     assert key != rendering._render_cache_key(
         window,
-        render_size=384,
-        output_size=448,
+        width=512,
+        height=448,
         samples=1,
         stride=3,
     )
     assert key != rendering._render_cache_key(
         window,
-        render_size=320,
-        output_size=448,
+        width=448,
+        height=448,
         samples=1,
         stride=3,
         context="preview:10:10:123:456",
     )
+
+
+def test_frame_sequence_accepts_blender_batch_numbering(tmp_path):
+    import server.rendering as rendering
+
+    frames = tmp_path / "frames"
+    frames.mkdir()
+    for index in range(3):
+        (frames / f"frame_{index:04d}.png").write_bytes(b"png")
+
+    assert rendering._frame_sequence(str(frames)) == (
+        str(frames / "frame_%04d.png"),
+        0,
+        3,
+    )
+    (frames / "frame_0001.png").unlink()
+    assert rendering._frame_sequence(str(frames)) is None
 
 
 def test_lists_songs_and_opens_session(client):

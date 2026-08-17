@@ -44,5 +44,9 @@ copy `bank_<sid>_*.npy` into `server/media/<sid>/bank/`.
 
 - Re-rendering the *edited* motion back to video needs the Blender/GPU worker; the preview stays the
   base take, while metric deltas + checkpoint history reflect the real edited motion immediately.
+- When the editor runs on the pod, persistent Blender daemons remove startup/import overhead while
+  retaining the established quality settings: window renders use `448x448`, 8 EEVEE samples, and
+  every frame; full renders use `1080x1080`, 96 samples, and every frame. Exact completed renders are
+  cached under `server/media/<sid>/.render_cache/`.
 - Sessions persist under `server/sessions/<sid>/` (checkpoint tree + motion snapshots), so history
   survives a restart.

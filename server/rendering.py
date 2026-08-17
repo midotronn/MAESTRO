@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import shutil
 import threading
 import time
@@ -112,6 +113,21 @@ def _set(sid: str, **kw) -> None:
         _RJOBS.setdefault(sid, {}).update(kw)
 
 
+def _quality_render_settings(scope: str) -> tuple[int, int, int, str, int]:
+    """Return the same render settings used by the established cold quality path."""
+    if scope == "full":
+        width = max(1, int(os.environ.get("AGENTLODGE_RENDER_FULL_W", "1080")))
+        height = max(1, int(os.environ.get("AGENTLODGE_RENDER_FULL_H", "1080")))
+        samples = max(1, int(os.environ.get("AGENTLODGE_RENDER_FULL_SAMPLES", "96")))
+    else:
+        width = max(1, int(os.environ.get("AGENTLODGE_RENDER_WIN_W", "448")))
+        height = max(1, int(os.environ.get("AGENTLODGE_RENDER_WIN_H", "448")))
+        samples = max(1, int(os.environ.get("AGENTLODGE_RENDER_WIN_SAMPLES", "8")))
+    engine = os.environ.get("AGENTLODGE_RENDER_ENGINE", "eevee")
+    denoise = int(os.environ.get("AGENTLODGE_RENDER_DENOISE", "1"))
+    return width, height, samples, engine, denoise
+
+
 def start_render(sid: str, motion: np.ndarray, media_dir: Path, *, scope: str = "window",
                  a: int | None = None, b: int | None = None,
                  audio_wav: str | None = None) -> None:
@@ -123,35 +139,50 @@ def start_render(sid: str, motion: np.ndarray, media_dir: Path, *, scope: str = 
 
 def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
                        *, audio_wav: str | None = None) -> bool:
-    """Render directly through the resident Blender process when the editor is hosted on the pod."""
+    """Render full-quality frames through the resident Blender process when hosted on the pod."""
     from server import fk
     from server import warm_render as wr
     if not wr.on_pod():
         return False
-    if scope == "full":
-        render_size = max(512, int(os.environ.get("AGENTLODGE_FULL_FAST_SIZE", "512")))
-        output_size = render_size
-        samples = max(1, int(os.environ.get("AGENTLODGE_FULL_FAST_SAMPLES", "1")))
-        stride = max(1, int(os.environ.get("AGENTLODGE_FULL_FAST_STRIDE", "4")))
-        daemon = 0
-    else:
-        render_size = max(256, int(os.environ.get("AGENTLODGE_WINDOW_FAST_SIZE", "320")))
-        output_size = max(render_size, int(os.environ.get("AGENTLODGE_WINDOW_OUTPUT_SIZE", "448")))
-        samples = max(1, int(os.environ.get("AGENTLODGE_WINDOW_FAST_SAMPLES", "1")))
-        stride = max(1, int(os.environ.get("AGENTLODGE_WINDOW_FAST_STRIDE", "3")))
-        daemon = 1 if wr.POOL_SIZE > 1 else 0
+    width, height, samples, engine, denoise = _quality_render_settings(scope)
+    media_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir = media_dir / ".render_cache"
+    cache_dir.mkdir(exist_ok=True)
+    audio_context = ""
+    if scope == "full" and audio_wav:
+        try:
+            stat = Path(audio_wav).stat()
+            audio_context = f":audio:{stat.st_size}:{stat.st_mtime_ns}"
+        except OSError:
+            audio_context = ":audio:missing"
+    cache_key = _render_cache_key(
+        motion,
+        width=width,
+        height=height,
+        samples=samples,
+        stride=1,
+        engine=engine,
+        denoise=denoise,
+        context=f"single:{scope}{audio_context}",
+    )
+    cached_video = cache_dir / f"{cache_key}.mp4"
+    output_video = media_dir / "edited.mp4"
+    if cached_video.is_file() and cached_video.stat().st_size > 0:
+        shutil.copyfile(cached_video, output_video)
+        _set(sid, status="rendering", progress=96, message="reusing the exact cached render\u2026")
+        return True
+
+    daemon = 0 if scope == "full" else (1 if wr.POOL_SIZE > 1 else 0)
     if wr.ensure_pool(
-        width=render_size,
-        height=render_size,
+        width=width,
+        height=height,
         samples=samples,
         wait_ready=60,
     ) < 1:
         return False
 
-    media_dir.mkdir(parents=True, exist_ok=True)
     poses_path = media_dir / f"_render_{scope}_poses.npz"
-    raw_video = media_dir / f"_render_{scope}_raw.mp4"
-    frames_dir = media_dir / f"_render_{scope}_frames"
+    frames_dir = cache_dir / f"{cache_key}.frames"
     fk.save_poses_npz(motion, poses_path)
     duration = motion.shape[0] / 30.0
     _set(
@@ -160,7 +191,7 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
         progress=24,
         frames=int(motion.shape[0]),
         message=(
-            f"accelerated {'full-dance' if scope == 'full' else 'window'} render "
+            f"full-quality {'dance' if scope == 'full' else 'window'} render "
             f"({duration:.1f}s of motion)\u2026"
         ),
     )
@@ -169,26 +200,32 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
         str(frames_dir),
         daemon=daemon,
         samples=samples,
-        width=render_size,
-        height=render_size,
-        timeout=max(600.0, duration * 5),
-        fast=True,
-        stride=stride,
+        width=width,
+        height=height,
+        engine=engine,
+        denoise=denoise,
+        fast=False,
+        stride=1,
         batch_render=True,
-        video_path=str(raw_video),
+        timeout=(
+            max(2700.0, duration * 30)
+            if scope == "full"
+            else max(600.0, duration * 5)
+        ),
     )
     if not rendered:
         return False
-    _set(sid, progress=90, message="smoothing and encoding the preview\u2026")
-    encoded = _smooth_preview_video(
-        raw_video,
-        media_dir / "edited.mp4",
-        duration,
-        size=output_size,
+    _set(sid, progress=90, message="encoding the full-quality frames\u2026")
+    encoded = _ffmpeg_frames(
+        str(frames_dir),
+        cached_video,
         audio_wav=audio_wav if scope == "full" else None,
     )
-    raw_video.unlink(missing_ok=True)
-    return encoded
+    if not encoded:
+        return False
+    shutil.copyfile(cached_video, output_video)
+    shutil.rmtree(frames_dir, ignore_errors=True)
+    return True
 
 
 def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
@@ -443,103 +480,88 @@ def _launch_window_render(cfg, sid: str, tag: str, motion: np.ndarray, media_dir
     return base if "LAUNCHED" in (launch.stdout or "") else None
 
 
-def _ffmpeg_frames(frames_dir: str, out_mp4: Path, fps: int = 30) -> bool:
-    """Encode ``frames_dir/frame_%05d.png`` (contiguous from 0) to an mp4 locally on the pod."""
-    import glob
+def _frame_sequence(frames_dir: str) -> tuple[str, int, int] | None:
+    """Return an ffmpeg pattern/start pair for Blender or per-frame PNG numbering."""
+    frames = sorted(Path(frames_dir).glob("frame_*.png"))
+    parsed: list[tuple[Path, int, int]] = []
+    for frame in frames:
+        match = re.fullmatch(r"frame_(\d+)\.png", frame.name)
+        if match:
+            parsed.append((frame, int(match.group(1)), len(match.group(1))))
+    if not parsed:
+        return None
+    numbers = [item[1] for item in parsed]
+    widths = {item[2] for item in parsed}
+    if len(widths) != 1 or numbers != list(range(numbers[0], numbers[0] + len(numbers))):
+        return None
+    digits = widths.pop()
+    return str(Path(frames_dir) / f"frame_%0{digits}d.png"), numbers[0], len(numbers)
+
+
+def _ffmpeg_frames(frames_dir: str, out_mp4: Path, fps: int = 30,
+                   *, audio_wav: str | None = None) -> bool:
+    """Encode full-quality Blender PNGs using the established cold-path codec settings."""
     import subprocess
-    if not sorted(glob.glob(f"{frames_dir}/frame_*.png")):
+    sequence = _frame_sequence(frames_dir)
+    if sequence is None:
         return False
+    pattern, start_number, frame_count = sequence
+    have_audio = bool(audio_wav and Path(audio_wav).is_file())
+    silent = (
+        out_mp4.with_name(f".{out_mp4.stem}.silent{out_mp4.suffix}")
+        if have_audio
+        else out_mp4
+    )
+    out_mp4.parent.mkdir(parents=True, exist_ok=True)
+    out_mp4.unlink(missing_ok=True)
+    silent.unlink(missing_ok=True)
+    timeout = max(180, int(frame_count * 0.2 + 60))
     try:
         r = subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(fps),
-             "-i", f"{frames_dir}/frame_%05d.png", "-c:v", "libx264", "-preset", "veryfast",
-             "-pix_fmt", "yuv420p", str(out_mp4)],
-            capture_output=True, timeout=180)
-        return r.returncode == 0 and out_mp4.exists()
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def _smooth_preview_video(raw_mp4: Path, out_mp4: Path, duration: float,
-                          *, size: int = 448, audio_wav: str | None = None) -> bool:
-    """Turn a sparse low-FPS Blender stream into a smooth 30-FPS preview in well under a second."""
-    import subprocess
-    if not raw_mp4.is_file() or duration <= 0:
-        return False
-    vf = (
-        "tpad=stop_mode=clone:stop_duration=1,"
-        f"minterpolate=fps=30:mi_mode=blend,scale={size}:{size}:flags=lanczos"
-    )
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw_mp4)]
-    have_audio = bool(audio_wav and Path(audio_wav).is_file())
-    if have_audio:
-        cmd.extend(["-i", str(audio_wav)])
-    cmd.extend(["-vf", vf, "-t", f"{duration:.6f}", "-c:v", "libx264",
-                "-preset", "ultrafast", "-crf", "19", "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart"])
-    if have_audio:
-        cmd.extend(["-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "192k", "-shortest"])
-    else:
-        cmd.append("-an")
-    cmd.append(str(out_mp4))
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=max(180, int(duration * 3 + 60)),
-        )
-        return result.returncode == 0 and out_mp4.is_file() and out_mp4.stat().st_size > 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-
-
-def _extract_preview_window(preview: Path, out_mp4: Path, start: float,
-                            duration: float, *, size: int = 448) -> bool:
-    """Reuse the already-rendered original dance instead of rendering the baseline again."""
-    import subprocess
-    if not preview.is_file() or duration <= 0:
-        return False
-    try:
-        result = subprocess.run(
             [
-                "ffmpeg", "-y", "-loglevel", "error", "-ss", f"{max(0.0, start):.6f}",
-                "-i", str(preview), "-t", f"{duration:.6f}", "-an",
-                "-vf", f"fps=30,scale={size}:{size}:flags=lanczos",
-                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "19",
-                "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out_mp4),
+                "ffmpeg", "-y", "-loglevel", "error", "-framerate", str(fps),
+                "-start_number", str(start_number), "-i", pattern,
+                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart", str(silent),
+            ],
+            capture_output=True, timeout=timeout)
+        if r.returncode != 0 or not silent.is_file() or silent.stat().st_size == 0:
+            return False
+        if not have_audio:
+            return True
+        muxed = subprocess.run(
+            [
+                "ffmpeg", "-y", "-loglevel", "error", "-i", str(silent),
+                "-i", str(audio_wav), "-shortest", "-c:v", "copy",
+                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+                str(out_mp4),
             ],
             capture_output=True,
-            timeout=max(90, int(duration * 2 + 30)),
+            timeout=timeout,
         )
-        return result.returncode == 0 and out_mp4.is_file() and out_mp4.stat().st_size > 0
+        return (
+            muxed.returncode == 0
+            and out_mp4.is_file()
+            and out_mp4.stat().st_size > 0
+        )
     except (OSError, subprocess.TimeoutExpired):
         return False
+    finally:
+        if have_audio:
+            silent.unlink(missing_ok=True)
 
 
-def _render_cache_key(motion: np.ndarray, *, render_size: int, output_size: int,
-                      samples: int, stride: int, context: str = "") -> str:
+def _render_cache_key(motion: np.ndarray, *, width: int, height: int,
+                      samples: int, stride: int, engine: str = "eevee",
+                      denoise: int = 1, context: str = "") -> str:
     h = hashlib.sha256()
-    h.update(b"maestro-fast-render-v2")
-    h.update(f"{render_size}:{output_size}:{samples}:{stride}".encode("ascii"))
+    h.update(b"maestro-quality-render-v3")
+    h.update(
+        f"{width}:{height}:{samples}:{stride}:{engine}:{int(denoise)}".encode("ascii")
+    )
     h.update(context.encode("utf-8"))
     h.update(np.ascontiguousarray(motion, dtype=np.float32).tobytes())
     return h.hexdigest()[:24]
-
-
-def _matches_base_window(media_dir: Path, motion: np.ndarray, start_frame: int) -> bool:
-    base_path = media_dir / "base_motion.npy"
-    if not base_path.is_file() or start_frame < 0:
-        return False
-    try:
-        base = np.load(base_path, mmap_mode="r")
-        stop = start_frame + motion.shape[0]
-        return (
-            stop <= base.shape[0]
-            and base.shape[1:] == motion.shape[1:]
-            and np.allclose(base[start_frame:stop], motion, rtol=0.0, atol=1e-6)
-        )
-    except (OSError, ValueError):
-        return False
 
 
 def _smooth(values: np.ndarray, radius: int = 3) -> np.ndarray:
@@ -671,21 +693,19 @@ def _build_change_highlight(before_poses: str, after_poses: str,
 
 
 def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
-                  media_dir: Path, *, window_start: float = 0.0) -> bool:
-    """Render sparse low-FPS streams in parallel, then cheaply blend them back to smooth 30 FPS."""
+                  media_dir: Path) -> bool:
+    """Render full-quality before/after streams in parallel through warm Blender daemons."""
     from server import warm_render as wr
     from server import fk
-    render_size = max(256, int(os.environ.get("AGENTLODGE_COMPARE_RENDER_SIZE", "320")))
-    output_size = max(render_size, int(os.environ.get("AGENTLODGE_COMPARE_OUTPUT_SIZE", "448")))
-    samples = max(1, int(os.environ.get("AGENTLODGE_COMPARE_SAMPLES", "1")))
-    stride = max(1, int(os.environ.get("AGENTLODGE_COMPARE_STRIDE", "3")))
+    width, height, samples, engine, denoise = _quality_render_settings("window")
+    stride = 1
     if not wr.on_pod():
         return False
     media_dir.mkdir(parents=True, exist_ok=True)
     frames = int(max(before_motion.shape[0], after_motion.shape[0]))
     duration = frames / 30.0
     _cset(sid, status="rendering", progress=25, frames=frames,
-          message=f"rendering an accelerated before & after preview ({frames} frames)\u2026")
+          message=f"rendering a full-quality before & after preview ({frames} frames)\u2026")
     try:
         after_rig = media_dir / "_cmp_after_rig.npz"
         after_rig.unlink(missing_ok=True)
@@ -694,7 +714,6 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
                 "tag": "before",
                 "npz": str(media_dir / "_cmp_before_poses.npz"),
                 "frames_dir": str(media_dir / "_cmp_before_frames"),
-                "raw": str(media_dir / "_cmp_before_raw.mp4"),
                 "daemon": 0,
                 "rig": "",
                 "motion": before_motion,
@@ -703,7 +722,6 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
                 "tag": "after",
                 "npz": str(media_dir / "_cmp_after_poses.npz"),
                 "frames_dir": str(media_dir / "_cmp_after_frames"),
-                "raw": str(media_dir / "_cmp_after_raw.mp4"),
                 "daemon": 1,
                 "rig": str(after_rig),
                 "motion": after_motion,
@@ -717,56 +735,42 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
     cache_dir = media_dir / ".render_cache"
     cache_dir.mkdir(exist_ok=True)
     results: dict[str, bool] = {}
-    extracts: list[dict] = []
     missing: list[dict] = []
-    start_frame = max(0, int(round(window_start * 30.0)))
     for spec in specs:
-        preview = media_dir / "preview.mp4"
-        reuse_preview = (
-            spec["tag"] == "before"
-            and _matches_base_window(media_dir, before_motion, start_frame)
-            and preview.is_file()
-        )
-        cache_context = ""
-        if reuse_preview:
-            try:
-                preview_stat = preview.stat()
-                cache_context = (
-                    f"preview:{start_frame}:{frames}:"
-                    f"{preview_stat.st_size}:{preview_stat.st_mtime_ns}"
-                )
-            except OSError:
-                reuse_preview = False
         cache_key = _render_cache_key(
             spec["motion"],
-            render_size=render_size,
-            output_size=output_size,
+            width=width,
+            height=height,
             samples=samples,
             stride=stride,
-            context=cache_context,
+            engine=engine,
+            denoise=denoise,
+            context=f"compare:{spec['tag']}",
         )
         spec["cache_video"] = cache_dir / f"{cache_key}.mp4"
         spec["cache_rig"] = cache_dir / f"{cache_key}.rig.npz"
         spec["final"] = media_dir / f"cmp_{spec['tag']}.mp4"
-        spec["reuse_preview"] = reuse_preview
-        cache_ready = Path(spec["cache_video"]).is_file()
+        cache_video = Path(spec["cache_video"])
+        cache_ready = cache_video.is_file() and cache_video.stat().st_size > 0
         if spec["rig"]:
-            cache_ready = cache_ready and Path(spec["cache_rig"]).is_file()
+            cache_rig = Path(spec["cache_rig"])
+            cache_ready = (
+                cache_ready
+                and cache_rig.is_file()
+                and cache_rig.stat().st_size > 0
+            )
         if cache_ready:
             shutil.copyfile(spec["cache_video"], spec["final"])
             if spec["rig"]:
                 shutil.copyfile(spec["cache_rig"], after_rig)
             results[spec["tag"]] = True
             continue
-        if spec["reuse_preview"]:
-            extracts.append(spec)
-            continue
         missing.append(spec)
 
     needed = min(len(missing), wr.POOL_SIZE)
     if needed and wr.ensure_pool(
-        width=render_size,
-        height=render_size,
+        width=width,
+        height=height,
         samples=samples,
         wait_ready=60,
     ) < needed:
@@ -780,30 +784,19 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
             spec["frames_dir"],
             daemon=spec["daemon"],
             samples=samples,
-            width=render_size,
-            height=render_size,
+            width=width,
+            height=height,
             timeout=max(600.0, duration * 4),
+            engine=engine,
+            denoise=denoise,
             rig_metrics=spec["rig"],
-            fast=True,
+            fast=False,
             stride=stride,
             projection_only=bool(spec["rig"]),
             batch_render=True,
-            video_path=spec["raw"],
         )
-
-    def _extract(spec: dict) -> None:
-        results[spec["tag"]] = _extract_preview_window(
-            media_dir / "preview.mp4",
-            spec["final"],
-            window_start,
-            duration,
-            size=output_size,
-        )
-        if results[spec["tag"]]:
-            shutil.copyfile(spec["final"], spec["cache_video"])
 
     threads = [
-        *(threading.Thread(target=_extract, args=(spec,)) for spec in extracts),
         *(threading.Thread(target=_run, args=(spec,)) for spec in missing),
     ]
     for t in threads:
@@ -832,12 +825,7 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
 
     def _enc(spec: dict) -> None:
         out = spec["final"]
-        enc[spec["tag"]] = _smooth_preview_video(
-            Path(spec["raw"]),
-            out,
-            duration,
-            size=output_size,
-        )
+        enc[spec["tag"]] = _ffmpeg_frames(spec["frames_dir"], out)
         if enc[spec["tag"]]:
             shutil.copyfile(out, spec["cache_video"])
             if spec["rig"] and after_rig.is_file():
@@ -852,7 +840,8 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
     for t in ethreads:
         t.join()
     for spec in missing:
-        Path(spec["raw"]).unlink(missing_ok=True)
+        if enc.get(spec["tag"]):
+            shutil.rmtree(spec["frames_dir"], ignore_errors=True)
     return bool(enc.get("before") and enc.get("after"))
 
 
@@ -889,7 +878,6 @@ def _compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarra
             before_motion,
             after_motion,
             media_dir,
-            window_start=audio_start,
         ):
             audio_thread.join()
             _cset(sid, status="done", progress=100, message="ready",

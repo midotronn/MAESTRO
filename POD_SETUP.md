@@ -65,6 +65,12 @@ uvicorn server.app:app --host 127.0.0.1 --port 8000
 # http://127.0.0.1:8000  (auto-loads the bank from server/media/<sid>/bank/)
 ```
 
+When hosted on the pod, the editor keeps Blender and the exact Y-Bot scene resident. Rendering uses
+the same resolution, sample count, frame cadence, grounding path, and final encoder as the established
+cold quality path; the speedup comes from removing startup/SSH work, bulk-loading animation curves,
+parallel before/after renders, and reusing exact cached outputs. Override quality only through the
+existing `AGENTLODGE_RENDER_WIN_*` and `AGENTLODGE_RENDER_FULL_*` variables.
+
 ## Why edits are instant, and how to switch on **live pod mode**
 
 By default the editor does **best-of-K selection over a pre-generated bank**, real LODGE/EDGE

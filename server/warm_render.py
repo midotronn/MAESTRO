@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 WS = os.environ.get("AGENTLODGE_POD_WS", "/workspace")
 POOL_SIZE = int(os.environ.get("AGENTLODGE_WARM_POOL", "2"))
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 DAEMON_ROOT = Path(WS) / "blend_daemon"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _EGL = "/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
@@ -186,6 +186,7 @@ def available() -> bool:
 
 def warm_render(poses_npz: str, frames_dir: str, *, daemon: int, samples: int = 8,
                 width: int = 448, height: int = 448, timeout: float = 600.0,
+                engine: str = "eevee", denoise: int = 1,
                 rig_metrics: str = "", fast: bool = False, stride: int = 1,
                 projection_only: bool = False, batch_render: bool = False,
                 video_path: str = "") -> bool:
@@ -208,7 +209,8 @@ def warm_render(poses_npz: str, frames_dir: str, *, daemon: int, samples: int = 
     rid = "r" + uuid.uuid4().hex[:10]
     done, fail = d / f"{rid}.done", d / f"{rid}.fail"
     req = {"id": rid, "poses": str(poses_npz), "frames_dir": str(frames_dir),
-           "width": width, "height": height, "samples": samples, "fast": bool(fast),
+           "width": width, "height": height, "samples": samples,
+           "engine": str(engine), "denoise": int(denoise), "fast": bool(fast),
            "stride": max(1, int(stride)), "rig_metrics": str(rig_metrics),
            "projection_only": bool(projection_only), "batch_render": bool(batch_render),
            "video_path": str(video_path)}
