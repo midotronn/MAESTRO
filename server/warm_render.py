@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import subprocess
 import threading
 import time
@@ -26,7 +27,9 @@ logger = logging.getLogger(__name__)
 
 WS = os.environ.get("AGENTLODGE_POD_WS", "/workspace")
 POOL_SIZE = int(os.environ.get("AGENTLODGE_WARM_POOL", "2"))
+PROTOCOL_VERSION = 2
 DAEMON_ROOT = Path(WS) / "blend_daemon"
+REPO_ROOT = Path(__file__).resolve().parents[1]
 _EGL = "/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
 _HB_STALE = 30          # seconds; a daemon whose heartbeat is older than this is considered dead
 _START_LOCK = threading.Lock()
@@ -45,7 +48,7 @@ def _ybot() -> Path:
 
 
 def _daemon_script() -> Path:
-    return Path(WS) / "AgentLODGE" / "scripts" / "blender_daemon.py"
+    return REPO_ROOT / "scripts" / "blender_daemon.py"
 
 
 def on_pod() -> bool:
@@ -70,17 +73,44 @@ def _pid_alive(d: Path) -> bool:
         return False
 
 
+def _protocol_ready(d: Path) -> bool:
+    try:
+        return (d / "daemon.ready").read_text().strip() == str(PROTOCOL_VERSION)
+    except OSError:
+        return False
+
+
 def _alive(d: Path) -> bool:
     hb = d / "daemon.hb"
     try:
         return (
             _pid_alive(d)
-            and (d / "daemon.ready").exists()
+            and _protocol_ready(d)
             and hb.exists()
             and (time.time() - hb.stat().st_mtime) < _HB_STALE
         )
     except OSError:
         return False
+
+
+def _stop_daemon(d: Path, timeout: float = 5.0) -> None:
+    try:
+        pid = int((d / "daemon.pid").read_text().strip())
+    except (OSError, ValueError):
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except OSError as exc:
+        logger.warning("could not stop incompatible Blender daemon %s: %s", pid, exc)
+        return
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _pid_alive(d):
+            return
+        time.sleep(0.05)
+    logger.warning("incompatible Blender daemon %s did not stop within %.1fs", pid, timeout)
 
 
 def _start_daemon(i: int, *, width: int, height: int, samples: int) -> None:
@@ -136,6 +166,8 @@ def ensure_pool(*, width: int = 448, height: int = 448, samples: int = 8, wait_r
     with _START_LOCK:
         for i in range(POOL_SIZE):
             d = _dir(i)
+            if _pid_alive(d) and (d / "daemon.ready").exists() and not _protocol_ready(d):
+                _stop_daemon(d)
             if not _alive(d) and not _pid_alive(d):
                 try:
                     _start_daemon(i, width=width, height=height, samples=samples)
@@ -154,34 +186,43 @@ def available() -> bool:
 
 def warm_render(poses_npz: str, frames_dir: str, *, daemon: int, samples: int = 8,
                 width: int = 448, height: int = 448, timeout: float = 600.0,
-                rig_metrics: str = "") -> bool:
+                rig_metrics: str = "", fast: bool = False, stride: int = 1,
+                projection_only: bool = False, batch_render: bool = False,
+                video_path: str = "") -> bool:
     """Submit one render and optionally capture exact projected rig metrics. Returns True on success."""
     d = _dir(daemon % POOL_SIZE)
     if not _alive(d):
         return False
     frames_path = Path(frames_dir)
     frames_path.mkdir(parents=True, exist_ok=True)
-    for old_frame in frames_path.glob("frame_*.png"):
+    for old_frame in frames_path.glob("frame_*"):
         try:
             old_frame.unlink()
+        except OSError:
+            return False
+    if video_path:
+        try:
+            Path(video_path).unlink(missing_ok=True)
         except OSError:
             return False
     rid = "r" + uuid.uuid4().hex[:10]
     done, fail = d / f"{rid}.done", d / f"{rid}.fail"
     req = {"id": rid, "poses": str(poses_npz), "frames_dir": str(frames_dir),
-           "width": width, "height": height, "samples": samples, "fast": False,
-           "rig_metrics": str(rig_metrics)}
+           "width": width, "height": height, "samples": samples, "fast": bool(fast),
+           "stride": max(1, int(stride)), "rig_metrics": str(rig_metrics),
+           "projection_only": bool(projection_only), "batch_render": bool(batch_render),
+           "video_path": str(video_path)}
     tmp = d / f"{rid}.req.tmp"
     tmp.write_text(json.dumps(req))
     tmp.rename(d / f"{rid}.req")          # atomic publish so the daemon never reads a half-written file
     deadline = time.time() + timeout
     while time.time() < deadline:
         if done.exists():
-            return True
+            return not video_path or Path(video_path).is_file()
         if fail.exists():
             logger.warning("warm render %s failed: %s", rid, fail.read_text()[-300:])
             return False
         if not _alive(d):                  # daemon died mid-render
             return False
-        time.sleep(0.3)
+        time.sleep(0.05)
     return False

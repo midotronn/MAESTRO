@@ -135,7 +135,7 @@ async function startCompare() {
 async function pollCompare() {
   let j;
   try { j = await api(`/api/session/${ST.sid}/compare`); }
-  catch (e) { setTimeout(pollCompare, 3000); return; }
+  catch (e) { setTimeout(pollCompare, 750); return; }
   const st = $("cmpStatus");
   st.textContent = (j.status === "rendering" ? "\u{1F3AC} " : "") + (j.message || j.status);
   $("cmpProgWrap").hidden = false; $("cmpProg").style.width = (j.progress || 0) + "%";
@@ -155,7 +155,7 @@ async function pollCompare() {
     $("compareBtn").disabled = false; toast("Compare failed");
     return;
   }
-  setTimeout(pollCompare, 3000);
+  setTimeout(pollCompare, 100);
 }
 
 function showCompareMetrics(m) {

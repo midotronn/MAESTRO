@@ -453,7 +453,15 @@ def render(sid: str, body: RenderBody) -> dict:
                 a, b = int(win[0]), int(win[1])
             else:
                 scope = "full"                         # nothing edited yet -> render the whole dance
-    rendering.start_render(sid, motion, _song_dir(sid), scope=scope, a=a, b=b)
+    rendering.start_render(
+        sid,
+        motion,
+        _song_dir(sid),
+        scope=scope,
+        a=a,
+        b=b,
+        audio_wav=_song_wav(sid) if scope == "full" else None,
+    )
     return rendering.get_render_job(sid)
 
 

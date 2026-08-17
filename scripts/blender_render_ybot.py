@@ -44,6 +44,17 @@ FOOT_BONES = ["m_avg_L_Foot", "m_avg_R_Foot", "m_avg_L_Foot_end", "m_avg_R_Foot_
 TARGET_HEIGHT = 1.7  # metres; normalise the robot so the shared studio framing fits.
 
 
+def clear_animation(obj):
+    """Detach and remove generated Actions so warm daemons stay memory-bounded."""
+    if obj is None:
+        return
+    animation = getattr(obj, "animation_data", None)
+    action = getattr(animation, "action", None)
+    obj.animation_data_clear()
+    if action is not None and action.users == 0:
+        bpy.data.actions.remove(action)
+
+
 def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     p = argparse.ArgumentParser()
@@ -83,6 +94,12 @@ def parse_args():
                         "Use for visual audits where camera following would hide travel.")
     p.add_argument("--rig-metrics", default="",
                    help="Optional .npz path for exact posed Y-Bot joints, projections, and floor.")
+    p.add_argument("--projection-only", action="store_true",
+                   help="With --rig-metrics, save only screen projections needed by the editor.")
+    p.add_argument("--batch-render", action="store_true",
+                   help="Keyframe the clip and render it in one Blender animation pass.")
+    p.add_argument("--video-path", default="",
+                   help="Optional direct H.264 output for batch renders (skips image sequences).")
     return p.parse_args(argv)
 
 
@@ -277,6 +294,7 @@ def render_take(args, color):
     # Y-up SMPL body upright in Blender's Z-up world. (Resetting it to identity tips the
     # whole dance onto the floor, which per-bone alignment cannot fully undo.)
     arm.rotation_mode = "QUATERNION"
+    clear_animation(arm)
     import_rot = arm.rotation_quaternion.copy()
     for pb in arm.pose.bones:
         pb.rotation_mode = "QUATERNION"
@@ -368,7 +386,7 @@ def render_take(args, color):
     # Clear frames from any previous render in this dir. The warm daemon reuses the same
     # _cmp_*_frames dirs and ffmpeg muxes frame_%05d.png contiguously, so leftover trailing frames
     # from an earlier, LONGER window would be appended to the end of this clip (a "glitch" tail).
-    for _old in glob.glob(f"{frames_dir}/frame_*.png"):
+    for _old in glob.glob(f"{frames_dir}/frame_*"):
         try:
             os.remove(_old)
         except OSError:
@@ -388,6 +406,8 @@ def render_take(args, color):
     cam = bpy.data.objects.get("Cam")
     target = bpy.data.objects.get("Target")
     spot = bpy.data.objects.get("Spot")
+    for obj in (cam, target, spot):
+        clear_animation(obj)
     cam_offset = spot_offset = None
     if cam is not None and target is not None:
         cam_home, target_home, spot_home = centered_follow_locations(
@@ -417,6 +437,16 @@ def render_take(args, color):
             if grounded.any()
             else root_plan.calibration_frames
         )
+        max_calibration = min(120, max(12, int(math.ceil(L / 30))))
+        if fast and len(calibration_frames) > max_calibration:
+            calibration_frames = calibration_frames[
+                np.linspace(
+                    0,
+                    len(calibration_frames) - 1,
+                    max_calibration,
+                    dtype=np.int64,
+                )
+            ]
         measured_offsets = np.full(L, np.nan, dtype=np.float64)
         mesh_floor = float("inf")
         for frame in calibration_frames:
@@ -462,20 +492,23 @@ def render_take(args, color):
     # still track; only single-frame pops are clamped. Tunable via YBOT_GROUND_MAX_DZ (metres/frame).
     ground_max_dz = float(os.environ.get("YBOT_GROUND_MAX_DZ", "0.02"))
     prev_gz = None
+    projection_only = bool(getattr(args, "projection_only", False))
     metric_joints = None
     metric_bone_heads = None
     metric_bone_tails = None
     metric_projected = None
     metric_floor = None
     if args.rig_metrics:
-        metric_joints = np.full((L, n_body, 3), np.nan, dtype=np.float32)
-        metric_bone_heads = np.full(
-            (L, len(metric_bone_names), 3), np.nan, dtype=np.float32
-        )
-        metric_bone_tails = np.full_like(metric_bone_heads, np.nan)
         metric_projected = np.full((L, n_body, 3), np.nan, dtype=np.float32)
-        metric_floor = np.full(L, np.nan, dtype=np.float32)
-    for i in range(0, L, stride):
+        if not projection_only:
+            metric_joints = np.full((L, n_body, 3), np.nan, dtype=np.float32)
+            metric_bone_heads = np.full(
+                (L, len(metric_bone_names), 3), np.nan, dtype=np.float32
+            )
+            metric_bone_tails = np.full_like(metric_bone_heads, np.nan)
+            metric_floor = np.full(L, np.nan, dtype=np.float32)
+    def place_frame(i):
+        nonlocal prev_gz
         pose_frame(i)
         arm.location = (0.0, 0.0, 0.0)
         bpy.context.view_layer.update()
@@ -535,42 +568,93 @@ def render_take(args, color):
                 prev_gz = gz
                 arm.location = (arm.location.x, arm.location.y, gz)
                 bpy.context.view_layer.update()
-        if metric_joints is not None:
+
+    def capture_metrics(i):
+        if metric_projected is not None:
             joints = body_joint_positions().astype(np.float32)
-            metric_joints[i] = joints
-            metric_bone_heads[i] = np.asarray(
-                [[*whead(name)] for name in metric_bone_names],
-                dtype=np.float32,
-            )
-            metric_bone_tails[i] = np.asarray(
-                [[*wtail(name)] for name in metric_bone_names],
-                dtype=np.float32,
-            )
-            depsgraph = bpy.context.evaluated_depsgraph_get()
-            metric_floor[i] = float(lowest_mesh_z(depsgraph, ground_meshes))
+            if metric_joints is not None:
+                metric_joints[i] = joints
+                metric_bone_heads[i] = np.asarray(
+                    [[*whead(name)] for name in metric_bone_names],
+                    dtype=np.float32,
+                )
+                metric_bone_tails[i] = np.asarray(
+                    [[*wtail(name)] for name in metric_bone_names],
+                    dtype=np.float32,
+                )
+                depsgraph = bpy.context.evaluated_depsgraph_get()
+                metric_floor[i] = float(lowest_mesh_z(depsgraph, ground_meshes))
             if cam is not None:
                 metric_projected[i] = np.asarray([
                     tuple(world_to_camera_view(scene, cam, Vector(joint)))
                     for joint in joints
                 ], dtype=np.float32)
-        scene.render.filepath = f"{frames_dir}/frame_{i:05d}.png"
-        bpy.ops.render.render(write_still=True)
-    if metric_joints is not None:
+
+    rendered_frames = list(range(0, L, stride))
+    if bool(getattr(args, "batch_render", False)):
+        for i in rendered_frames:
+            scene.frame_set(i)
+            place_frame(i)
+            for j in range(n_body):
+                name = JOINT_NAMES[j]
+                if name in rest:
+                    arm.pose.bones[name].keyframe_insert(
+                        data_path="rotation_quaternion",
+                        frame=i,
+                        group=name,
+                    )
+            arm.keyframe_insert(data_path="location", frame=i)
+            if target is not None:
+                target.keyframe_insert(data_path="location", frame=i)
+            if cam is not None:
+                cam.keyframe_insert(data_path="location", frame=i)
+            if spot is not None:
+                spot.keyframe_insert(data_path="location", frame=i)
+            capture_metrics(i)
+        scene.frame_start = rendered_frames[0]
+        scene.frame_end = rendered_frames[-1]
+        scene.frame_step = stride
+        if args.video_path:
+            scene.render.image_settings.file_format = "FFMPEG"
+            scene.render.ffmpeg.format = "MPEG4"
+            scene.render.ffmpeg.codec = "H264"
+            scene.render.ffmpeg.constant_rate_factor = "MEDIUM"
+            scene.render.ffmpeg.ffmpeg_preset = "REALTIME"
+            scene.render.fps = 30
+            scene.render.fps_base = float(stride)
+            scene.render.filepath = os.path.abspath(args.video_path)
+        else:
+            scene.render.filepath = f"{frames_dir}/frame_"
+        scene.frame_set(rendered_frames[0])
+        bpy.ops.render.render(animation=True)
+    else:
+        for out_i, i in enumerate(rendered_frames):
+            place_frame(i)
+            capture_metrics(i)
+            scene.render.filepath = f"{frames_dir}/frame_{out_i:05d}.png"
+            bpy.ops.render.render(write_still=True)
+    if metric_projected is not None:
         metrics_path = os.path.abspath(args.rig_metrics)
         os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
-        np.savez_compressed(
-            metrics_path,
-            joints=metric_joints,
-            bone_heads=metric_bone_heads,
-            bone_tails=metric_bone_tails,
-            bone_names=np.asarray(metric_bone_names),
-            projected=metric_projected,
-            mesh_floor=metric_floor,
-            joint_names=np.asarray(JOINT_NAMES[:n_body]),
-            rendered_frames=np.arange(0, L, stride, dtype=np.int32),
-        )
+        payload = {
+            "projected": metric_projected,
+            "joint_names": np.asarray(JOINT_NAMES[:n_body]),
+            "rendered_frames": np.asarray(rendered_frames, dtype=np.int32),
+        }
+        if metric_joints is not None:
+            payload.update({
+                "joints": metric_joints,
+                "bone_heads": metric_bone_heads,
+                "bone_tails": metric_bone_tails,
+                "bone_names": np.asarray(metric_bone_names),
+                "mesh_floor": metric_floor,
+            })
+        np.savez_compressed(metrics_path, **payload)
         print(f"YBOT_RIG_METRICS {metrics_path}")
-    print(f"BLENDER_RENDERED {L} frames -> {frames_dir}")
+    for obj in (arm, cam, target, spot):
+        clear_animation(obj)
+    destination = args.video_path or frames_dir
+    print(f"BLENDER_RENDERED {len(rendered_frames)} frames -> {destination}")
 
 
 def main():

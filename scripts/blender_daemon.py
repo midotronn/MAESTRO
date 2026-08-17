@@ -35,6 +35,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import blender_render_ybot as ybot  # noqa: E402
 import blender_studio as studio  # noqa: E402
 
+PROTOCOL_VERSION = 2
+
 
 def _args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
@@ -67,6 +69,26 @@ def _ensure_scene(cfg, color):
                             engine=cfg.engine, denoise=bool(cfg.denoise))
 
 
+def _warm_renderer(cfg, requests_dir):
+    """Compile the EEVEE pipeline before advertising readiness so the first user render is fast."""
+    warmup = os.path.join(requests_dir, ".warmup.png")
+    studio.configure_render(64, 64, 1, engine=cfg.engine, denoise=False)
+    bpy.context.scene.render.filepath = warmup
+    bpy.ops.render.render(write_still=True)
+    try:
+        os.remove(warmup)
+    except OSError:
+        pass
+    studio.configure_render(
+        cfg.width,
+        cfg.height,
+        cfg.samples,
+        engine=cfg.engine,
+        denoise=bool(cfg.denoise),
+    )
+    print("BLENDER_DAEMON_WARM", flush=True)
+
+
 def _render_request(req, cfg):
     color = tuple(float(c) for c in str(req.get("color", cfg.color)).split(","))[:3]
     args = SimpleNamespace(
@@ -80,6 +102,9 @@ def _render_request(req, cfg):
         lock_root=bool(req.get("lock_root", False)),
         fixed_camera=bool(req.get("fixed_camera", False)),
         rig_metrics=req.get("rig_metrics", ""),
+        projection_only=bool(req.get("projection_only", False)),
+        batch_render=bool(req.get("batch_render", False)),
+        video_path=req.get("video_path", ""),
     )
     os.makedirs(args.frames_dir, exist_ok=True)
     ybot.render_take(args, color)
@@ -91,7 +116,9 @@ def main():
     os.makedirs(rdir, exist_ok=True)
     color = tuple(float(c) for c in cfg.color.split(","))[:3]
     _ensure_scene(cfg, color)
-    open(os.path.join(rdir, "daemon.ready"), "w").close()
+    _warm_renderer(cfg, rdir)
+    with open(os.path.join(rdir, "daemon.ready"), "w") as ready:
+        ready.write(str(PROTOCOL_VERSION))
     print("BLENDER_DAEMON_READY", flush=True)
 
     # Heartbeat on a background thread so it keeps ticking even while a long render holds the main
@@ -137,7 +164,7 @@ def main():
             print("BLENDER_DAEMON_IDLE_EXIT", flush=True)
             _stop.set()
             return
-        time.sleep(0.2)
+        time.sleep(0.05)
 
 
 if __name__ == "__main__":

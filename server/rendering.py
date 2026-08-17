@@ -9,8 +9,10 @@ UI, mirroring :mod:`server.processing`.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -111,14 +113,86 @@ def _set(sid: str, **kw) -> None:
 
 
 def start_render(sid: str, motion: np.ndarray, media_dir: Path, *, scope: str = "window",
-                 a: int | None = None, b: int | None = None) -> None:
+                 a: int | None = None, b: int | None = None,
+                 audio_wav: str | None = None) -> None:
     _set(sid, status="queued", message="queued", progress=3, scope=scope, started=time.time())
     threading.Thread(target=_render, args=(sid, np.asarray(motion), media_dir, scope, a, b),
+                     kwargs={"audio_wav": audio_wav},
                      daemon=True).start()
 
 
+def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
+                       *, audio_wav: str | None = None) -> bool:
+    """Render directly through the resident Blender process when the editor is hosted on the pod."""
+    from server import fk
+    from server import warm_render as wr
+    if not wr.on_pod():
+        return False
+    if scope == "full":
+        render_size = max(512, int(os.environ.get("AGENTLODGE_FULL_FAST_SIZE", "512")))
+        output_size = render_size
+        samples = max(1, int(os.environ.get("AGENTLODGE_FULL_FAST_SAMPLES", "1")))
+        stride = max(1, int(os.environ.get("AGENTLODGE_FULL_FAST_STRIDE", "4")))
+        daemon = 0
+    else:
+        render_size = max(256, int(os.environ.get("AGENTLODGE_WINDOW_FAST_SIZE", "320")))
+        output_size = max(render_size, int(os.environ.get("AGENTLODGE_WINDOW_OUTPUT_SIZE", "448")))
+        samples = max(1, int(os.environ.get("AGENTLODGE_WINDOW_FAST_SAMPLES", "1")))
+        stride = max(1, int(os.environ.get("AGENTLODGE_WINDOW_FAST_STRIDE", "3")))
+        daemon = 1 if wr.POOL_SIZE > 1 else 0
+    if wr.ensure_pool(
+        width=render_size,
+        height=render_size,
+        samples=samples,
+        wait_ready=60,
+    ) < 1:
+        return False
+
+    media_dir.mkdir(parents=True, exist_ok=True)
+    poses_path = media_dir / f"_render_{scope}_poses.npz"
+    raw_video = media_dir / f"_render_{scope}_raw.mp4"
+    frames_dir = media_dir / f"_render_{scope}_frames"
+    fk.save_poses_npz(motion, poses_path)
+    duration = motion.shape[0] / 30.0
+    _set(
+        sid,
+        status="rendering",
+        progress=24,
+        frames=int(motion.shape[0]),
+        message=(
+            f"accelerated {'full-dance' if scope == 'full' else 'window'} render "
+            f"({duration:.1f}s of motion)\u2026"
+        ),
+    )
+    rendered = wr.warm_render(
+        str(poses_path),
+        str(frames_dir),
+        daemon=daemon,
+        samples=samples,
+        width=render_size,
+        height=render_size,
+        timeout=max(600.0, duration * 5),
+        fast=True,
+        stride=stride,
+        batch_render=True,
+        video_path=str(raw_video),
+    )
+    if not rendered:
+        return False
+    _set(sid, progress=90, message="smoothing and encoding the preview\u2026")
+    encoded = _smooth_preview_video(
+        raw_video,
+        media_dir / "edited.mp4",
+        duration,
+        size=output_size,
+        audio_wav=audio_wav if scope == "full" else None,
+    )
+    raw_video.unlink(missing_ok=True)
+    return encoded
+
+
 def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
-            a: int | None, b: int | None) -> None:
+            a: int | None, b: int | None, *, audio_wav: str | None = None) -> None:
     cfg = pod_config()
     if not cfg.host:
         _set(sid, status="error", progress=0,
@@ -131,6 +205,19 @@ def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
     if motion.shape[0] < 2:
         _set(sid, status="error", progress=0, message="nothing to render (empty window).")
         return
+    try:
+        if _render_warm_local(sid, motion, media_dir, scope, audio_wav=audio_wav):
+            _set(
+                sid,
+                status="done",
+                progress=100,
+                message="ready",
+                video="edited.mp4",
+                elapsed=round(time.time() - _RJOBS[sid].get("started", time.time())),
+            )
+            return
+    except Exception as exc:  # noqa: BLE001 - retain the proven cold-render fallback
+        logger.warning("accelerated local render failed (%s); using the cold path", exc)
     try:
         _set(sid, status="rendering", progress=8, message="checking the GPU pod\u2026")
         # the pod's SSH occasionally has a slow banner exchange; retry the reachability probe
@@ -373,6 +460,88 @@ def _ffmpeg_frames(frames_dir: str, out_mp4: Path, fps: int = 30) -> bool:
         return False
 
 
+def _smooth_preview_video(raw_mp4: Path, out_mp4: Path, duration: float,
+                          *, size: int = 448, audio_wav: str | None = None) -> bool:
+    """Turn a sparse low-FPS Blender stream into a smooth 30-FPS preview in well under a second."""
+    import subprocess
+    if not raw_mp4.is_file() or duration <= 0:
+        return False
+    vf = (
+        "tpad=stop_mode=clone:stop_duration=1,"
+        f"minterpolate=fps=30:mi_mode=blend,scale={size}:{size}:flags=lanczos"
+    )
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw_mp4)]
+    have_audio = bool(audio_wav and Path(audio_wav).is_file())
+    if have_audio:
+        cmd.extend(["-i", str(audio_wav)])
+    cmd.extend(["-vf", vf, "-t", f"{duration:.6f}", "-c:v", "libx264",
+                "-preset", "ultrafast", "-crf", "19", "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart"])
+    if have_audio:
+        cmd.extend(["-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "192k", "-shortest"])
+    else:
+        cmd.append("-an")
+    cmd.append(str(out_mp4))
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=max(180, int(duration * 3 + 60)),
+        )
+        return result.returncode == 0 and out_mp4.is_file() and out_mp4.stat().st_size > 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _extract_preview_window(preview: Path, out_mp4: Path, start: float,
+                            duration: float, *, size: int = 448) -> bool:
+    """Reuse the already-rendered original dance instead of rendering the baseline again."""
+    import subprocess
+    if not preview.is_file() or duration <= 0:
+        return False
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-loglevel", "error", "-ss", f"{max(0.0, start):.6f}",
+                "-i", str(preview), "-t", f"{duration:.6f}", "-an",
+                "-vf", f"fps=30,scale={size}:{size}:flags=lanczos",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "19",
+                "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out_mp4),
+            ],
+            capture_output=True,
+            timeout=max(90, int(duration * 2 + 30)),
+        )
+        return result.returncode == 0 and out_mp4.is_file() and out_mp4.stat().st_size > 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _render_cache_key(motion: np.ndarray, *, render_size: int, output_size: int,
+                      samples: int, stride: int, context: str = "") -> str:
+    h = hashlib.sha256()
+    h.update(b"maestro-fast-render-v2")
+    h.update(f"{render_size}:{output_size}:{samples}:{stride}".encode("ascii"))
+    h.update(context.encode("utf-8"))
+    h.update(np.ascontiguousarray(motion, dtype=np.float32).tobytes())
+    return h.hexdigest()[:24]
+
+
+def _matches_base_window(media_dir: Path, motion: np.ndarray, start_frame: int) -> bool:
+    base_path = media_dir / "base_motion.npy"
+    if not base_path.is_file() or start_frame < 0:
+        return False
+    try:
+        base = np.load(base_path, mmap_mode="r")
+        stop = start_frame + motion.shape[0]
+        return (
+            stop <= base.shape[0]
+            and base.shape[1:] == motion.shape[1:]
+            and np.allclose(base[start_frame:stop], motion, rtol=0.0, atol=1e-6)
+        )
+    except (OSError, ValueError):
+        return False
+
+
 def _smooth(values: np.ndarray, radius: int = 3) -> np.ndarray:
     if values.size < 3 or radius <= 0:
         return values
@@ -390,6 +559,11 @@ def _build_change_highlight(before_poses: str, after_poses: str,
         after = data["fk_joints"].astype(np.float64)
     with np.load(after_rig_metrics) as data:
         projected = data["projected"].astype(np.float64)
+        rendered_frames = (
+            data["rendered_frames"].astype(np.int64)
+            if "rendered_frames" in data.files
+            else None
+        )
     n = min(before.shape[0], after.shape[0], projected.shape[0])
     if n < 2 or before.shape[1] < 22 or after.shape[1] < 22 or projected.shape[1] < 22:
         return None
@@ -397,6 +571,24 @@ def _build_change_highlight(before_poses: str, after_poses: str,
     before = before[:n]
     after = after[:n]
     projected = projected[:n]
+    if rendered_frames is not None:
+        rendered_frames = rendered_frames[
+            (rendered_frames >= 0) & (rendered_frames < n)
+        ]
+        if 0 < rendered_frames.size < n:
+            target = np.arange(n, dtype=np.float64)
+            dense = np.full_like(projected, np.nan)
+            for joint in range(min(22, projected.shape[1])):
+                for axis in range(3):
+                    values = projected[rendered_frames, joint, axis]
+                    valid = np.isfinite(values)
+                    if valid.any():
+                        dense[:, joint, axis] = np.interp(
+                            target,
+                            rendered_frames[valid].astype(np.float64),
+                            values[valid],
+                        )
+            projected = dense
     before_rel = before - before[:, :1]
     after_rel = after - after[:, :1]
     joint_delta = np.linalg.norm(after_rel - before_rel, axis=-1)
@@ -479,81 +671,188 @@ def _build_change_highlight(before_poses: str, after_poses: str,
 
 
 def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
-                  media_dir: Path) -> bool:
-    """Fast compare via the warm Blender pool: server-FK both windows, render before/after in
-    PARALLEL on two persistent daemons (no 8s startup, no ssh/scp), then ffmpeg locally. Returns
-    True on success; False (with no side effects on the job) if the pool can't serve it."""
+                  media_dir: Path, *, window_start: float = 0.0) -> bool:
+    """Render sparse low-FPS streams in parallel, then cheaply blend them back to smooth 30 FPS."""
     from server import warm_render as wr
     from server import fk
-    needed = min(2, wr.POOL_SIZE)
-    if wr.ensure_pool(wait_ready=20) < needed:
+    render_size = max(256, int(os.environ.get("AGENTLODGE_COMPARE_RENDER_SIZE", "320")))
+    output_size = max(render_size, int(os.environ.get("AGENTLODGE_COMPARE_OUTPUT_SIZE", "448")))
+    samples = max(1, int(os.environ.get("AGENTLODGE_COMPARE_SAMPLES", "1")))
+    stride = max(1, int(os.environ.get("AGENTLODGE_COMPARE_STRIDE", "3")))
+    if not wr.on_pod():
         return False
     media_dir.mkdir(parents=True, exist_ok=True)
     frames = int(max(before_motion.shape[0], after_motion.shape[0]))
+    duration = frames / 30.0
     _cset(sid, status="rendering", progress=25, frames=frames,
-          message=f"rendering before & after ({frames} frames each) on the warm GPU\u2026")
+          message=f"rendering an accelerated before & after preview ({frames} frames)\u2026")
     try:
         after_rig = media_dir / "_cmp_after_rig.npz"
         after_rig.unlink(missing_ok=True)
         specs = [
-            (
-                "before",
-                str(media_dir / "_cmp_before_poses.npz"),
-                str(media_dir / "_cmp_before_frames"),
-                0,
-                "",
-            ),
-            (
-                "after",
-                str(media_dir / "_cmp_after_poses.npz"),
-                str(media_dir / "_cmp_after_frames"),
-                1,
-                str(after_rig),
-            ),
+            {
+                "tag": "before",
+                "npz": str(media_dir / "_cmp_before_poses.npz"),
+                "frames_dir": str(media_dir / "_cmp_before_frames"),
+                "raw": str(media_dir / "_cmp_before_raw.mp4"),
+                "daemon": 0,
+                "rig": "",
+                "motion": before_motion,
+            },
+            {
+                "tag": "after",
+                "npz": str(media_dir / "_cmp_after_poses.npz"),
+                "frames_dir": str(media_dir / "_cmp_after_frames"),
+                "raw": str(media_dir / "_cmp_after_raw.mp4"),
+                "daemon": 1,
+                "rig": str(after_rig),
+                "motion": after_motion,
+            },
         ]
-        fk.save_poses_npz(before_motion, specs[0][1])
-        fk.save_poses_npz(after_motion, specs[1][1])
+        fk.save_poses_npz(before_motion, specs[0]["npz"])
+        fk.save_poses_npz(after_motion, specs[1]["npz"])
     except Exception as exc:  # noqa: BLE001 - server-FK unavailable -> let the caller fall back
         logger.warning("warm compare server-FK failed (%s)", exc)
         return False
+    cache_dir = media_dir / ".render_cache"
+    cache_dir.mkdir(exist_ok=True)
     results: dict[str, bool] = {}
+    extracts: list[dict] = []
+    missing: list[dict] = []
+    start_frame = max(0, int(round(window_start * 30.0)))
+    for spec in specs:
+        preview = media_dir / "preview.mp4"
+        reuse_preview = (
+            spec["tag"] == "before"
+            and _matches_base_window(media_dir, before_motion, start_frame)
+            and preview.is_file()
+        )
+        cache_context = ""
+        if reuse_preview:
+            try:
+                preview_stat = preview.stat()
+                cache_context = (
+                    f"preview:{start_frame}:{frames}:"
+                    f"{preview_stat.st_size}:{preview_stat.st_mtime_ns}"
+                )
+            except OSError:
+                reuse_preview = False
+        cache_key = _render_cache_key(
+            spec["motion"],
+            render_size=render_size,
+            output_size=output_size,
+            samples=samples,
+            stride=stride,
+            context=cache_context,
+        )
+        spec["cache_video"] = cache_dir / f"{cache_key}.mp4"
+        spec["cache_rig"] = cache_dir / f"{cache_key}.rig.npz"
+        spec["final"] = media_dir / f"cmp_{spec['tag']}.mp4"
+        spec["reuse_preview"] = reuse_preview
+        cache_ready = Path(spec["cache_video"]).is_file()
+        if spec["rig"]:
+            cache_ready = cache_ready and Path(spec["cache_rig"]).is_file()
+        if cache_ready:
+            shutil.copyfile(spec["cache_video"], spec["final"])
+            if spec["rig"]:
+                shutil.copyfile(spec["cache_rig"], after_rig)
+            results[spec["tag"]] = True
+            continue
+        if spec["reuse_preview"]:
+            extracts.append(spec)
+            continue
+        missing.append(spec)
 
-    def _run(tag: str, npz: str, frames_dir: str, didx: int, rig_metrics: str) -> None:
-        results[tag] = wr.warm_render(
-            npz,
-            frames_dir,
-            daemon=didx,
-            samples=8,
-            rig_metrics=rig_metrics,
+    needed = min(len(missing), wr.POOL_SIZE)
+    if needed and wr.ensure_pool(
+        width=render_size,
+        height=render_size,
+        samples=samples,
+        wait_ready=60,
+    ) < needed:
+        return False
+    for index, spec in enumerate(missing):
+        spec["daemon"] = index % max(1, wr.POOL_SIZE)
+
+    def _run(spec: dict) -> None:
+        results[spec["tag"]] = wr.warm_render(
+            spec["npz"],
+            spec["frames_dir"],
+            daemon=spec["daemon"],
+            samples=samples,
+            width=render_size,
+            height=render_size,
+            timeout=max(600.0, duration * 4),
+            rig_metrics=spec["rig"],
+            fast=True,
+            stride=stride,
+            projection_only=bool(spec["rig"]),
+            batch_render=True,
+            video_path=spec["raw"],
         )
 
-    threads = [threading.Thread(target=_run, args=s) for s in specs]
+    def _extract(spec: dict) -> None:
+        results[spec["tag"]] = _extract_preview_window(
+            media_dir / "preview.mp4",
+            spec["final"],
+            window_start,
+            duration,
+            size=output_size,
+        )
+        if results[spec["tag"]]:
+            shutil.copyfile(spec["final"], spec["cache_video"])
+
+    threads = [
+        *(threading.Thread(target=_extract, args=(spec,)) for spec in extracts),
+        *(threading.Thread(target=_run, args=(spec,)) for spec in missing),
+    ]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
-    if not (results.get("before") and results.get("after")):
+    if not all(results.get(spec["tag"]) for spec in specs):
         return False
-    try:
-        highlight = _build_change_highlight(specs[0][1], specs[1][1], str(after_rig))
-        if highlight:
-            _cset(sid, highlight=highlight)
-    except (OSError, ValueError, KeyError) as exc:
-        logger.warning("compare body-part highlight metadata failed: %s", exc)
     _cset(sid, progress=90, message="encoding before & after\u2026")
-    enc: dict[str, bool] = {}
+    missing_tags = {spec["tag"] for spec in missing}
+    enc: dict[str, bool] = {
+        spec["tag"]: True for spec in specs if spec["tag"] not in missing_tags
+    }
 
-    def _enc(tag: str, frames_dir: str, out: Path) -> None:
-        enc[tag] = _ffmpeg_frames(frames_dir, out)
+    def _highlight() -> None:
+        try:
+            highlight = _build_change_highlight(
+                specs[0]["npz"],
+                specs[1]["npz"],
+                str(after_rig),
+            )
+            if highlight:
+                _cset(sid, highlight=highlight)
+        except (OSError, ValueError, KeyError) as exc:
+            logger.warning("compare body-part highlight metadata failed: %s", exc)
+
+    def _enc(spec: dict) -> None:
+        out = spec["final"]
+        enc[spec["tag"]] = _smooth_preview_video(
+            Path(spec["raw"]),
+            out,
+            duration,
+            size=output_size,
+        )
+        if enc[spec["tag"]]:
+            shutil.copyfile(out, spec["cache_video"])
+            if spec["rig"] and after_rig.is_file():
+                shutil.copyfile(after_rig, spec["cache_rig"])
 
     ethreads = [
-        threading.Thread(target=_enc, args=("before", specs[0][2], media_dir / "cmp_before.mp4")),
-        threading.Thread(target=_enc, args=("after", specs[1][2], media_dir / "cmp_after.mp4")),
+        threading.Thread(target=_highlight),
+        *(threading.Thread(target=_enc, args=(spec,)) for spec in missing),
     ]
     for t in ethreads:
         t.start()
     for t in ethreads:
         t.join()
+    for spec in missing:
+        Path(spec["raw"]).unlink(missing_ok=True)
     return bool(enc.get("before") and enc.get("after"))
 
 
@@ -570,14 +869,32 @@ def _compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarra
         return
     started = _CJOBS.get(sid, {}).get("started", time.time())
     # Slice the window's music so the comparison plays with sound (best-effort; silent if unavailable).
-    audio_name = _extract_window_audio(audio_wav, audio_start, audio_dur, media_dir / "cmp_audio.m4a")
+    audio_result: dict[str, str | None] = {"name": None}
+
+    def _extract_audio() -> None:
+        audio_result["name"] = _extract_window_audio(
+            audio_wav,
+            audio_start,
+            audio_dur,
+            media_dir / "cmp_audio.m4a",
+        )
+
+    audio_thread = threading.Thread(target=_extract_audio, daemon=True)
+    audio_thread.start()
     # Fast path: warm Blender pool (editor co-located on the pod). Falls through to the cold ssh
     # render below if the pool is unavailable or fails.
     try:
-        if _compare_warm(sid, before_motion, after_motion, media_dir):
+        if _compare_warm(
+            sid,
+            before_motion,
+            after_motion,
+            media_dir,
+            window_start=audio_start,
+        ):
+            audio_thread.join()
             _cset(sid, status="done", progress=100, message="ready",
                   before_video="cmp_before.mp4", after_video="cmp_after.mp4",
-                  audio=audio_name, elapsed=round(time.time() - started))
+                  audio=audio_result["name"], elapsed=round(time.time() - started))
             return
     except Exception as exc:  # noqa: BLE001 - never let the warm path break compare; fall back
         logger.warning("warm compare path errored (%s); using cold render", exc)
@@ -667,8 +984,9 @@ def _compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarra
                 _cset(sid, status="error", progress=0,
                       message=f"could not fetch the {_tag} video.")
                 return
+        audio_thread.join()
         _cset(sid, status="done", progress=100, message="ready",
-              before_video="cmp_before.mp4", after_video="cmp_after.mp4", audio=audio_name,
+              before_video="cmp_before.mp4", after_video="cmp_after.mp4", audio=audio_result["name"],
               elapsed=round(time.time() - _CJOBS[sid].get("started", time.time())))
     except Exception as exc:  # noqa: BLE001
         _cset(sid, status="error", progress=0, message=f"compare error: {exc}")

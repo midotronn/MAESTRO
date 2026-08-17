@@ -53,6 +53,8 @@ def test_live_editor_enables_the_blocking_motion_audit(monkeypatch):
     assert not A._motion_audit_required()
     monkeypatch.setenv("AGENTLODGE_LIVE", "1")
     assert A._motion_audit_required()
+    monkeypatch.setenv("MAESTRO_ALLOW_UNAUDITED_RESEARCH", "1")
+    assert not A._motion_audit_required()
 
 
 def test_editor_prewarm_starts_the_blender_pool(monkeypatch):
@@ -67,15 +69,13 @@ def test_editor_prewarm_starts_the_blender_pool(monkeypatch):
     A._prewarm()
 
     assert calls == [0]
-    monkeypatch.setenv("MAESTRO_ALLOW_UNAUDITED_RESEARCH", "1")
-    assert not A._motion_audit_required()
 
 
 def test_warm_daemon_liveness_requires_its_process(tmp_path, monkeypatch):
     import server.warm_render as warm_render
 
     (tmp_path / "daemon.pid").write_text("12345")
-    (tmp_path / "daemon.ready").touch()
+    (tmp_path / "daemon.ready").write_text(str(warm_render.PROTOCOL_VERSION))
     (tmp_path / "daemon.hb").touch()
     monkeypatch.setattr(warm_render.os, "kill", lambda pid, sig: None)
     assert warm_render._alive(tmp_path)
@@ -85,6 +85,37 @@ def test_warm_daemon_liveness_requires_its_process(tmp_path, monkeypatch):
 
     monkeypatch.setattr(warm_render.os, "kill", missing_process)
     assert not warm_render._alive(tmp_path)
+
+
+def test_warm_pool_replaces_incompatible_daemon(tmp_path, monkeypatch):
+    import server.warm_render as warm_render
+
+    d = tmp_path / "d0"
+    d.mkdir()
+    (d / "daemon.pid").write_text("12345")
+    (d / "daemon.ready").write_text(str(warm_render.PROTOCOL_VERSION - 1))
+    process = {"alive": True}
+    calls = []
+
+    monkeypatch.setattr(warm_render, "DAEMON_ROOT", tmp_path)
+    monkeypatch.setattr(warm_render, "POOL_SIZE", 1)
+    monkeypatch.setattr(warm_render, "on_pod", lambda: True)
+    monkeypatch.setattr(warm_render, "_alive", lambda _d: False)
+    monkeypatch.setattr(warm_render, "_pid_alive", lambda _d: process["alive"])
+
+    def fake_stop(_d):
+        calls.append("stop")
+        process["alive"] = False
+
+    def fake_start(_i, **_kwargs):
+        calls.append("start")
+
+    monkeypatch.setattr(warm_render, "_stop_daemon", fake_stop)
+    monkeypatch.setattr(warm_render, "_start_daemon", fake_start)
+
+    warm_render.ensure_pool(width=320, height=320, samples=1)
+
+    assert calls == ["stop", "start"]
 
 
 def test_warm_daemon_launch_tracks_the_blender_pid(tmp_path, monkeypatch):
@@ -112,6 +143,217 @@ def test_warm_daemon_launch_tracks_the_blender_pid(tmp_path, monkeypatch):
     assert captured["command"][0] == str(tmp_path / "blender")
     assert captured["kwargs"]["start_new_session"] is True
     assert (tmp_path / "d0" / "daemon.pid").read_text() == "24680"
+
+
+def test_warm_render_sends_sparse_direct_video_options(tmp_path, monkeypatch):
+    import json
+    import server.warm_render as warm_render
+
+    d = tmp_path / "d0"
+    d.mkdir()
+    frames = tmp_path / "frames"
+    raw_video = tmp_path / "raw.mp4"
+    rid = "r" + "a" * 10
+    done = d / f"{rid}.done"
+
+    monkeypatch.setattr(warm_render, "DAEMON_ROOT", tmp_path)
+    monkeypatch.setattr(warm_render, "POOL_SIZE", 1)
+    monkeypatch.setattr(warm_render, "_alive", lambda _d: True)
+    monkeypatch.setattr(warm_render.uuid, "uuid4", lambda: SimpleNamespace(hex="a" * 32))
+
+    def finish_render(_delay):
+        raw_video.write_bytes(b"video")
+        done.write_text("0.1")
+
+    monkeypatch.setattr(warm_render.time, "sleep", finish_render)
+
+    assert warm_render.warm_render(
+        "poses.npz",
+        str(frames),
+        daemon=0,
+        width=384,
+        height=384,
+        samples=1,
+        fast=True,
+        stride=5,
+        projection_only=True,
+        batch_render=True,
+        video_path=str(raw_video),
+    )
+    request = json.loads((d / f"{rid}.req").read_text())
+    assert request["fast"] is True
+    assert request["stride"] == 5
+    assert request["projection_only"] is True
+    assert request["batch_render"] is True
+    assert request["video_path"] == str(raw_video)
+
+
+def test_full_warm_render_uses_fast_preview_defaults(tmp_path, monkeypatch):
+    import server.fk as fk
+    import server.rendering as rendering
+    import server.warm_render as warm_render
+
+    for name in (
+        "AGENTLODGE_FULL_FAST_SIZE",
+        "AGENTLODGE_FULL_FAST_SAMPLES",
+        "AGENTLODGE_FULL_FAST_STRIDE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    captured = {}
+    audio = tmp_path / "song.wav"
+    audio.write_bytes(b"wav")
+
+    monkeypatch.setattr(warm_render, "on_pod", lambda: True)
+
+    def fake_ensure_pool(**kwargs):
+        captured["pool"] = kwargs
+        return 2
+
+    def fake_save(_motion, path):
+        Path(path).write_bytes(b"poses")
+
+    def fake_render(_poses, _frames, **kwargs):
+        captured["render"] = kwargs
+        Path(kwargs["video_path"]).write_bytes(b"raw")
+        return True
+
+    def fake_smooth(_raw, output, _duration, **kwargs):
+        captured["smooth"] = kwargs
+        Path(output).write_bytes(b"video")
+        return True
+
+    monkeypatch.setattr(warm_render, "ensure_pool", fake_ensure_pool)
+    monkeypatch.setattr(warm_render, "warm_render", fake_render)
+    monkeypatch.setattr(fk, "save_poses_npz", fake_save)
+    monkeypatch.setattr(rendering, "_smooth_preview_video", fake_smooth)
+
+    assert rendering._render_warm_local(
+        "sng",
+        np.zeros((120, 139), dtype=np.float32),
+        tmp_path,
+        "full",
+        audio_wav=str(audio),
+    )
+    assert captured["pool"]["width"] == 512
+    assert captured["pool"]["height"] == 512
+    assert captured["pool"]["samples"] == 1
+    assert captured["render"]["width"] == 512
+    assert captured["render"]["height"] == 512
+    assert captured["render"]["samples"] == 1
+    assert captured["render"]["stride"] == 4
+    assert captured["render"]["batch_render"] is True
+    assert captured["smooth"]["size"] == 512
+    assert captured["smooth"]["audio_wav"] == str(audio)
+
+
+def test_sparse_projected_joints_are_interpolated_for_highlights(tmp_path):
+    import server.rendering as rendering
+
+    n = 12
+    before = np.zeros((n, 22, 3), dtype=np.float32)
+    after = before.copy()
+    after[:, [14, 17, 19, 21], 0] = np.linspace(0.0, 0.24, n)[:, None]
+    projected = np.full((n, 22, 3), np.nan, dtype=np.float32)
+    rendered = np.array([0, 5, 10], dtype=np.int32)
+    for frame, offset in zip(rendered, (0.0, 0.05, 0.1)):
+        projected[frame, :, 0] = 0.5
+        projected[frame, :, 1] = 0.5
+        projected[frame, :, 2] = 1.0
+        projected[frame, 14, :2] = (0.61 + offset, 0.58)
+        projected[frame, 17, :2] = (0.69 + offset, 0.55)
+        projected[frame, 19, :2] = (0.76 + offset, 0.49)
+        projected[frame, 21, :2] = (0.82 + offset, 0.44)
+
+    before_path = tmp_path / "before.npz"
+    after_path = tmp_path / "after.npz"
+    rig_path = tmp_path / "after_rig.npz"
+    np.savez(before_path, fk_joints=before)
+    np.savez(after_path, fk_joints=after)
+    np.savez(rig_path, projected=projected, rendered_frames=rendered)
+
+    highlight = rendering._build_change_highlight(
+        str(before_path),
+        str(after_path),
+        str(rig_path),
+    )
+
+    assert highlight is not None
+    active_frames = [i for i, frame in enumerate(highlight["frames"]) if frame]
+    assert any(frame not in rendered for frame in active_frames)
+    assert {marker["part"] for frame in highlight["frames"] for marker in frame} == {"right_arm"}
+
+
+def test_sparse_preview_is_smoothed_to_30_fps(tmp_path):
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    if not ffmpeg or not ffprobe:
+        pytest.skip("ffmpeg and ffprobe are required")
+    import server.rendering as rendering
+
+    raw = tmp_path / "raw.mp4"
+    output = tmp_path / "smooth.mp4"
+    subprocess.run(
+        [
+            ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi",
+            "-i", "color=c=gray:s=64x64:r=6:d=1", "-c:v", "libx264",
+            "-pix_fmt", "yuv420p", str(raw),
+        ],
+        check=True,
+    )
+
+    assert rendering._smooth_preview_video(raw, output, 1.0, size=64)
+    probe = subprocess.run(
+        [
+            ffprobe, "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=r_frame_rate,nb_frames,duration",
+            "-of", "default=nw=1", str(output),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "r_frame_rate=30/1" in probe
+    assert "nb_frames=30" in probe
+
+
+def test_original_window_and_render_cache_keys_are_detected(tmp_path):
+    import server.rendering as rendering
+
+    base = np.arange(40 * 6, dtype=np.float32).reshape(40, 6)
+    np.save(tmp_path / "base_motion.npy", base)
+    window = base[10:20].copy()
+
+    assert rendering._matches_base_window(tmp_path, window, 10)
+    assert not rendering._matches_base_window(tmp_path, window + 1, 10)
+    key = rendering._render_cache_key(
+        window,
+        render_size=320,
+        output_size=448,
+        samples=1,
+        stride=3,
+    )
+    assert key == rendering._render_cache_key(
+        window.copy(),
+        render_size=320,
+        output_size=448,
+        samples=1,
+        stride=3,
+    )
+    assert key != rendering._render_cache_key(
+        window,
+        render_size=384,
+        output_size=448,
+        samples=1,
+        stride=3,
+    )
+    assert key != rendering._render_cache_key(
+        window,
+        render_size=320,
+        output_size=448,
+        samples=1,
+        stride=3,
+        context="preview:10:10:123:456",
+    )
 
 
 def test_lists_songs_and_opens_session(client):
@@ -504,6 +746,36 @@ def test_compare_requires_an_edit_first(client):
     client.post("/api/session/sng")
     # no edit yet -> nothing to compare
     assert client.post("/api/session/sng/compare").status_code == 400
+
+
+def test_full_render_passes_song_audio_to_accelerated_renderer(client, monkeypatch, tmp_path):
+    import server.app as A
+    import server.rendering as R
+
+    audio = tmp_path / "song.wav"
+    audio.write_bytes(b"wav")
+    captured = {}
+
+    def fake_start(sid, motion, media_dir, *, scope="window", a=None, b=None, audio_wav=None):
+        captured.update(
+            sid=sid,
+            frames=np.asarray(motion).shape[0],
+            scope=scope,
+            audio_wav=audio_wav,
+        )
+        R._set(sid, status="rendering", progress=10)
+
+    monkeypatch.setattr(R, "start_render", fake_start)
+    monkeypatch.setattr(A, "_song_wav", lambda _sid: str(audio))
+    client.post("/api/session/sng")
+
+    response = client.post("/api/session/sng/render", json={"scope": "full"})
+
+    assert response.status_code == 200
+    assert captured["sid"] == "sng"
+    assert captured["frames"] == 300
+    assert captured["scope"] == "full"
+    assert captured["audio_wav"] == str(audio)
 
 
 def test_compare_after_edit_renders_before_and_after(client, monkeypatch):
