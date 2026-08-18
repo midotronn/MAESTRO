@@ -688,15 +688,20 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
             + hit[:, None] * (right_strike - right_guard)[None, :]
         )
         left_rest = _stance_wrist("left")
-        left_guard = np.array([0.12, 0.06, 0.18], dtype=np.float32)
-        left_tuck = np.array([0.07, 0.04, 0.13], dtype=np.float32)
+        left_guard = np.array([0.07, 0.15, 0.10], dtype=np.float32)
+        left_tuck = np.array([0.02, 0.18, 0.06], dtype=np.float32)
         left_targets = (
             left_rest[None, :]
             + ready[:, None] * (left_guard - left_rest)[None, :]
             + hit[:, None] * (left_tuck - left_guard)[None, :]
         )
         _solve_arm(aa, "right", right_targets)
-        _solve_arm(aa, "left", left_targets)
+        _solve_arm(
+            aa,
+            "left",
+            left_targets,
+            elbow_hint=np.array([0.40, -0.90, -0.12], dtype=np.float32),
+        )
         aa[:, 9, 1] += 0.12 * wind - 0.56 * hit              # wind up, then rotate into the hit
         aa[:, 0, 1] += 0.08 * wind - 0.26 * hit
         aa[:, 12, 1] -= 0.12 * hit
@@ -710,10 +715,10 @@ def build_motion(motion_id: str, n: int, *, direction: str = "forward") -> np.nd
         left_start = _stance_ankle("left")
         right_start = _stance_ankle("right")
         left_end = left_start.copy()
-        left_end[0] += 0.40
+        left_end[0] += 0.44
         anticipation = _pulse(t, 0.18, 0.08)
         transfer = _phase_ease(t, 0.30, 0.68)
-        trans[:, 0] += -0.025 * anticipation + 0.27 * transfer
+        trans[:, 0] += -0.025 * anticipation + 0.29 * transfer
         left_targets = _foot_swing(
             t, 0.12, 0.55, left_start, left_end, lift=0.075,
         )

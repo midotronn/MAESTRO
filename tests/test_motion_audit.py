@@ -244,6 +244,9 @@ def test_protocol_ten_exact_rig_checks_reject_competing_silhouettes():
     assert _punch_plane_check(punch, 0, 30, "right")["passed"]
     assert _punch_check(punch, 0, 30, 15, "right")["passed"]
     assert not _punch_check(punch, 0, 30, 20, "right")["passed"]
+    two_arm_press = punch.copy()
+    two_arm_press[15, 20, :2] = (0.20, -0.50)
+    assert not _punch_check(two_arm_press, 0, 30, 15, "right")["passed"]
     turning_punch = punch.copy()
     for frame, angle in enumerate(np.linspace(0.0, np.pi, len(punch))):
         rotation = np.array([

@@ -594,6 +594,18 @@ def _punch_check(
     near_peak = int(np.count_nonzero(
         forward_reach >= 0.995 * float(forward_reach[reach_peak])
     ))
+    _left, event_forward = _body_axes(action, event_local)
+    guard_forward = float(
+        (
+            action[event_local, guard_wrist, :2]
+            - action[event_local, 9, :2]
+        )
+        @ event_forward
+    )
+    guard_forward_ratio = guard_forward / max(
+        float(forward_reach[event_local]),
+        1e-6,
+    )
     passed = (
         direction in {"left", "right"}
         and 1 < peak < len(extension) - 2
@@ -604,6 +616,7 @@ def _punch_check(
         and float(forward_reach[event_local])
         >= 0.97 * float(forward_reach[reach_peak])
         and near_peak <= 5
+        and guard_forward_ratio < 0.36
     )
     return _check(
         "rendered_guard_strike_recoil",
@@ -615,7 +628,8 @@ def _punch_check(
             f"declared event/forward-reach peak {event_local}/{reach_peak}, "
             f"event/peak reach {float(forward_reach[event_local]):.4f}/"
             f"{float(forward_reach[reach_peak]):.4f} m, near-peak span "
-            f"{near_peak} frames"
+            f"{near_peak} frames, guard/strike forward ratio "
+            f"{guard_forward_ratio:.3f}"
         ),
     )
 
