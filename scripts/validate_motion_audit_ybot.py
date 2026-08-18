@@ -66,6 +66,7 @@ def _load_metrics(path: Path, expected_frames: int) -> dict[str, np.ndarray]:
             "joint_names",
             "bone_heads",
             "bone_tails",
+            "bone_reference_axes",
             "bone_names",
             "rendered_frames",
         }
@@ -85,6 +86,7 @@ def _load_metrics(path: Path, expected_frames: int) -> dict[str, np.ndarray]:
     floor = values["mesh_floor"]
     bone_heads = values["bone_heads"]
     bone_tails = values["bone_tails"]
+    bone_reference_axes = values["bone_reference_axes"]
     rendered = values["rendered_frames"]
     if joints.shape != (expected_frames, len(_JOINT_NAMES), 3):
         raise RuntimeError(f"{path.name}: invalid joint shape {joints.shape}")
@@ -93,19 +95,34 @@ def _load_metrics(path: Path, expected_frames: int) -> dict[str, np.ndarray]:
     if floor.shape != (expected_frames,):
         raise RuntimeError(f"{path.name}: invalid mesh-floor shape {floor.shape}")
     expected_bones = (expected_frames, len(bone_names), 3)
-    if bone_heads.shape != expected_bones or bone_tails.shape != expected_bones:
+    if (
+        bone_heads.shape != expected_bones
+        or bone_tails.shape != expected_bones
+        or bone_reference_axes.shape != expected_bones
+    ):
         raise RuntimeError(f"{path.name}: invalid posed-bone shapes")
     if not np.array_equal(rendered, np.arange(expected_frames, dtype=rendered.dtype)):
         raise RuntimeError(f"{path.name}: metrics do not cover every rendered frame")
     if not all(
         np.isfinite(array).all()
-        for array in (joints, projected, floor, bone_heads, bone_tails)
+        for array in (
+            joints,
+            projected,
+            floor,
+            bone_heads,
+            bone_tails,
+            bone_reference_axes,
+        )
     ):
         raise RuntimeError(f"{path.name}: metrics contain non-finite values")
-    axes = bone_tails - bone_heads
-    axes /= np.linalg.norm(axes, axis=-1, keepdims=True) + 1e-9
+    axis_norms = np.linalg.norm(bone_reference_axes, axis=-1)
+    if not np.allclose(axis_norms, 1.0, atol=1e-4):
+        raise RuntimeError(f"{path.name}: posed-bone reference axes are not normalized")
     ordered_axes = np.stack(
-        [axes[:, bone_names.index(name)] for name in _JOINT_NAMES],
+        [
+            bone_reference_axes[:, bone_names.index(name)]
+            for name in _JOINT_NAMES
+        ],
         axis=1,
     )
     return {
@@ -873,7 +890,7 @@ def build_report(audit_dir: Path) -> dict:
             else "fail"
         )
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "audit_id": review["audit_id"],
         "motion_fingerprint": review["motion_fingerprint"],
         "status": (

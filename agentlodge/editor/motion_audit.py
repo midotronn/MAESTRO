@@ -269,7 +269,7 @@ def validate_ybot_metrics_report(
     if not path.is_file():
         raise RuntimeError("motion audit has no exact Y-Bot metrics report")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if int(payload.get("schema_version", 0)) != 2:
+    if int(payload.get("schema_version", 0)) != 3:
         raise RuntimeError("motion audit Y-Bot metrics report has an unsupported schema")
     if payload.get("audit_id") != review.get("audit_id"):
         raise RuntimeError("motion audit Y-Bot metrics belong to a different audit")

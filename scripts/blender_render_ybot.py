@@ -40,6 +40,10 @@ JOINT_NAMES = [
     "m_avg_L_Shoulder", "m_avg_R_Shoulder", "m_avg_L_Elbow", "m_avg_R_Elbow",
     "m_avg_L_Wrist", "m_avg_R_Wrist", "m_avg_L_Hand", "m_avg_R_Hand",
 ]
+JOINT_PARENTS = (
+    -1, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8,
+    9, 9, 9, 12, 13, 14, 16, 17, 18, 19, 20, 21,
+)
 FOOT_BONES = ["m_avg_L_Foot", "m_avg_R_Foot", "m_avg_L_Foot_end", "m_avg_R_Foot_end"]
 TARGET_HEIGHT = 1.7  # metres; normalise the robot so the shared studio framing fits.
 
@@ -342,12 +346,39 @@ def render_take(args, color):
     metric_bone_names = tuple(
         name for name in JOINT_NAMES if name in arm.pose.bones
     )
+    metric_reference_local = {}
+    for joint, name in enumerate(JOINT_NAMES):
+        bone = arm.data.bones.get(name)
+        if bone is None:
+            continue
+        parent = JOINT_PARENTS[joint]
+        if parent >= 0 and JOINT_NAMES[parent] in arm.data.bones:
+            reference = (
+                bone.head_local
+                - arm.data.bones[JOINT_NAMES[parent]].head_local
+            )
+        else:
+            reference = bone.tail_local - bone.head_local
+        reference.normalize()
+        metric_reference_local[name] = (
+            bone.matrix_local.to_3x3().inverted() @ reference
+        ).normalized()
 
     def whead(name):
         return arm.matrix_world @ arm.pose.bones[name].head
 
     def wtail(name):
         return arm.matrix_world @ arm.pose.bones[name].tail
+
+    def wreference(name):
+        reference = (
+            arm.matrix_world.to_3x3()
+            @ (
+                arm.pose.bones[name].matrix.to_3x3()
+                @ metric_reference_local[name]
+            )
+        )
+        return reference.normalized()
 
     def apply_pose(i):
         # DIRECT mapping (EDGE-style): each SMPL joint's local rotation is the bone's local
@@ -476,7 +507,7 @@ def render_take(args, color):
             if grounded.any()
             else root_plan.calibration_frames
         )
-        max_calibration = min(120, max(12, int(math.ceil(L / 30))))
+        max_calibration = min(120, max(24, int(math.ceil(L / 2))))
         if fast and len(calibration_frames) > max_calibration:
             calibration_frames = calibration_frames[
                 np.linspace(
@@ -535,6 +566,7 @@ def render_take(args, color):
     metric_joints = None
     metric_bone_heads = None
     metric_bone_tails = None
+    metric_bone_reference_axes = None
     metric_projected = None
     metric_floor = None
     if args.rig_metrics:
@@ -545,6 +577,7 @@ def render_take(args, color):
                 (L, len(metric_bone_names), 3), np.nan, dtype=np.float32
             )
             metric_bone_tails = np.full_like(metric_bone_heads, np.nan)
+            metric_bone_reference_axes = np.full_like(metric_bone_heads, np.nan)
             metric_floor = np.full(L, np.nan, dtype=np.float32)
     def place_frame(i):
         nonlocal prev_gz
@@ -619,6 +652,10 @@ def render_take(args, color):
                 )
                 metric_bone_tails[i] = np.asarray(
                     [[*wtail(name)] for name in metric_bone_names],
+                    dtype=np.float32,
+                )
+                metric_bone_reference_axes[i] = np.asarray(
+                    [[*wreference(name)] for name in metric_bone_names],
                     dtype=np.float32,
                 )
                 depsgraph = bpy.context.evaluated_depsgraph_get()
@@ -726,6 +763,7 @@ def render_take(args, color):
                 "joints": metric_joints,
                 "bone_heads": metric_bone_heads,
                 "bone_tails": metric_bone_tails,
+                "bone_reference_axes": metric_bone_reference_axes,
                 "bone_names": np.asarray(metric_bone_names),
                 "mesh_floor": metric_floor,
             })

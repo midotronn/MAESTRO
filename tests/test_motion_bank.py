@@ -1703,6 +1703,33 @@ def test_visual_audit_derives_counterflow_ownership_instead_of_trusting_the_repo
 
 @needs_fk
 @pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
+def test_every_required_audit_variant_passes_source_machine_gates():
+    from agentlodge.dance.format import to_editor139
+    from agentlodge.editor.motion_audit import audit_case_id, audit_variants
+    from scripts.build_motion_bank_audit import _machine_checks
+
+    host = to_editor139(np.load(_LODGE_SAMPLE).astype(np.float32))[:180]
+    beats = np.arange(0, 180, 15)
+    bank = default_motion_bank()
+    failures = {}
+    for spec in bank.specs:
+        for direction in audit_variants(spec):
+            edited, report = bank.apply(
+                host,
+                spec.id,
+                beats=beats,
+                direction=direction,
+            )
+            checks, status = _machine_checks(host, edited, spec, report)
+            if status != "pass":
+                failures[audit_case_id(spec, direction)] = [
+                    check["detail"] for check in checks if not check["passed"]
+                ]
+    assert not failures
+
+
+@needs_fk
+@pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
 def test_visual_audit_rejects_every_protocol_ten_failure_signature():
     from agentlodge.dance.format import to_editor139
     from scripts.build_motion_bank_audit import _machine_checks

@@ -149,6 +149,43 @@ def test_exact_ybot_geometry_gate_rejects_merged_claps_and_grounded_jumps():
     )["passed"]
 
 
+def test_exact_ybot_overhead_rejects_a_detached_hand_axis():
+    joints = np.zeros((36, 22, 3), dtype=np.float32)
+    control_joints = joints.copy()
+    joints[:, 16, 0] = control_joints[:, 16, 0] = 0.5
+    joints[:, 17, 0] = control_joints[:, 17, 0] = -0.5
+    joints[:, 20, (0, 2)] = control_joints[:, 20, (0, 2)] = (0.5, 0.8)
+    joints[:, 21, (0, 2)] = control_joints[:, 21, (0, 2)] = (-0.5, 0.8)
+    joints[:, 15, 2] = control_joints[:, 15, 2] = 1.2
+    joints[17:20, 20, (0, 2)] = (0.05, 1.5)
+    joints[17:20, 21, (0, 2)] = (-0.05, 1.5)
+    joints[:, 18] = joints[:, 20] - (0.0, 0.0, 0.3)
+    joints[:, 19] = joints[:, 21] - (0.0, 0.0, 0.3)
+    bone_axes = np.zeros_like(joints)
+    bone_axes[:, 20:22, 2] = 1.0
+    metrics = {
+        "joints": joints,
+        "projected": np.zeros_like(joints),
+        "mesh_floor": np.zeros(36, dtype=np.float32),
+        "bone_axes": bone_axes,
+    }
+    control = dict(metrics, joints=control_joints)
+    checks, _lateral = _clap_checks(
+        "clap_overhead", metrics, control, 0, 36, 18
+    )
+    assert all(check["passed"] for check in checks)
+
+    detached = dict(metrics, bone_axes=bone_axes.copy())
+    detached["bone_axes"][:, 20:22] = (1.0, 0.0, 0.0)
+    checks, _lateral = _clap_checks(
+        "clap_overhead", detached, control, 0, 36, 18
+    )
+    assert not next(
+        check for check in checks
+        if check["name"] == "rendered_overhead_wrist_continuity"
+    )["passed"]
+
+
 def test_exact_ybot_step_touch_requires_side_view_foot_separation():
     joints = np.zeros((45, 22, 3), dtype=np.float32)
     joints[:, 7, 0] = 0.2
@@ -540,7 +577,7 @@ def _complete_audit_export(tmp_path):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(f"{relative}\n".encode())
     metrics_report = {
-        "schema_version": 2,
+        "schema_version": 3,
         "audit_id": review["audit_id"],
         "motion_fingerprint": fingerprint,
         "status": "pass",
