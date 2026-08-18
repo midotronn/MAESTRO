@@ -152,17 +152,40 @@ def _report_planner() -> None:
     # its loggers only, so a __name__ logger emits nothing under the way this server is actually
     # run -- verified by grepping the pod's log and finding zero lines. Do not "tidy" this back.
     logger = logging.getLogger("uvicorn.error")
-    if os.environ.get("OPENAI_API_KEY"):
-        logger.info("LLM edit planner enabled (OPENAI_API_KEY present)")
+    if _openai_api_key():
+        logger.info("LLM edit planner enabled (OpenAI credential present)")
     else:
         logger.warning(
-            "LLM edit planner DISABLED: no OPENAI_API_KEY in the server environment. "
+            "LLM edit planner DISABLED: no OPENAI_API_KEY or readable OAI_KEY_FILE. "
             "Edits will use the offline keyword planner and results will be tagged "
-            "'offline planner' in the UI. Relaunch with the key set to enable it."
+            "'offline planner' in the UI."
         )
 
 
 # --------------------------------------------------------------------------- session loading
+def _openai_api_key() -> str | None:
+    value = os.environ.get("OPENAI_API_KEY", "").strip()
+    if value:
+        return value
+    configured = os.environ.get("OAI_KEY_FILE", "").strip()
+    candidates = (
+        [Path(configured).expanduser()]
+        if configured
+        else [
+            Path.home() / ".oai_key",
+            Path(os.environ.get("WORKSPACE", "/workspace")) / ".oai_key",
+        ]
+    )
+    for key_file in candidates:
+        try:
+            value = key_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if value:
+            return value
+    return None
+
+
 def _song_dir(sid: str) -> Path:
     media_root = MEDIA.resolve()
     d = (media_root / sid).resolve()
@@ -252,7 +275,7 @@ def _load_session(sid: str) -> EditSession:
     assets = SongAssets(
         sid=sid, beats=beats, fps=FPS, beat_strengths=beat_strengths,
     )
-    api_key = os.environ.get("OPENAI_API_KEY") or None    # enables the LLM edit agent when present
+    api_key = _openai_api_key()                           # enables the LLM edit agent when present
     sess_dir = SESSIONS / sid
     if (sess_dir / "checkpoints" / "manifest.json").exists():
         sess = EditSession.load(sess_dir, generator, api_key=api_key)

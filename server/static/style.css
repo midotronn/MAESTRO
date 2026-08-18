@@ -405,6 +405,7 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
 .rz-head { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: var(--text); }
 .rz-verdict { font-size: 10px; font-weight: 650; padding: 1px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: .3px; }
 .rz-verdict.ok { color: var(--ok); background: rgba(53,208,127,.12); border: 1px solid rgba(53,208,127,.35); }
+.rz-verdict.warn { color: var(--warn); background: rgba(240,180,106,.12); border: 1px solid rgba(240,180,106,.35); }
 .rz-verdict.bad { color: var(--warn); background: rgba(240,180,106,.12); border: 1px solid rgba(240,180,106,.35); }
 .rz-sub { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); margin: 9px 0 3px; }
 .rz-plan { font-size: 12px; color: var(--muted); font-style: italic; margin-bottom: 3px; }

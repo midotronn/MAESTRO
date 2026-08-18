@@ -1381,7 +1381,13 @@ def run_agent_edit(motion: np.ndarray, a: int, b: int, instruction: str,
                      "planner_note": plan.planner_note,
                      "steps": [{"tool": s.tool, "params": s.params, "why": s.why} for s in plan.steps]},
             "steps": step_log,
-            "verify": {"ok": ok_full, "checks": all_checks, "verdict": verdict},
+            "verify": {
+                "ok": ok_full,
+                "goal_ok": ok,
+                "quality_ok": guard_ok,
+                "checks": all_checks,
+                "verdict": verdict,
+            },
         })
         if best is None or _prefer(ok, guard_ok, no_reg, reward, best[3], best[4], best[5], best[0]):
             best = (

@@ -1207,7 +1207,11 @@ function onProgress(ev) {
     $("progtext").textContent = detail;
     activityUpdate("edit", { progress: p, detail });
   } else if (ev.phase === "verify") {
-    const detail = `attempt ${ev.cycle}: ${ev.ok ? "goals met \u2714" : "short of goal, refining\u2026"}`;
+    const actionVerified = (ev.checks || []).some((check) =>
+      check.metric === "semantic" && check.met);
+    const detail = `attempt ${ev.cycle}: ${ev.ok
+      ? (actionVerified ? "action verified \u2714" : "goals met \u2714")
+      : "short of goal, refining\u2026"}`;
     setProgressBar("progbar", "agentProgWrap", ev.ok ? 94 : 86);
     $("progtext").textContent = detail;
     activityUpdate("edit", { progress: ev.ok ? 94 : 86, detail });
@@ -1265,8 +1269,20 @@ function renderTrace(trace) {
   for (const at of trace.attempts) {
     const v = at.verify || {};
     const pl = at.plan.planner || "llm";
+    const goalOk = v.goal_ok === undefined ? !!v.ok : !!v.goal_ok;
+    const qualityOk = v.quality_ok === undefined
+      ? !(v.checks || []).some((check) => check.guard && !check.met)
+      : !!v.quality_ok;
+    const actionVerified = (v.checks || []).some((check) =>
+      check.metric === "semantic" && check.met);
+    const verdictClass = !goalOk ? "bad" : qualityOk ? "ok" : "warn";
+    const verdictText = !goalOk
+      ? "short of goal"
+      : !qualityOk
+        ? (actionVerified ? "action applied \u00b7 quality warning" : "goal met \u00b7 quality warning")
+        : (actionVerified ? "action verified" : "goals met");
     html += `<div class="rz-attempt"><div class="rz-head">Attempt ${at.n}`
-      + `<span class="rz-verdict ${v.ok ? "ok" : "bad"}">${v.ok ? "goals met" : "short of goal"}</span></div>`;
+      + `<span class="rz-verdict ${verdictClass}">${verdictText}</span></div>`;
     html += `<div class="rz-sub">\ud83e\udde0 Planner <span class="rz-src ${pl}">${escapeHtml(PLANNER_LABEL[pl] || pl)}</span></div>`
       + `<div class="rz-plan">\u201c${escapeHtml(at.plan.summary || "")}\u201d</div>`;
     html += `<ol class="rz-steps">` + (at.plan.steps || []).map((s) =>

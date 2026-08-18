@@ -1022,6 +1022,8 @@ def test_named_motion_verdict_surfaces_artifact_guards_without_erasing_the_edit(
     assert result.ok
     assert any(not check["met"] for check in guards)
     assert not result.trace["attempts"][0]["verify"]["ok"]
+    assert result.trace["attempts"][0]["verify"]["goal_ok"]
+    assert not result.trace["attempts"][0]["verify"]["quality_ok"]
 
 
 @pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")

@@ -58,6 +58,17 @@ def test_live_editor_enables_the_blocking_motion_audit(monkeypatch):
     assert not A._motion_audit_required()
 
 
+def test_openai_key_can_be_loaded_from_a_private_file(tmp_path, monkeypatch):
+    import server.app as A
+
+    key_file = tmp_path / ".oai_key"
+    key_file.write_text("file-test-key\n", encoding="utf-8")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OAI_KEY_FILE", str(key_file))
+
+    assert A._openai_api_key() == "file-test-key"
+
+
 def test_editor_prewarm_starts_the_blender_pool(monkeypatch):
     import server.app as A
     import server.rendering as rendering
@@ -939,6 +950,7 @@ def test_editor_review_actions_explain_the_user_flow():
     assert "XMLHttpRequest" in js
     assert "xhr.upload.onprogress" in js
     assert "waitForMediaReady" in js
+    assert "action applied \\u00b7 quality warning" in js
 
     tour = js[js.index("const TOUR_STEPS"):js.index("let tourIdx")]
     assert "\\u2014" not in tour and "—" not in tour
