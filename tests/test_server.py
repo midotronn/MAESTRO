@@ -950,7 +950,7 @@ def test_editor_review_actions_explain_the_user_flow():
     assert "XMLHttpRequest" in js
     assert "xhr.upload.onprogress" in js
     assert "waitForMediaReady" in js
-    assert "action applied \\u00b7 quality warning" in js
+    assert "action applied, quality warning" in js
 
     tour = js[js.index("const TOUR_STEPS"):js.index("let tourIdx")]
     assert "\\u2014" not in tour and "—" not in tour

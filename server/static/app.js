@@ -1279,7 +1279,7 @@ function renderTrace(trace) {
     const verdictText = !goalOk
       ? "short of goal"
       : !qualityOk
-        ? (actionVerified ? "action applied \u00b7 quality warning" : "goal met \u00b7 quality warning")
+        ? (actionVerified ? "action applied, quality warning" : "goal met, quality warning")
         : (actionVerified ? "action verified" : "goals met");
     html += `<div class="rz-attempt"><div class="rz-head">Attempt ${at.n}`
       + `<span class="rz-verdict ${verdictClass}">${verdictText}</span></div>`;
