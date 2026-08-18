@@ -538,6 +538,19 @@ def test_lists_songs_and_opens_session(client):
     assert st["head"] and len(st["timeline"]) == 1
 
 
+def test_song_lookup_resolves_the_media_root(tmp_path, monkeypatch):
+    import server.app as A
+
+    media = tmp_path / "media"
+    song = media / "linked_song"
+    song.mkdir(parents=True)
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    monkeypatch.setattr(A, "MEDIA", shadow / ".." / "media")
+
+    assert A._song_dir("linked_song") == song.resolve()
+
+
 def test_uploaded_song_pipeline_uses_configured_pod_python(tmp_path, monkeypatch):
     import server.processing as P
 

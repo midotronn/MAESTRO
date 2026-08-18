@@ -164,8 +164,9 @@ def _report_planner() -> None:
 
 # --------------------------------------------------------------------------- session loading
 def _song_dir(sid: str) -> Path:
-    d = (MEDIA / sid).resolve()
-    if not d.is_dir() or MEDIA not in d.parents:
+    media_root = MEDIA.resolve()
+    d = (media_root / sid).resolve()
+    if not d.is_dir() or media_root not in d.parents:
         raise HTTPException(404, f"unknown song {sid!r}")
     return d
 
