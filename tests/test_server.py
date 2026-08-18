@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -181,6 +182,10 @@ def test_warm_render_sends_sparse_direct_video_options(tmp_path, monkeypatch):
         projection_only=True,
         batch_render=True,
         video_path=str(raw_video),
+        frame_start=15,
+        frame_end=45,
+        clear_frames=False,
+        frame_format="tga",
     )
     request = json.loads((d / f"{rid}.req").read_text())
     assert request["fast"] is True
@@ -190,6 +195,10 @@ def test_warm_render_sends_sparse_direct_video_options(tmp_path, monkeypatch):
     assert request["projection_only"] is True
     assert request["batch_render"] is True
     assert request["video_path"] == str(raw_video)
+    assert request["frame_start"] == 15
+    assert request["frame_end"] == 45
+    assert request["clear_frames"] is False
+    assert request["frame_format"] == "tga"
 
 
 def test_full_warm_render_preserves_quality_defaults_and_caches(tmp_path, monkeypatch):
@@ -205,6 +214,7 @@ def test_full_warm_render_preserves_quality_defaults_and_caches(tmp_path, monkey
         "AGENTLODGE_RENDER_DENOISE",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AGENTLODGE_FULL_RENDER_WORKERS", "1")
     captured = {"renders": 0, "pool_calls": 0}
     audio = tmp_path / "song.wav"
     audio.write_bytes(b"wav")
@@ -219,9 +229,13 @@ def test_full_warm_render_preserves_quality_defaults_and_caches(tmp_path, monkey
     def fake_save(_motion, path):
         Path(path).write_bytes(b"poses")
 
-    def fake_render(_poses, _frames, **kwargs):
+    def fake_render(_poses, frames, **kwargs):
         captured["renders"] += 1
         captured["render"] = kwargs
+        frames = Path(frames)
+        frames.mkdir(parents=True, exist_ok=True)
+        for frame in range(kwargs["frame_start"], kwargs["frame_end"]):
+            (frames / f"frame_{frame:04d}.tga").write_bytes(b"tga")
         return True
 
     def fake_encode(frames, output, **kwargs):
@@ -230,6 +244,7 @@ def test_full_warm_render_preserves_quality_defaults_and_caches(tmp_path, monkey
         return True
 
     monkeypatch.setattr(warm_render, "ensure_pool", fake_ensure_pool)
+    monkeypatch.setattr(warm_render, "ready_daemons", lambda: [0, 1])
     monkeypatch.setattr(warm_render, "warm_render", fake_render)
     monkeypatch.setattr(fk, "save_poses_npz", fake_save)
     monkeypatch.setattr(rendering, "_ffmpeg_frames", fake_encode)
@@ -252,6 +267,10 @@ def test_full_warm_render_preserves_quality_defaults_and_caches(tmp_path, monkey
     assert captured["render"]["fast"] is False
     assert captured["render"]["stride"] == 1
     assert captured["render"]["batch_render"] is True
+    assert captured["render"]["frame_start"] == 0
+    assert captured["render"]["frame_end"] == 120
+    assert captured["render"]["clear_frames"] is False
+    assert captured["render"]["frame_format"] == "tga"
     assert "video_path" not in captured["render"]
     assert captured["encode"]["audio_wav"] == str(audio)
     assert (tmp_path / "edited.mp4").read_bytes() == b"video"
@@ -265,6 +284,50 @@ def test_full_warm_render_preserves_quality_defaults_and_caches(tmp_path, monkey
     )
     assert captured["renders"] == 1
     assert captured["pool_calls"] == 1
+
+
+def test_full_warm_render_shards_every_frame(tmp_path, monkeypatch):
+    import server.fk as fk
+    import server.rendering as rendering
+    import server.warm_render as warm_render
+
+    monkeypatch.setenv("AGENTLODGE_FULL_RENDER_WORKERS", "3")
+    monkeypatch.setattr(warm_render, "on_pod", lambda: True)
+    monkeypatch.setattr(warm_render, "ensure_pool", lambda **_kwargs: 3)
+    monkeypatch.setattr(warm_render, "ready_daemons", lambda: [0, 1, 2])
+    calls = []
+
+    def fake_save(_motion, path):
+        Path(path).write_bytes(b"poses")
+
+    def fake_render(_poses, frames, **kwargs):
+        calls.append(kwargs)
+        frames = Path(frames)
+        frames.mkdir(parents=True, exist_ok=True)
+        for frame in range(kwargs["frame_start"], kwargs["frame_end"]):
+            (frames / f"frame_{frame:04d}.tga").write_bytes(b"tga")
+        return True
+
+    def fake_encode(_frames, output, **_kwargs):
+        Path(output).write_bytes(b"video")
+        return True
+
+    monkeypatch.setattr(fk, "save_poses_npz", fake_save)
+    monkeypatch.setattr(warm_render, "warm_render", fake_render)
+    monkeypatch.setattr(rendering, "_ffmpeg_frames", fake_encode)
+
+    assert rendering._render_warm_local(
+        "sharded",
+        np.zeros((10, 139), dtype=np.float32),
+        tmp_path,
+        "full",
+    )
+    assert sorted(
+        (call["daemon"], call["frame_start"], call["frame_end"])
+        for call in calls
+    ) == [(0, 0, 4), (1, 4, 7), (2, 7, 10)]
+    assert all(call["clear_frames"] is False for call in calls)
+    assert all(call["frame_format"] == "tga" for call in calls)
 
 
 def test_compare_warm_preserves_window_quality_defaults(tmp_path, monkeypatch):
@@ -284,6 +347,7 @@ def test_compare_warm_preserves_window_quality_defaults(tmp_path, monkeypatch):
 
     monkeypatch.setattr(warm_render, "on_pod", lambda: True)
     monkeypatch.setattr(warm_render, "ensure_pool", lambda **_kwargs: 2)
+    monkeypatch.setattr(warm_render, "ready_daemons", lambda: [0, 1])
 
     def fake_save(motion, path):
         np.savez(path, fk_joints=np.zeros((motion.shape[0], 22, 3), dtype=np.float32))
@@ -414,6 +478,24 @@ def test_frame_sequence_accepts_blender_batch_numbering(tmp_path):
     (frames / "frame_0001.png").unlink()
     assert rendering._frame_sequence(str(frames)) is None
 
+    for frame in frames.glob("*.png"):
+        frame.unlink()
+    for index in range(3):
+        (frames / f"frame_{index:04d}.tga").write_bytes(b"tga")
+    assert rendering._frame_sequence(str(frames)) == (
+        str(frames / "frame_%04d.tga"),
+        0,
+        3,
+    )
+
+
+def test_render_ranges_cover_all_frames_once():
+    import server.rendering as rendering
+
+    assert rendering._render_ranges(10, 3) == [(0, 4), (4, 7), (7, 10)]
+    assert rendering._render_ranges(3, 8) == [(0, 1), (1, 2), (2, 3)]
+    assert rendering._render_ranges(0, 6) == []
+
 
 def test_lists_songs_and_opens_session(client):
     songs = client.get("/api/songs").json()["songs"]
@@ -437,6 +519,7 @@ def test_uploaded_song_pipeline_uses_configured_pod_python(tmp_path, monkeypatch
         "/workspace/AgentLODGE/.venv/bin/python",
     )
     monkeypatch.setattr(P, "pod_config", lambda: cfg)
+    monkeypatch.setattr(P, "_co_located", lambda _cfg: False)
 
     def fake_ssh(_cfg, command, timeout=60):
         commands.append(command)
@@ -466,6 +549,67 @@ def test_uploaded_song_pipeline_uses_configured_pod_python(tmp_path, monkeypatch
     assert P.get_job("test_song")["status"] == "done"
 
 
+def test_hosted_upload_uses_warm_full_render(tmp_path, monkeypatch):
+    import server.processing as processing
+    import server.rendering as rendering
+
+    workspace = tmp_path / "workspace"
+    repo = workspace / "AgentLODGE-lossless"
+    (repo / "scripts").mkdir(parents=True)
+    output = workspace / "upload_hosted_song"
+    output.mkdir(parents=True)
+    np.save(output / "base_motion.npy", np.zeros((12, 139), dtype=np.float32))
+    np.save(output / "beats.npy", np.array([0, 6], dtype=np.int32))
+    np.save(output / "beat_strengths.npy", np.ones(2, dtype=np.float32))
+    np.save(output / "bank_hosted_song_lodge_seed0.npy", np.zeros((12, 139)))
+    cfg = processing.PodConfig(
+        host="127.0.0.1",
+        ws=str(workspace),
+        bank_k="1",
+    )
+    source = tmp_path / "source.wav"
+    source.write_bytes(b"wav")
+    media = tmp_path / "media"
+    rendered = {}
+
+    monkeypatch.setattr(processing, "pod_config", lambda: cfg)
+    monkeypatch.setattr(processing, "_co_located", lambda _cfg: True)
+    monkeypatch.setattr(processing, "_pod_repo", lambda _cfg: str(repo))
+
+    def fake_ssh(_cfg, command, timeout=60):
+        stdout = "PROCESS_hosted_song_DONE\n" if "process_song.sh" in command else "ok\n"
+        return subprocess.CompletedProcess([], 0, stdout=stdout, stderr="")
+
+    def fake_render(sid, motion, media_dir, scope, *, audio_wav=None):
+        rendered.update(
+            sid=sid,
+            frames=len(motion),
+            scope=scope,
+            audio_wav=audio_wav,
+        )
+        (Path(media_dir) / "edited.mp4").write_bytes(b"video")
+        return True
+
+    monkeypatch.setattr(processing, "_ssh", fake_ssh)
+    monkeypatch.setattr(processing, "_run_pod", fake_ssh)
+    monkeypatch.setattr(rendering, "_render_warm_local", fake_render)
+
+    processing._process("hosted_song", source, media, 'Hosted "song"')
+
+    job = processing.get_job("hosted_song")
+    assert job["status"] != "error", job
+    assert rendered == {
+        "sid": "hosted_song",
+        "frames": 12,
+        "scope": "full",
+        "audio_wav": str(source),
+    }
+    assert (media / "preview.mp4").read_bytes() == b"video"
+    assert (media / "bank" / "bank_hosted_song_lodge_seed0.npy").exists()
+    assert json.loads((media / "meta.json").read_text()) == {"name": 'Hosted "song"'}
+    assert job["status"] == "done"
+
+
 def test_uploaded_song_pipeline_scripts_are_packaged():
     root = Path(__file__).resolve().parents[1]
     required = {
@@ -475,6 +619,43 @@ def test_uploaded_song_pipeline_scripts_are_packaged():
         "process_song.sh",
     }
     assert required <= {path.name for path in (root / "scripts").iterdir()}
+
+
+def test_background_bank_launch_requires_every_seed(monkeypatch):
+    import server.processing as processing
+
+    cfg = processing.PodConfig(host="pod", ws="/workspace", bank_k="4")
+    commands = []
+
+    def fake_ssh(_cfg, command, timeout=60):
+        commands.append((command, timeout))
+        return subprocess.CompletedProcess([], 0, stdout="BANK_PID=123\n", stderr="")
+
+    monkeypatch.setattr(processing, "_ssh", fake_ssh)
+
+    assert processing._launch_background_bank(
+        cfg,
+        "song_123",
+        "/workspace/upload_song_123",
+        "/workspace/AgentLODGE-lossless",
+        "/root/al_venv/bin/python",
+    )
+    command, timeout = commands[0]
+    assert "AGENTLODGE_BANK_K=4" in command
+    assert 'wc -l)\" -ge 8' in command
+    assert "setsid bash -c" in command
+    assert "/workspace/upload_song_123/bank.done" in command
+    assert timeout == 60
+
+
+def test_upload_critical_path_builds_only_seed_zero():
+    script = (
+        Path(__file__).resolve().parents[1] / "scripts" / "process_song.sh"
+    ).read_text()
+
+    assert 'AGENTLODGE_BANK_K=1 "$PY" "$BANK" "$SID"' in script
+    assert 'echo "BANK_DEFERRED $K"' in script
+    assert 'AGENTLODGE_SKIP_RENDER' in script
 
 
 def test_packaged_song_generator_writes_expected_outputs(tmp_path, monkeypatch):
@@ -511,6 +692,7 @@ def test_packaged_song_generator_writes_expected_outputs(tmp_path, monkeypatch):
         lambda *_args, **_kwargs: {"motion": edge, "summary": "edge", "error": None},
     )
     monkeypatch.setattr(M, "release_torch_memory", lambda: None)
+    monkeypatch.setattr(M, "_use_parallel_execution", lambda: True)
     monkeypatch.setattr(M, "analyze_structure", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(M.librosa, "load", lambda *_args, **_kwargs: (np.zeros(10), 22050))
     monkeypatch.setattr(M, "extract_audio_descriptor", lambda *_args: object())

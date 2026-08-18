@@ -30,7 +30,8 @@ if not hasattr(_sps, "hann"):
     _sps.hann = _hann
 
 WORKSPACE = os.environ.get("WORKSPACE", "/workspace")
-sys.path.insert(0, f"{WORKSPACE}/AgentLODGE")
+AGENTLODGE_ROOT = os.environ.get("AGENTLODGE_ROOT", f"{WORKSPACE}/AgentLODGE")
+sys.path.insert(0, AGENTLODGE_ROOT)
 
 from agentlodge.config import Settings
 from agentlodge.audio.preprocess import preprocess_audio

@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import blender_render_ybot as ybot  # noqa: E402
 import blender_studio as studio  # noqa: E402
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 5
 
 
 def _args():
@@ -97,6 +97,10 @@ def _render_request(req, cfg):
         samples=int(req.get("samples", cfg.samples)), engine=req.get("engine", cfg.engine),
         denoise=int(req.get("denoise", cfg.denoise)), color=req.get("color", cfg.color),
         align_x=0.0, yaw=float(req.get("yaw", 0.0)), stride=int(req.get("stride", 1)),
+        frame_start=int(req.get("frame_start", 0)),
+        frame_end=int(req.get("frame_end", -1)),
+        keep_existing_frames=not bool(req.get("clear_frames", True)),
+        frame_format=req.get("frame_format", "png"),
         build_scene="", force_align=False, fk_npz=req.get("fk_npz", ""),
         fast=bool(req.get("fast", True)),
         lock_root=bool(req.get("lock_root", False)),

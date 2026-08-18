@@ -3,7 +3,7 @@
 # Usage: ./render_one_ybot.sh <motion_npy> <out_mp4> <sid_for_audio>
 set -euo pipefail
 WORKSPACE="${WORKSPACE:-/workspace}"
-A="$WORKSPACE/AgentLODGE"
+A="${AGENTLODGE_ROOT:-$WORKSPACE/AgentLODGE}"
 if [ -n "${AL_PY:-}" ]; then
   PY="$AL_PY"
 elif [ -x "$A/.venv/bin/python" ]; then

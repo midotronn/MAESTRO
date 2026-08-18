@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Full pipeline for an UPLOADED song: audio -> AgentLODGE dance + candidate bank + preview render.
+# Critical-path pipeline for an uploaded song: audio -> initial dance -> optional preview render.
 # Stages results into $WORKSPACE/upload_<sid>/ for the server to pull:
-#     base_motion.npy · beats.npy · beat_strengths.npy · preview.mp4 · bank_<sid>_*.npy
+#     base_motion.npy · beats.npy · beat_strengths.npy · seed-0 bank · optional preview.mp4
 #
 # Usage (on the pod):  WORKSPACE=/workspace AGENTLODGE_BANK_K=4 bash scripts/process_song.sh <sid>
 # Prereqs: a provisioned pod (scripts/setup_pod.sh) with the demo pipeline scripts present on
@@ -11,27 +11,42 @@ set -uo pipefail
 SID="$1"
 WORKSPACE="${WORKSPACE:-/workspace}"
 K="${AGENTLODGE_BANK_K:-4}"
-PY="${AL_PY:-$WORKSPACE/AgentLODGE/.venv/bin/python}"
+AL="${AGENTLODGE_ROOT:-$WORKSPACE/AgentLODGE}"
+PY="${AL_PY:-$AL/.venv/bin/python}"
+SKIP_RENDER="${AGENTLODGE_SKIP_RENDER:-0}"
 cd "$WORKSPACE"
-export PYTHONUNBUFFERED=1 WORKSPACE
+export PYTHONUNBUFFERED=1 WORKSPACE AGENTLODGE_ROOT="$AL"
 fail() { echo "PROCESS_${SID}_FAILED: $1" >&2; exit 1; }
 [ -x "$PY" ] || fail "Python environment not found: $PY"
 
 find_script() {  # look in $WORKSPACE then the repo scripts dir
-  for p in "$WORKSPACE/$1" "$WORKSPACE/AgentLODGE/scripts/$1"; do
+  for p in "$WORKSPACE/$1" "$AL/scripts/$1"; do
     [ -f "$p" ] && { echo "$p"; return 0; }
   done
   return 1
 }
 
-# Jukebox prior is needed to extract EDGE features for a NEW song (wiped on /root each restart).
-PRIOR=/root/.cache/jukemirlib/prior_level_2.pth.tar
-if [ ! -s "$PRIOR" ]; then
-  echo "### fetching jukebox prior (~10GB, first time only)"
-  mkdir -p "$(dirname "$PRIOR")"
-  wget -c -q -O "$PRIOR" https://openaipublic.azureedge.net/jukebox/models/5b/prior_level_2.pth.tar || \
-    fail "jukebox prior download failed"
+# Jukebox's 10GB prior must live on /workspace; /root is wiped on every pod restart.
+PRIOR_SIZE=10288727721
+PRIOR_STORE="${AGENTLODGE_JUKEBOX_PRIOR:-$WORKSPACE/.cache/jukemirlib/prior_level_2.pth.tar}"
+PRIOR_LINK="$HOME/.cache/jukemirlib/prior_level_2.pth.tar"
+mkdir -p "$(dirname "$PRIOR_STORE")" "$(dirname "$PRIOR_LINK")"
+if [ "$(stat -c %s "$PRIOR_STORE" 2>/dev/null || echo 0)" -ne "$PRIOR_SIZE" ]; then
+  echo "### fetching persistent Jukebox prior (~10GB, first time only)"
+  PRIOR_URL=https://openaipublic.azureedge.net/jukebox/models/5b/prior_level_2.pth.tar
+  if command -v aria2c >/dev/null 2>&1; then
+    aria2c --continue=true --max-connection-per-server=16 --split=16 \
+      --min-split-size=16M --file-allocation=none --auto-file-renaming=false \
+      --dir="$(dirname "$PRIOR_STORE")" --out="$(basename "$PRIOR_STORE")" "$PRIOR_URL" \
+      || fail "Jukebox prior download failed"
+  else
+    curl -L -C - --retry 20 --retry-delay 5 --retry-all-errors \
+      -o "$PRIOR_STORE" "$PRIOR_URL" || fail "Jukebox prior download failed"
+  fi
+  [ "$(stat -c %s "$PRIOR_STORE" 2>/dev/null || echo 0)" -eq "$PRIOR_SIZE" ] \
+    || fail "Jukebox prior download is incomplete"
 fi
+ln -sfn "$PRIOR_STORE" "$PRIOR_LINK"
 
 PRE="$(find_script preprocess_song.py)" || fail "preprocess_song.py not found on the pod"
 GEN="$(find_script make_song_bestofk.py)" || fail "make_song_bestofk.py not found on the pod"
@@ -40,7 +55,22 @@ BANK="$(find_script build_window_bank.py)" || fail "build_window_bank.py not fou
 REND="$(find_script render_one_ybot.sh)" || fail "render_one_ybot.sh not found"
 
 echo "### [1/6] preprocess (LODGE feats + EDGE jukebox slices)"
-"$PY" "$PRE" "$SID" || fail "preprocess failed"
+PREP_LOG_DIR="$WORKSPACE/gen${SID}_work"; mkdir -p "$PREP_LOG_DIR"
+"$PY" "$PRE" "$SID" --lodge-only > "$PREP_LOG_DIR/preprocess_lodge.log" 2>&1 &
+LODGE_PREP_PID=$!
+"$PY" "$PRE" "$SID" --edge-only > "$PREP_LOG_DIR/preprocess_edge.log" 2>&1 &
+EDGE_PREP_PID=$!
+LODGE_PREP_RC=0; wait "$LODGE_PREP_PID" || LODGE_PREP_RC=$?
+EDGE_PREP_RC=0; wait "$EDGE_PREP_PID" || EDGE_PREP_RC=$?
+cat "$PREP_LOG_DIR/preprocess_lodge.log" "$PREP_LOG_DIR/preprocess_edge.log"
+if [ "$LODGE_PREP_RC" -ne 0 ]; then
+  echo "### parallel LODGE preprocessing failed; retrying alone"
+  "$PY" "$PRE" "$SID" --lodge-only || fail "LODGE preprocess failed"
+fi
+if [ "$EDGE_PREP_RC" -ne 0 ]; then
+  echo "### parallel EDGE preprocessing failed; retrying alone"
+  "$PY" "$PRE" "$SID" --edge-only || fail "EDGE preprocess failed"
+fi
 echo "### [2/6] best-of-K generation + storyboard"
 "$PY" "$GEN" "$SID" || fail "generation failed"
 if [ -n "${RECAP:-}" ]; then echo "### [2b] recap alignment"; "$PY" "$RECAP" "$SID" || true; fi
@@ -50,8 +80,8 @@ if [ -n "${PEN:-}" ]; then
   "$PY" "$PEN" "fd_${SID}_STORY_bestofk.npy" "fd_${SID}_STORY_bestofk.npy" \
     --radius 0.12 --margin 0.03 --max-deg 30 || echo "  (penetration cleanup skipped)"
 fi
-echo "### [3/6] candidate bank (K=$K real seeded takes)"
-AGENTLODGE_BANK_K="$K" "$PY" "$BANK" "$SID" || fail "bank build failed"
+echo "### [3/6] seed-0 editing bank"
+AGENTLODGE_BANK_K=1 "$PY" "$BANK" "$SID" || fail "seed-0 bank build failed"
 
 echo "### [4/6] beats"
 "$PY" - "$SID" <<'PY' || fail "beat tracking failed"
@@ -75,14 +105,20 @@ np.save(f"/workspace/beat_strengths_{sid}.npy", strengths)
 print("beats", len(beat_frames), "strongest", float(strengths.max()) if strengths.size else 0.0)
 PY
 
-echo "### [5/6] render gray Y-Bot preview"
-bash "$REND" "fd_${SID}_STORY_bestofk.npy" "v_${SID}_preview.mp4" "$SID" || fail "render failed"
-
-echo "### [6/6] stage outputs"
+echo "### [5/6] stage initial outputs"
 OUT="$WORKSPACE/upload_${SID}"; mkdir -p "$OUT"
 cp "fd_${SID}_STORY_bestofk.npy" "$OUT/base_motion.npy"
 cp "beats_${SID}.npy"            "$OUT/beats.npy"
 cp "beat_strengths_${SID}.npy"   "$OUT/beat_strengths.npy"
-cp "v_${SID}_preview.mp4"        "$OUT/preview.mp4"
-cp bank_${SID}_*.npy             "$OUT/" 2>/dev/null || true
+cp bank_${SID}_*_seed0.npy       "$OUT/" 2>/dev/null || true
+
+if [ "$SKIP_RENDER" = "1" ]; then
+  echo "### [6/6] preview render delegated to the hosted warm renderer"
+else
+  echo "### [6/6] render gray Y-Bot preview"
+  bash "$REND" "fd_${SID}_STORY_bestofk.npy" "v_${SID}_preview.mp4" "$SID" || fail "render failed"
+  cp "v_${SID}_preview.mp4" "$OUT/preview.mp4"
+fi
+
+echo "BANK_DEFERRED $K"
 echo "PROCESS_${SID}_DONE"

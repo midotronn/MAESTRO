@@ -31,6 +31,9 @@ AL="$WORK/AgentLODGE"
 BLENDER="$WORK/blender/blender"
 YBOT="$WORK/EDGE/SMPL-to-FBX/ybot.fbx"
 YBOT_SCENE="$WORK/ybot_scene.blend"
+JUKEBOX_PRIOR_SIZE=10288727721
+JUKEBOX_PRIOR_STORE="$WORK/.cache/jukemirlib/prior_level_2.pth.tar"
+JUKEBOX_PRIOR_LINK="$HOME/.cache/jukemirlib/prior_level_2.pth.tar"
 step() { echo ""; echo "=== $* ==="; }
 die()  { echo "SETUP_FAILED: $*" >&2; exit 1; }
 
@@ -40,27 +43,28 @@ if [ "${1:-}" = "--song" ]; then
   MODE="${3:-}"
   # EDGE features need Jukebox's ~10GB 5B prior. jukemirlib fetches it with a NON-resumable wget that
   # routinely dies mid-download; pre-fetch it resumably (parallel aria2, or curl as a fallback) to
-  # the cache path jukemirlib checks, so setup_models() skips its own fragile download.
+  # persistent storage, then link the cache path jukemirlib checks.
   if [ "$MODE" != "--lodge-only" ]; then
-    PRIOR="$HOME/.cache/jukemirlib/prior_level_2.pth.tar"; PRIOR_SIZE=10288727721
-    mkdir -p "$(dirname "$PRIOR")"
-    if [ ! -f "$PRIOR" ] || [ "$(stat -c %s "$PRIOR" 2>/dev/null || echo 0)" -lt "$PRIOR_SIZE" ]; then
-      TMP=$(ls "$(dirname "$PRIOR")"/prior_level_2.pth.tar*.tmp 2>/dev/null | head -1)
-      [ -n "$TMP" ] && mv -f "$TMP" "$PRIOR"        # reuse any partial jukemirlib download
+    mkdir -p "$(dirname "$JUKEBOX_PRIOR_STORE")" "$(dirname "$JUKEBOX_PRIOR_LINK")"
+    if [ ! -f "$JUKEBOX_PRIOR_STORE" ] \
+      || [ "$(stat -c %s "$JUKEBOX_PRIOR_STORE" 2>/dev/null || echo 0)" -lt "$JUKEBOX_PRIOR_SIZE" ]; then
+      TMP=$(ls "$(dirname "$JUKEBOX_PRIOR_LINK")"/prior_level_2.pth.tar*.tmp 2>/dev/null | head -1)
+      [ -n "$TMP" ] && mv -f "$TMP" "$JUKEBOX_PRIOR_STORE"
       step "fetching Jukebox 5B prior (~10GB, resumable, one-time)"
       PRIOR_URL=https://openaipublic.azureedge.net/jukebox/models/5b/prior_level_2.pth.tar
       if command -v aria2c >/dev/null 2>&1; then
         aria2c --continue=true --max-connection-per-server=16 --split=16 \
           --min-split-size=16M --file-allocation=none --auto-file-renaming=false \
-          --dir="$(dirname "$PRIOR")" --out="$(basename "$PRIOR")" "$PRIOR_URL" \
+          --dir="$(dirname "$JUKEBOX_PRIOR_STORE")" --out="$(basename "$JUKEBOX_PRIOR_STORE")" "$PRIOR_URL" \
           || die "prior download"
       else
-        curl -L -C - --retry 20 --retry-delay 5 --retry-all-errors -o "$PRIOR" \
+        curl -L -C - --retry 20 --retry-delay 5 --retry-all-errors -o "$JUKEBOX_PRIOR_STORE" \
           "$PRIOR_URL" || die "prior download"
       fi
-      [ "$(stat -c%s "$PRIOR" 2>/dev/null || echo 0)" -eq "$PRIOR_SIZE" ] \
+      [ "$(stat -c%s "$JUKEBOX_PRIOR_STORE" 2>/dev/null || echo 0)" -eq "$JUKEBOX_PRIOR_SIZE" ] \
         || die "prior download is incomplete"
     fi
+    ln -sfn "$JUKEBOX_PRIOR_STORE" "$JUKEBOX_PRIOR_LINK"
   fi
   step "preprocess $SID (LODGE feats + EDGE Jukebox slices)"
   cd "$AL" && WORKSPACE="$WORK" "$PY" scripts/preprocess_song.py "$SID" "$MODE" || die "preprocess failed"
@@ -74,6 +78,10 @@ if command -v apt-get >/dev/null 2>&1; then
   apt-get install -y -qq aria2 ffmpeg libsndfile1 build-essential git curl xz-utils \
     libosmesa6 libosmesa6-dev libgl1-mesa-glx libglu1-mesa freeglut3-dev libglib2.0-0 \
     libxrender1 libxi6 libxxf86vm1 libxfixes3 libxkbcommon0 >/dev/null 2>&1 || true
+fi
+mkdir -p "$(dirname "$JUKEBOX_PRIOR_STORE")" "$(dirname "$JUKEBOX_PRIOR_LINK")"
+if [ "$(stat -c %s "$JUKEBOX_PRIOR_STORE" 2>/dev/null || echo 0)" -eq "$JUKEBOX_PRIOR_SIZE" ]; then
+  ln -sfn "$JUKEBOX_PRIOR_STORE" "$JUKEBOX_PRIOR_LINK"
 fi
 
 # ---- 2. GPU present? ----------------------------------------------------------------------
@@ -158,6 +166,7 @@ fi
 # ---- 6. python deps (pyrender is REQUIRED: LODGE render.py imports it at load) -------------
 step "python deps"
 "$PIP" install -q -r "$AL/requirements.txt"
+[ -f "$AL/server/requirements.txt" ] && "$PIP" install -q -r "$AL/server/requirements.txt"
 "$PIP" install -q gdown omegaconf pytorch-lightning einops tqdm soundfile librosa \
   opencv-python-headless pyrender PyOpenGL trimesh smplx p_tqdm h5py imageio imageio-ffmpeg psutil \
   torchmetrics accelerate wandb fire pytest==9.1.1

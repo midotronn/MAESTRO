@@ -19,7 +19,8 @@ from pathlib import Path
 import numpy as np
 
 WORKSPACE = os.environ.get("WORKSPACE", "/workspace")
-sys.path.insert(0, f"{WORKSPACE}/AgentLODGE")
+AGENTLODGE_ROOT = os.environ.get("AGENTLODGE_ROOT", f"{WORKSPACE}/AgentLODGE")
+sys.path.insert(0, AGENTLODGE_ROOT)
 
 from agentlodge.dance.format import ensure_lodge139, to_agentlodge139
 from agentlodge.dance.transition import to_zup

@@ -105,6 +105,14 @@ def parse_args():
                    help="Extra degrees about Z to face the dancer toward the camera")
     p.add_argument("--stride", type=int, default=1,
                    help="Render every Nth frame (validation only; alignment still uses all)")
+    p.add_argument("--frame-start", type=int, default=0,
+                   help="First source frame to render, inclusive.")
+    p.add_argument("--frame-end", type=int, default=-1,
+                   help="Last source frame to render, exclusive (-1 renders through EOF).")
+    p.add_argument("--keep-existing-frames", action="store_true",
+                   help="Do not clear frame_*.png before rendering (used by disjoint shards).")
+    p.add_argument("--frame-format", choices=("png", "tga"), default="png",
+                   help="Lossless intermediate format. Raw TGA avoids PNG compression overhead.")
     p.add_argument("--build-scene", default="",
                    help="Import the rig + studio, save this .blend and exit (skips the per-render "
                         "FBX import when render opens the cached scene).")
@@ -416,11 +424,12 @@ def render_take(args, color):
     # Clear frames from any previous render in this dir. The warm daemon reuses the same
     # _cmp_*_frames dirs and ffmpeg muxes frame_%05d.png contiguously, so leftover trailing frames
     # from an earlier, LONGER window would be appended to the end of this clip (a "glitch" tail).
-    for _old in glob.glob(f"{frames_dir}/frame_*"):
-        try:
-            os.remove(_old)
-        except OSError:
-            pass
+    if not bool(getattr(args, "keep_existing_frames", False)):
+        for _old in glob.glob(f"{frames_dir}/frame_*"):
+            try:
+                os.remove(_old)
+            except OSError:
+                pass
     stride = max(1, args.stride)
     fast = bool(getattr(args, "fast", False))
     # The per-frame bottleneck is the foot-grounding vertex scan (~100 meshes), not the render. In
@@ -620,7 +629,16 @@ def render_take(args, color):
                     for joint in joints
                 ], dtype=np.float32)
 
-    rendered_frames = list(range(0, L, stride))
+    frame_start = max(0, int(getattr(args, "frame_start", 0)))
+    requested_end = int(getattr(args, "frame_end", -1))
+    frame_end = L if requested_end < 0 else min(L, requested_end)
+    if frame_start >= frame_end:
+        raise ValueError(
+            f"empty render range [{frame_start}, {frame_end}) for {L} source frames"
+        )
+    rendered_frames = list(range(frame_start, frame_end, stride))
+    frame_format = str(getattr(args, "frame_format", "png")).lower()
+    frame_extension = "tga" if frame_format == "tga" else "png"
     if bool(getattr(args, "batch_render", False)):
         driven_bones = [JOINT_NAMES[j] for j in range(n_body) if JOINT_NAMES[j] in rest]
         bone_quaternions = {
@@ -675,7 +693,11 @@ def render_take(args, color):
             scene.render.fps_base = float(stride)
             scene.render.filepath = os.path.abspath(args.video_path)
         else:
-            scene.render.image_settings.file_format = "PNG"
+            scene.render.image_settings.file_format = (
+                "TARGA_RAW" if frame_format == "tga" else "PNG"
+            )
+            scene.render.image_settings.color_mode = "RGB"
+            scene.render.image_settings.color_depth = "8"
             scene.render.use_file_extension = True
             scene.render.filepath = f"{frames_dir}/frame_"
         scene.frame_set(rendered_frames[0])
@@ -684,7 +706,12 @@ def render_take(args, color):
         for out_i, i in enumerate(rendered_frames):
             place_frame(i)
             capture_metrics(i)
-            scene.render.filepath = f"{frames_dir}/frame_{out_i:05d}.png"
+            scene.render.image_settings.file_format = (
+                "TARGA_RAW" if frame_format == "tga" else "PNG"
+            )
+            scene.render.image_settings.color_mode = "RGB"
+            scene.render.image_settings.color_depth = "8"
+            scene.render.filepath = f"{frames_dir}/frame_{i:05d}.{frame_extension}"
             bpy.ops.render.render(write_still=True)
     if metric_projected is not None:
         metrics_path = os.path.abspath(args.rig_metrics)

@@ -26,8 +26,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 WS = os.environ.get("AGENTLODGE_POD_WS", "/workspace")
-POOL_SIZE = int(os.environ.get("AGENTLODGE_WARM_POOL", "2"))
-PROTOCOL_VERSION = 3
+POOL_SIZE = int(os.environ.get("AGENTLODGE_WARM_POOL", "6"))
+PROTOCOL_VERSION = 5
 DAEMON_ROOT = Path(WS) / "blend_daemon"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _EGL = "/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
@@ -67,9 +67,12 @@ def _dir(i: int) -> Path:
 def _pid_alive(d: Path) -> bool:
     try:
         pid = int((d / "daemon.pid").read_text().strip())
+        stat = Path(f"/proc/{pid}/stat")
+        if stat.exists() and stat.read_text().split()[2] == "Z":
+            return False
         os.kill(pid, 0)
         return True
-    except (OSError, ValueError):
+    except (OSError, ValueError, IndexError):
         return False
 
 
@@ -180,6 +183,11 @@ def ensure_pool(*, width: int = 448, height: int = 448, samples: int = 8, wait_r
     return sum(_alive(_dir(i)) for i in range(POOL_SIZE))
 
 
+def ready_daemons() -> list[int]:
+    """Return the concrete daemon slots that are currently ready for requests."""
+    return [index for index in range(POOL_SIZE) if _alive(_dir(index))]
+
+
 def available() -> bool:
     return on_pod() and any(_alive(_dir(i)) for i in range(POOL_SIZE))
 
@@ -189,18 +197,21 @@ def warm_render(poses_npz: str, frames_dir: str, *, daemon: int, samples: int = 
                 engine: str = "eevee", denoise: int = 1,
                 rig_metrics: str = "", fast: bool = False, stride: int = 1,
                 projection_only: bool = False, batch_render: bool = False,
-                video_path: str = "") -> bool:
+                video_path: str = "", frame_start: int = 0,
+                frame_end: int | None = None, clear_frames: bool = True,
+                frame_format: str = "png") -> bool:
     """Submit one render and optionally capture exact projected rig metrics. Returns True on success."""
     d = _dir(daemon % POOL_SIZE)
     if not _alive(d):
         return False
     frames_path = Path(frames_dir)
     frames_path.mkdir(parents=True, exist_ok=True)
-    for old_frame in frames_path.glob("frame_*"):
-        try:
-            old_frame.unlink()
-        except OSError:
-            return False
+    if clear_frames:
+        for old_frame in frames_path.glob("frame_*"):
+            try:
+                old_frame.unlink()
+            except OSError:
+                return False
     if video_path:
         try:
             Path(video_path).unlink(missing_ok=True)
@@ -213,7 +224,9 @@ def warm_render(poses_npz: str, frames_dir: str, *, daemon: int, samples: int = 
            "engine": str(engine), "denoise": int(denoise), "fast": bool(fast),
            "stride": max(1, int(stride)), "rig_metrics": str(rig_metrics),
            "projection_only": bool(projection_only), "batch_render": bool(batch_render),
-           "video_path": str(video_path)}
+           "video_path": str(video_path), "frame_start": max(0, int(frame_start)),
+           "frame_end": -1 if frame_end is None else int(frame_end),
+           "clear_frames": bool(clear_frames), "frame_format": str(frame_format)}
     tmp = d / f"{rid}.req.tmp"
     tmp.write_text(json.dumps(req))
     tmp.rename(d / f"{rid}.req")          # atomic publish so the daemon never reads a half-written file

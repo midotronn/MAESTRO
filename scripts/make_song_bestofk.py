@@ -6,13 +6,17 @@ from __future__ import annotations
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import librosa
 import numpy as np
 
 WORKSPACE = Path(os.environ.get("WORKSPACE", "/workspace")).resolve()
-sys.path.insert(0, str(WORKSPACE / "AgentLODGE"))
+AGENTLODGE_ROOT = Path(
+    os.environ.get("AGENTLODGE_ROOT", str(WORKSPACE / "AgentLODGE"))
+).resolve()
+sys.path.insert(0, str(AGENTLODGE_ROOT))
 
 from agentlodge.agent.storyboard import author_storyboard  # noqa: E402
 from agentlodge.audio.preprocess import (  # noqa: E402
@@ -30,6 +34,7 @@ from agentlodge.pipeline import (  # noqa: E402
     _run_edge_job,
     _run_lodge_job,
     _settings_to_dict,
+    _use_parallel_execution,
 )
 
 
@@ -85,34 +90,53 @@ def generate_song(sid: str) -> dict:
         for item in np.load(edge_slices_path, allow_pickle=True)
     ]
 
-    lodge_result = best_of_k_job(
-        lambda seed: _run_lodge_job(
-            lodge_features,
-            settings_dict,
-            str(work / "lodge" / (f"seed_{seed}" if seed is not None else "single")),
-            seed=seed,
-        ),
-        k,
-        metadata.beat_frames,
-        score_transform=_lodge_score_transform,
-    )
-    lodge_motion = _successful_motion(lodge_result, "LODGE")
-    np.save(WORKSPACE / f"lodge_fd_{sid}_full.npy", lodge_motion)
-    release_torch_memory()
+    def generate_lodge() -> dict:
+        return best_of_k_job(
+            lambda seed: _run_lodge_job(
+                lodge_features,
+                settings_dict,
+                str(work / "lodge" / (f"seed_{seed}" if seed is not None else "single")),
+                seed=seed,
+            ),
+            k,
+            metadata.beat_frames,
+            score_transform=_lodge_score_transform,
+        )
 
-    edge_result = best_of_k_job(
-        lambda seed: _run_edge_job(
-            str(wav),
-            edge_slices,
-            settings_dict,
-            str(work / "edge" / (f"seed_{seed}" if seed is not None else "single")),
-            seed=seed,
-        ),
-        k,
-        metadata.beat_frames,
-        score_transform=_edge_score_transform,
-    )
+    def generate_edge() -> dict:
+        return best_of_k_job(
+            lambda seed: _run_edge_job(
+                str(wav),
+                edge_slices,
+                settings_dict,
+                str(work / "edge" / (f"seed_{seed}" if seed is not None else "single")),
+                seed=seed,
+            ),
+            k,
+            metadata.beat_frames,
+            score_transform=_edge_score_transform,
+        )
+
+    if _use_parallel_execution():
+        print(f"[{sid}] generating LODGE and EDGE in parallel", flush=True)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            lodge_future = executor.submit(generate_lodge)
+            edge_future = executor.submit(generate_edge)
+            lodge_result = lodge_future.result()
+            edge_result = edge_future.result()
+        if lodge_result.get("error") or lodge_result.get("motion") is None:
+            print(f"[{sid}] parallel LODGE failed; retrying it alone", flush=True)
+            lodge_result = generate_lodge()
+        if edge_result.get("error") or edge_result.get("motion") is None:
+            print(f"[{sid}] parallel EDGE failed; retrying it alone", flush=True)
+            edge_result = generate_edge()
+    else:
+        lodge_result = generate_lodge()
+        edge_result = generate_edge()
+
+    lodge_motion = _successful_motion(lodge_result, "LODGE")
     edge_motion = _successful_motion(edge_result, "EDGE")
+    np.save(WORKSPACE / f"lodge_fd_{sid}_full.npy", lodge_motion)
     np.save(WORKSPACE / f"edge_fd_{sid}_full.npy", edge_motion)
     release_torch_memory()
 

@@ -31,11 +31,15 @@ $env:AGENTLODGE_POD_KEY="$HOME\.ssh\id_ed25519"
 
 For an existing workspace after a restart, `setup_pod.sh` installs, idempotently:
 1. the system libs Blender/ffmpeg need, `libXrender/libXi/libEGL/libglvnd/...` + `libOSMesa`
-   (which LODGE's PyOpenGL import needs, not Blender) + `ffmpeg`
+   (which LODGE's PyOpenGL import needs, not Blender) + `ffmpeg`, `curl`, and `aria2`
    (these are wiped on **every** restart);
 2. a Python venv (`/root/al_venv`, fast local disk) with `torch` + `pytorch3d` + the LODGE/EDGE
    generation deps (`pytorch-lightning`, `accelerate`, ...);
 3. `LODGE/.venv` and `EDGE/.venv` links so the diffusion backends resolve.
+
+The Jukebox 5B prior is stored under `/workspace/.cache/jukemirlib/` and linked back into
+`/root/.cache/jukemirlib/`. The first EDGE preprocessing run still downloads the ~10GB file, but
+subsequent pod restarts reuse it instead of downloading it again.
 
 Set `AGENTLODGE_TORCH_INDEX=cpu` for a render-only box (no GPU generation), else the default
 `cu128` installs CUDA torch for real backbone generation.
@@ -68,8 +72,16 @@ uvicorn server.app:app --host 127.0.0.1 --port 8000
 When hosted on the pod, the editor keeps Blender and the exact Y-Bot scene resident. Rendering uses
 the same resolution, sample count, frame cadence, grounding path, and final encoder as the established
 cold quality path; the speedup comes from removing startup/SSH work, bulk-loading animation curves,
-parallel before/after renders, and reusing exact cached outputs. Override quality only through the
-existing `AGENTLODGE_RENDER_WIN_*` and `AGENTLODGE_RENDER_FULL_*` variables.
+parallel before/after renders, six-way full-song frame sharding, lossless raw intermediates, and
+reusing exact cached outputs. Override quality only through the existing
+`AGENTLODGE_RENDER_WIN_*` and `AGENTLODGE_RENDER_FULL_*` variables. Full-render concurrency defaults
+to six (`AGENTLODGE_FULL_RENDER_WORKERS` / `AGENTLODGE_WARM_POOL`).
+
+Uploaded songs return after the initial LODGE/EDGE result and full-quality preview are ready. Seed 0
+is staged immediately; seeds 1 through `AGENTLODGE_BANK_K-1` are generated afterward by a detached
+bank job and copied into the editor automatically, so editing variety no longer blocks first view.
+LODGE and EDGE preprocessing/generation overlap on CUDA, with an automatic sequential retry if a
+parallel branch fails.
 
 ## Why edits are instant, and how to switch on **live pod mode**
 

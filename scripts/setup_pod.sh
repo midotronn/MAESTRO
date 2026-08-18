@@ -35,7 +35,22 @@ apt-get install -y -qq \
   libxrender1 libxi6 libxxf86vm1 libxfixes3 libxkbcommon0 libgl1 libglu1-mesa \
   libsm6 libice6 libxext6 libx11-6 libegl1 libglvnd0 libgles2 libopengl0 libgl1-mesa-dri \
   libosmesa6 \
-  ffmpeg git build-essential 2>&1 | tail -n 2 || true
+  aria2 curl ffmpeg git build-essential 2>&1 | tail -n 2 || true
+
+# Keep the 10GB Jukebox prior on the persistent volume and restore the cache link after restarts.
+PRIOR_SIZE=10288727721
+PRIOR_STORE="$WORKSPACE/.cache/jukemirlib/prior_level_2.pth.tar"
+PRIOR_LINK="$HOME/.cache/jukemirlib/prior_level_2.pth.tar"
+mkdir -p "$(dirname "$PRIOR_STORE")" "$(dirname "$PRIOR_LINK")"
+if [ ! -e "$PRIOR_STORE" ] \
+  && [ -f "$PRIOR_LINK" ] \
+  && [ "$(stat -c %s "$PRIOR_LINK" 2>/dev/null || echo 0)" -eq "$PRIOR_SIZE" ]; then
+  mv "$PRIOR_LINK" "$PRIOR_STORE"
+fi
+if [ "$(stat -c %s "$PRIOR_STORE" 2>/dev/null || echo 0)" -eq "$PRIOR_SIZE" ]; then
+  ln -sfn "$PRIOR_STORE" "$PRIOR_LINK"
+  echo "  persistent Jukebox prior linked"
+fi
 
 echo "--- [2/4] python venv ($VENV) ---"
 if [ ! -x "$VENV/bin/python" ]; then
@@ -52,7 +67,7 @@ fi
 # runtime + generation deps (LODGE uses pytorch-lightning; EDGE uses accelerate)
 pip install -q numpy scipy librosa soundfile matplotlib tqdm smplx trimesh einops omegaconf \
   imageio imageio-ffmpeg pytorch-lightning torchmetrics accelerate wandb fire p_tqdm h5py \
-  opencv-python-headless psutil gdown pytest==9.1.1
+  opencv-python-headless psutil gdown pyrender PyOpenGL pytest==9.1.1
 [ -f "$AL/requirements.txt" ] && pip install -q -r "$AL/requirements.txt" || true
 [ -f "$AL/server/requirements.txt" ] && pip install -q -r "$AL/server/requirements.txt" || true
 
@@ -75,7 +90,7 @@ fi
 
 python - <<'PY'
 import importlib
-mods = ["torch", "pytorch3d", "numpy", "smplx", "librosa"]
+mods = ["torch", "pytorch3d", "numpy", "smplx", "librosa", "pyrender", "OpenGL"]
 ok = []
 for m in mods:
     try:

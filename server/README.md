@@ -47,6 +47,9 @@ copy `bank_<sid>_*.npy` into `server/media/<sid>/bank/`.
 - When the editor runs on the pod, persistent Blender daemons remove startup/import overhead while
   retaining the established quality settings: window renders use `448x448`, 8 EEVEE samples, and
   every frame; full renders use `1080x1080`, 96 samples, and every frame. Exact completed renders are
-  cached under `server/media/<sid>/.render_cache/`.
+  cached under `server/media/<sid>/.render_cache/`. Full renders are split into six disjoint global
+  frame ranges by default and use lossless raw intermediates before the established H.264 encoder.
+- Upload readiness no longer waits for every editing candidate. The initial dance, seed-0 bank, and
+  full preview complete first; additional LODGE/EDGE seeds populate `bank/` asynchronously.
 - Sessions persist under `server/sessions/<sid>/` (checkpoint tree + motion snapshots), so history
   survives a restart.

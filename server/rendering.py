@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -128,6 +129,21 @@ def _quality_render_settings(scope: str) -> tuple[int, int, int, str, int]:
     return width, height, samples, engine, denoise
 
 
+def _render_ranges(frame_count: int, worker_count: int) -> list[tuple[int, int]]:
+    """Split every source frame into contiguous, non-overlapping render ranges."""
+    if frame_count < 1:
+        return []
+    workers = max(1, min(int(worker_count), frame_count))
+    base, remainder = divmod(frame_count, workers)
+    ranges = []
+    start = 0
+    for index in range(workers):
+        end = start + base + (1 if index < remainder else 0)
+        ranges.append((start, end))
+        start = end
+    return ranges
+
+
 def start_render(sid: str, motion: np.ndarray, media_dir: Path, *, scope: str = "window",
                  a: int | None = None, b: int | None = None,
                  audio_wav: str | None = None) -> None:
@@ -145,6 +161,13 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
     if not wr.on_pod():
         return False
     width, height, samples, engine, denoise = _quality_render_settings(scope)
+    frame_format = (
+        os.environ.get("AGENTLODGE_RENDER_FRAME_FORMAT", "tga").lower()
+        if scope == "full"
+        else "png"
+    )
+    if frame_format not in {"png", "tga"}:
+        frame_format = "tga"
     media_dir.mkdir(parents=True, exist_ok=True)
     cache_dir = media_dir / ".render_cache"
     cache_dir.mkdir(exist_ok=True)
@@ -163,7 +186,7 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
         stride=1,
         engine=engine,
         denoise=denoise,
-        context=f"single:{scope}{audio_context}",
+        context=f"single:{scope}:frames:{frame_format}{audio_context}",
     )
     cached_video = cache_dir / f"{cache_key}.mp4"
     output_video = media_dir / "edited.mp4"
@@ -172,60 +195,114 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
         _set(sid, status="rendering", progress=96, message="reusing the exact cached render\u2026")
         return True
 
-    daemon = 0 if scope == "full" else (1 if wr.POOL_SIZE > 1 else 0)
-    if wr.ensure_pool(
+    requested_workers = (
+        max(1, int(os.environ.get("AGENTLODGE_FULL_RENDER_WORKERS", "6")))
+        if scope == "full"
+        else 1
+    )
+    wr.ensure_pool(
         width=width,
         height=height,
         samples=samples,
         wait_ready=60,
-    ) < 1:
+    )
+    daemon_ids = wr.ready_daemons()[:requested_workers]
+    worker_count = min(len(daemon_ids), int(motion.shape[0]))
+    daemon_ids = daemon_ids[:worker_count]
+    if worker_count < 1:
         return False
 
-    poses_path = media_dir / f"_render_{scope}_poses.npz"
-    frames_dir = cache_dir / f"{cache_key}.frames"
-    fk.save_poses_npz(motion, poses_path)
     duration = motion.shape[0] / 30.0
-    _set(
-        sid,
-        status="rendering",
-        progress=24,
-        frames=int(motion.shape[0]),
-        message=(
-            f"full-quality {'dance' if scope == 'full' else 'window'} render "
-            f"({duration:.1f}s of motion)\u2026"
-        ),
-    )
-    rendered = wr.warm_render(
-        str(poses_path),
-        str(frames_dir),
-        daemon=daemon,
-        samples=samples,
-        width=width,
-        height=height,
-        engine=engine,
-        denoise=denoise,
-        fast=False,
-        stride=1,
-        batch_render=True,
-        timeout=(
-            max(2700.0, duration * 30)
-            if scope == "full"
-            else max(600.0, duration * 5)
-        ),
-    )
-    if not rendered:
-        return False
-    _set(sid, progress=90, message="encoding the full-quality frames\u2026")
-    encoded = _ffmpeg_frames(
-        str(frames_dir),
-        cached_video,
-        audio_wav=audio_wav if scope == "full" else None,
-    )
-    if not encoded:
-        return False
-    shutil.copyfile(cached_video, output_video)
-    shutil.rmtree(frames_dir, ignore_errors=True)
-    return True
+    temp_parent = Path(os.environ.get("AGENTLODGE_RENDER_TMP", tempfile.gettempdir()))
+    temp_parent.mkdir(parents=True, exist_ok=True)
+    render_root = Path(tempfile.mkdtemp(prefix=f"maestro-{sid}-", dir=temp_parent))
+    poses_path = render_root / "poses.npz"
+    frames_dir = render_root / "frames"
+    frames_dir.mkdir()
+    try:
+        fk.save_poses_npz(motion, poses_path)
+        ranges = _render_ranges(int(motion.shape[0]), worker_count)
+        _set(
+            sid,
+            status="rendering",
+            progress=24,
+            frames=int(motion.shape[0]),
+            message=(
+                f"full-quality {'dance' if scope == 'full' else 'window'} render "
+                f"on {worker_count} worker{'s' if worker_count != 1 else ''} "
+                f"({duration:.1f}s of motion)\u2026"
+            ),
+        )
+        results: dict[int, bool] = {}
+        result_lock = threading.Lock()
+
+        def _render_range(index: int, daemon: int, start: int, end: int) -> None:
+            shard_duration = (end - start) / 30.0
+            ok = wr.warm_render(
+                str(poses_path),
+                str(frames_dir),
+                daemon=daemon,
+                samples=samples,
+                width=width,
+                height=height,
+                engine=engine,
+                denoise=denoise,
+                fast=False,
+                stride=1,
+                batch_render=True,
+                frame_start=start,
+                frame_end=end,
+                clear_frames=False,
+                frame_format=frame_format,
+                timeout=(
+                    max(900.0, shard_duration * 45)
+                    if scope == "full"
+                    else max(600.0, shard_duration * 8)
+                ),
+            )
+            with result_lock:
+                results[index] = ok
+                complete = sum(bool(value) for value in results.values())
+                _set(
+                    sid,
+                    progress=min(88, 24 + int(64 * complete / worker_count)),
+                    message=(
+                        f"rendered {complete}/{worker_count} full-quality "
+                        f"shard{'s' if worker_count != 1 else ''}\u2026"
+                    ),
+                )
+
+        threads = [
+            threading.Thread(
+                target=_render_range,
+                args=(index, daemon, start, end),
+            )
+            for index, (daemon, (start, end)) in enumerate(zip(daemon_ids, ranges))
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        if len(results) != worker_count or not all(results.values()):
+            return False
+        sequence = _frame_sequence(str(frames_dir))
+        if sequence is None or sequence[1] != 0 or sequence[2] != motion.shape[0]:
+            logger.warning(
+                "sharded render produced an incomplete frame sequence: %s",
+                sequence,
+            )
+            return False
+        _set(sid, progress=90, message="encoding the full-quality frames\u2026")
+        if not _ffmpeg_frames(
+            str(frames_dir),
+            cached_video,
+            audio_wav=audio_wav if scope == "full" else None,
+        ):
+            return False
+        shutil.copyfile(cached_video, output_video)
+        return True
+    finally:
+        shutil.rmtree(render_root, ignore_errors=True)
 
 
 def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
@@ -481,26 +558,36 @@ def _launch_window_render(cfg, sid: str, tag: str, motion: np.ndarray, media_dir
 
 
 def _frame_sequence(frames_dir: str) -> tuple[str, int, int] | None:
-    """Return an ffmpeg pattern/start pair for Blender or per-frame PNG numbering."""
-    frames = sorted(Path(frames_dir).glob("frame_*.png"))
-    parsed: list[tuple[Path, int, int]] = []
+    """Return an ffmpeg pattern/start pair for contiguous Blender image numbering."""
+    frames = sorted(Path(frames_dir).glob("frame_*.*"))
+    parsed: list[tuple[Path, int, int, str]] = []
     for frame in frames:
-        match = re.fullmatch(r"frame_(\d+)\.png", frame.name)
+        match = re.fullmatch(r"frame_(\d+)\.(png|tga)", frame.name)
         if match:
-            parsed.append((frame, int(match.group(1)), len(match.group(1))))
+            parsed.append((frame, int(match.group(1)), len(match.group(1)), match.group(2)))
     if not parsed:
         return None
     numbers = [item[1] for item in parsed]
     widths = {item[2] for item in parsed}
-    if len(widths) != 1 or numbers != list(range(numbers[0], numbers[0] + len(numbers))):
+    extensions = {item[3] for item in parsed}
+    if (
+        len(widths) != 1
+        or len(extensions) != 1
+        or numbers != list(range(numbers[0], numbers[0] + len(numbers)))
+    ):
         return None
     digits = widths.pop()
-    return str(Path(frames_dir) / f"frame_%0{digits}d.png"), numbers[0], len(numbers)
+    extension = extensions.pop()
+    return (
+        str(Path(frames_dir) / f"frame_%0{digits}d.{extension}"),
+        numbers[0],
+        len(numbers),
+    )
 
 
 def _ffmpeg_frames(frames_dir: str, out_mp4: Path, fps: int = 30,
                    *, audio_wav: str | None = None) -> bool:
-    """Encode full-quality Blender PNGs using the established cold-path codec settings."""
+    """Encode lossless Blender frames using the established cold-path codec settings."""
     import subprocess
     sequence = _frame_sequence(frames_dir)
     if sequence is None:
@@ -516,11 +603,13 @@ def _ffmpeg_frames(frames_dir: str, out_mp4: Path, fps: int = 30,
     out_mp4.unlink(missing_ok=True)
     silent.unlink(missing_ok=True)
     timeout = max(180, int(frame_count * 0.2 + 60))
+    color_filter = ["-vf", "format=rgb24"] if pattern.endswith(".tga") else []
     try:
         r = subprocess.run(
             [
                 "ffmpeg", "-y", "-loglevel", "error", "-framerate", str(fps),
                 "-start_number", str(start_number), "-i", pattern,
+                *color_filter,
                 "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
                 "-movflags", "+faststart", str(silent),
             ],
@@ -768,15 +857,18 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
         missing.append(spec)
 
     needed = min(len(missing), wr.POOL_SIZE)
-    if needed and wr.ensure_pool(
-        width=width,
-        height=height,
-        samples=samples,
-        wait_ready=60,
-    ) < needed:
-        return False
-    for index, spec in enumerate(missing):
-        spec["daemon"] = index % max(1, wr.POOL_SIZE)
+    if needed:
+        wr.ensure_pool(
+            width=width,
+            height=height,
+            samples=samples,
+            wait_ready=60,
+        )
+        daemon_ids = wr.ready_daemons()
+        if len(daemon_ids) < needed:
+            return False
+        for spec, daemon in zip(missing, daemon_ids):
+            spec["daemon"] = daemon
 
     def _run(spec: dict) -> None:
         results[spec["tag"]] = wr.warm_render(
