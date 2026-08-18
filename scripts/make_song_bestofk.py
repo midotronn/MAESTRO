@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import librosa
@@ -119,20 +119,56 @@ def generate_song(sid: str) -> dict:
 
     if _use_parallel_execution():
         print(f"[{sid}] generating LODGE and EDGE in parallel", flush=True)
+        print(
+            "MAESTRO_SUBPROGRESS generation 5 Starting both motion backbones",
+            flush=True,
+        )
         with ThreadPoolExecutor(max_workers=2) as executor:
-            lodge_future = executor.submit(generate_lodge)
-            edge_future = executor.submit(generate_edge)
-            lodge_result = lodge_future.result()
-            edge_result = edge_future.result()
+            futures = {
+                executor.submit(generate_lodge): "LODGE",
+                executor.submit(generate_edge): "EDGE",
+            }
+            generated = {}
+            for completed, future in enumerate(as_completed(futures), start=1):
+                label = futures[future]
+                generated[label] = future.result()
+                progress = 45 if completed == 1 else 80
+                print(
+                    f"MAESTRO_SUBPROGRESS generation {progress} "
+                    f"{label} motion generation complete",
+                    flush=True,
+                )
+            lodge_result = generated["LODGE"]
+            edge_result = generated["EDGE"]
         if lodge_result.get("error") or lodge_result.get("motion") is None:
             print(f"[{sid}] parallel LODGE failed; retrying it alone", flush=True)
+            print(
+                "MAESTRO_SUBPROGRESS generation 45 Retrying LODGE generation",
+                flush=True,
+            )
             lodge_result = generate_lodge()
         if edge_result.get("error") or edge_result.get("motion") is None:
             print(f"[{sid}] parallel EDGE failed; retrying it alone", flush=True)
+            print(
+                "MAESTRO_SUBPROGRESS generation 45 Retrying EDGE generation",
+                flush=True,
+            )
             edge_result = generate_edge()
     else:
+        print(
+            "MAESTRO_SUBPROGRESS generation 5 Generating LODGE motion",
+            flush=True,
+        )
         lodge_result = generate_lodge()
+        print(
+            "MAESTRO_SUBPROGRESS generation 45 LODGE motion generation complete",
+            flush=True,
+        )
         edge_result = generate_edge()
+        print(
+            "MAESTRO_SUBPROGRESS generation 80 EDGE motion generation complete",
+            flush=True,
+        )
 
     lodge_motion = _successful_motion(lodge_result, "LODGE")
     edge_motion = _successful_motion(edge_result, "EDGE")
@@ -140,6 +176,10 @@ def generate_song(sid: str) -> dict:
     np.save(WORKSPACE / f"edge_fd_{sid}_full.npy", edge_motion)
     release_torch_memory()
 
+    print(
+        "MAESTRO_SUBPROGRESS generation 84 Analyzing the song structure",
+        flush=True,
+    )
     total_frames = min(lodge_motion.shape[0], edge_motion.shape[0])
     structure = analyze_structure(
         wav,
@@ -149,12 +189,20 @@ def generate_song(sid: str) -> dict:
     )
     waveform, sample_rate = librosa.load(str(wav), sr=22050, mono=True)
     descriptor = extract_audio_descriptor(waveform, sample_rate, metadata)
+    print(
+        "MAESTRO_SUBPROGRESS generation 90 Authoring the choreography storyboard",
+        flush=True,
+    )
     storyboard = author_storyboard(
         structure,
         metadata,
         descriptor,
         api_key=os.environ.get("OPENAI_API_KEY") or None,
         motif_reuse=True,
+    )
+    print(
+        "MAESTRO_SUBPROGRESS generation 95 Assembling the final choreography",
+        flush=True,
     )
     assembled = build_story_dance(
         lodge_motion,
@@ -173,6 +221,10 @@ def generate_song(sid: str) -> dict:
 
     output = WORKSPACE / f"fd_{sid}_STORY_bestofk.npy"
     np.save(output, np.asarray(motion, dtype=np.float32))
+    print(
+        "MAESTRO_SUBPROGRESS generation 100 Motion generation complete",
+        flush=True,
+    )
 
     report = {
         "sid": sid,

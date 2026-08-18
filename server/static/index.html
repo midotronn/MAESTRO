@@ -36,6 +36,15 @@
     </div>
   </header>
 
+  <section id="activityCenter" class="activity-center" aria-label="Live operation progress" hidden>
+    <div class="activity-center-head">
+      <span class="activity-pulse"></span>
+      <strong>Live progress</strong>
+      <span id="activityCount" class="activity-count"></span>
+    </div>
+    <div id="activityList" class="activity-list" aria-live="polite"></div>
+  </section>
+
   <!-- ─────────────── main ─────────────── -->
   <main class="grid">
     <!-- left: viewer + timeline + prompt -->
@@ -60,7 +69,7 @@
           </button>
         </div>
         <div id="renderStatus" class="render-status"></div>
-        <div id="renderProgWrap" class="progwrap render-prog" hidden><div id="renderProg" class="progbar"></div></div>
+        <div id="renderProgWrap" class="progwrap render-prog" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><div id="renderProg" class="progbar"></div></div>
       </div>
 
       <div id="compare" class="compare" hidden>
@@ -72,7 +81,7 @@
           <button id="cmpClose" class="icon-btn" title="Close comparison">✕</button>
         </div>
         <div id="cmpStatus" class="render-status"></div>
-        <div id="cmpProgWrap" class="progwrap cmp-prog" hidden><div id="cmpProg" class="progbar"></div></div>
+        <div id="cmpProgWrap" class="progwrap cmp-prog" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><div id="cmpProg" class="progbar"></div></div>
         <div class="cmp-viewbar" aria-label="Comparison view">
           <span>View</span>
           <button id="cmpModeHighlight" class="cmp-view-btn active" type="button" aria-pressed="true">Highlight changes</button>
@@ -131,7 +140,7 @@
       <div class="card">
         <div class="card-h"><span class="dot-h"></span>Agent edit</div>
         <div id="goal" class="goal muted">Describe any change in plain English, the agent plans it, checks every goal, and refines.</div>
-        <div class="progwrap"><div id="progbar" class="progbar"></div></div>
+        <div id="agentProgWrap" class="progwrap" role="progressbar" aria-valuemin="0" aria-valuemax="100"><div id="progbar" class="progbar"></div></div>
         <div id="progtext" class="mono tiny muted"></div>
         <div id="checks" class="checks"></div>
         <div id="feedback" class="feedback"></div>

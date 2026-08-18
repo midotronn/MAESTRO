@@ -17,6 +17,7 @@ usable for the songs that are already processed).
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shlex
@@ -30,6 +31,23 @@ from pathlib import Path
 _JOBS: dict[str, dict] = {}
 _LOCK = threading.Lock()
 REPO = Path(__file__).resolve().parents[1]
+
+_PIPELINE_STAGE_SPECS = {
+    "assets": (22, 25, 120.0, "checking generation model assets"),
+    "preprocess": (25, 40, 240.0, "extracting music features"),
+    "generation": (40, 68, 360.0, "generating LODGE and EDGE motion"),
+    "polish": (68, 73, 90.0, "assembling and polishing the choreography"),
+    "seed_bank": (73, 76, 30.0, "building the initial editing bank"),
+    "beats": (76, 79, 30.0, "tracking beats"),
+    "staging": (79, 80, 10.0, "staging generated assets"),
+    "preview": (80, 82, 300.0, "rendering the initial preview"),
+}
+_PIPELINE_PROGRESS_RE = re.compile(
+    r"^MAESTRO_PROGRESS\s+([a-z0-9_-]+)\s+(\d{1,3})\s*(.*)$"
+)
+_PIPELINE_SUBPROGRESS_RE = re.compile(
+    r"^MAESTRO_SUBPROGRESS\s+([a-z0-9_-]+)\s+(\d{1,3})\s*(.*)$"
+)
 
 
 @dataclass
@@ -66,10 +84,24 @@ def slugify(name: str) -> str:
 # --------------------------------------------------------------------------- job state
 def get_job(sid: str) -> dict:
     with _LOCK:
-        return dict(_JOBS.get(sid, {"status": "unknown", "message": "no such job", "progress": 0}))
+        job = dict(
+            _JOBS.get(
+                sid,
+                {"status": "unknown", "message": "no such job", "progress": 0},
+            )
+        )
+    started = job.get("started")
+    if started:
+        ended = job.get("finished") or time.time()
+        job["elapsed"] = round(max(0.0, float(ended) - float(started)), 1)
+    return job
 
 
 def _set(sid: str, **kw) -> None:
+    now = time.time()
+    kw["updated"] = now
+    if kw.get("status") in {"done", "error"}:
+        kw.setdefault("finished", now)
     with _LOCK:
         _JOBS.setdefault(sid, {}).update(kw)
 
@@ -119,6 +151,183 @@ def _run_pod(cfg: PodConfig, cmd: str, timeout: int = 60) -> subprocess.Complete
             timeout=timeout,
         )
     return _ssh(cfg, cmd, timeout=timeout)
+
+
+def _read_tail(path: Path, max_bytes: int = 20000) -> str:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes))
+            return handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _pipeline_event(log_tail: str) -> dict | None:
+    """Return the most recent structured progress event emitted by the pod pipeline."""
+    latest = None
+    for raw_line in log_tail.splitlines():
+        line = raw_line.strip()
+        match = _PIPELINE_PROGRESS_RE.match(line)
+        if match:
+            stage, progress, message = match.groups()
+            latest = {
+                "stage": stage,
+                "progress": max(0, min(100, int(progress))),
+                "message": message.strip(),
+                "subprogress": None,
+            }
+            continue
+        match = _PIPELINE_SUBPROGRESS_RE.match(line)
+        if match:
+            stage, progress, message = match.groups()
+            latest = {
+                "stage": stage,
+                "progress": None,
+                "message": message.strip(),
+                "subprogress": max(0, min(100, int(progress))),
+            }
+    return latest
+
+
+def _pipeline_state(
+    cfg: PodConfig,
+    *,
+    done_path: str,
+    failed_path: str,
+    log_path: str,
+) -> tuple[str, str]:
+    if _co_located(cfg):
+        state = (
+            "done"
+            if Path(done_path).exists()
+            else "failed"
+            if Path(failed_path).exists()
+            else "running"
+        )
+        return state, _read_tail(Path(log_path))
+
+    check = _ssh(
+        cfg,
+        f"state=running; "
+        f"test -f {shlex.quote(done_path)} && state=done; "
+        f"test -f {shlex.quote(failed_path)} && state=failed; "
+        f"printf '__MAESTRO_STATE__=%s\\n' \"$state\"; "
+        f"tail -c 20000 {shlex.quote(log_path)} 2>/dev/null || true",
+        timeout=30,
+    )
+    if check.returncode != 0:
+        return "running", ""
+    lines = (check.stdout or "").splitlines()
+    state = "running"
+    tail_lines = []
+    for line in lines:
+        if line.startswith("__MAESTRO_STATE__="):
+            state = line.split("=", 1)[1].strip()
+        else:
+            tail_lines.append(line)
+    return state, "\n".join(tail_lines)
+
+
+def _run_pipeline(
+    cfg: PodConfig,
+    command: str,
+    *,
+    sid: str,
+    out: str,
+    timeout: int,
+) -> subprocess.CompletedProcess:
+    """Launch the long pod pipeline detached, then turn its log markers into live job progress."""
+    done_path = f"{out}/process.done"
+    failed_path = f"{out}/process.failed"
+    log_path = f"{out}/process.log"
+    inner = (
+        f"{command}; rc=$?; "
+        f"if [ \"$rc\" -eq 0 ]; then touch {shlex.quote(done_path)}; "
+        f"else touch {shlex.quote(failed_path)}; fi; exit \"$rc\""
+    )
+    launch_command = (
+        f"mkdir -p {shlex.quote(out)}; "
+        f"rm -f {shlex.quote(done_path)} {shlex.quote(failed_path)} {shlex.quote(log_path)}; "
+        f"setsid bash -c {shlex.quote(inner)} "
+        f"> {shlex.quote(log_path)} 2>&1 < /dev/null & echo PROCESS_PID=$!"
+    )
+    launch = _run_pod(cfg, launch_command, timeout=60)
+    direct_output = (launch.stdout or "") + "\n" + (launch.stderr or "")
+    if f"PROCESS_{sid}_DONE" in direct_output:
+        return launch
+    if launch.returncode != 0 or "PROCESS_PID=" not in (launch.stdout or ""):
+        return launch
+
+    deadline = time.monotonic() + max(60, timeout)
+    current_stage = "assets"
+    stage_started = time.monotonic()
+    last_tail = ""
+    last_progress = 22
+    while time.monotonic() < deadline:
+        try:
+            state, log_tail = _pipeline_state(
+                cfg,
+                done_path=done_path,
+                failed_path=failed_path,
+                log_path=log_path,
+            )
+        except (OSError, subprocess.SubprocessError):
+            state, log_tail = "running", ""
+        if log_tail:
+            last_tail = log_tail
+        event = _pipeline_event(last_tail)
+        now = time.monotonic()
+        if event and event["stage"] in _PIPELINE_STAGE_SPECS:
+            if event["stage"] != current_stage:
+                current_stage = event["stage"]
+                stage_started = now
+        start, end, expected_seconds, default_message = _PIPELINE_STAGE_SPECS[current_stage]
+        elapsed = max(0.0, now - stage_started)
+        estimated_fraction = min(0.97, 1.0 - math.exp(-elapsed / expected_seconds))
+        estimated = start + int((end - start) * estimated_fraction)
+        explicit = start
+        message = default_message
+        if event and event["stage"] == current_stage:
+            if event["progress"] is not None:
+                explicit = event["progress"]
+            elif event["subprogress"] is not None:
+                explicit = start + round(
+                    (end - start) * event["subprogress"] / 100.0
+                )
+            message = event["message"] or message
+        progress = max(last_progress, start, min(end, max(explicit, estimated)))
+        last_progress = progress
+        stage_progress = (
+            100
+            if end <= start
+            else round(100 * (progress - start) / (end - start))
+        )
+        _set(
+            sid,
+            status="processing",
+            stage=current_stage,
+            stage_progress=stage_progress,
+            progress=progress,
+            message=message,
+        )
+        if state == "done":
+            return subprocess.CompletedProcess(
+                launch.args,
+                0,
+                stdout=last_tail,
+                stderr="",
+            )
+        if state == "failed":
+            return subprocess.CompletedProcess(
+                launch.args,
+                1,
+                stdout=last_tail,
+                stderr="pod pipeline failed",
+            )
+        time.sleep(2)
+    raise subprocess.TimeoutExpired(command, timeout, output=last_tail)
 
 
 # --------------------------------------------------------------------------- live take provider
@@ -291,29 +500,72 @@ def _start_bank_sync(sid: str, cfg: PodConfig, out: str, bank_dir: Path) -> None
         done = f"{out}/bank.done"
         failed = f"{out}/bank.failed"
         log = f"{out}/bank.log"
+        try:
+            bank_k = max(1, int(cfg.bank_k))
+        except (TypeError, ValueError):
+            bank_k = 4
+        expected_files = bank_k * 2
+        deferred_files = max(1, expected_files - 2)
         while time.monotonic() < deadline:
-            if _co_located(cfg):
-                state = (
-                    "DONE"
-                    if Path(done).exists()
-                    else "FAILED"
-                    if Path(failed).exists()
-                    else ""
-                )
-            else:
-                check = _ssh(
-                    cfg,
-                    f"test -f {shlex.quote(done)} && echo DONE || "
-                    f"(test -f {shlex.quote(failed)} && echo FAILED || true)",
-                    timeout=30,
-                )
-                state = check.stdout.strip()
+            detail = ""
+            try:
+                if _co_located(cfg):
+                    state = (
+                        "DONE"
+                        if Path(done).exists()
+                        else "FAILED"
+                        if Path(failed).exists()
+                        else ""
+                    )
+                    count = len(list(Path(cfg.ws).glob(f"bank_{sid}_*.npy")))
+                    detail = _read_tail(Path(log), max_bytes=4000)
+                else:
+                    check = _ssh(
+                        cfg,
+                        f"state=RUNNING; "
+                        f"test -f {shlex.quote(done)} && state=DONE; "
+                        f"test -f {shlex.quote(failed)} && state=FAILED; "
+                        f"printf '__STATE__=%s\\n' \"$state\"; "
+                        f"printf '__COUNT__='; "
+                        f"find {shlex.quote(cfg.ws)} -maxdepth 1 -type f "
+                        f"-name {shlex.quote(f'bank_{sid}_*.npy')} | wc -l; "
+                        f"tail -n 8 {shlex.quote(log)} 2>/dev/null || true",
+                        timeout=30,
+                    )
+                    state = ""
+                    count = 2
+                    detail_lines = []
+                    for line in (check.stdout or "").splitlines():
+                        if line.startswith("__STATE__="):
+                            state = line.split("=", 1)[1].strip()
+                        elif line.startswith("__COUNT__="):
+                            try:
+                                count = int(line.split("=", 1)[1].strip())
+                            except ValueError:
+                                count = 2
+                        else:
+                            detail_lines.append(line)
+                    detail = "\n".join(detail_lines)
+            except (OSError, subprocess.SubprocessError):
+                state, count = "", 2
+            generated = max(0, count - 2)
+            bank_progress = min(99, round(100 * generated / deferred_files))
+            current_line = next(
+                (
+                    line.strip()
+                    for line in reversed(detail.splitlines())
+                    if "generating seed" in line or "saved bank_" in line
+                ),
+                "",
+            )
+            _set(
+                sid,
+                bank_status="building",
+                bank_progress=bank_progress,
+                bank_message=current_line or "generating additional editing alternatives",
+            )
             if state == "DONE":
                 bank_dir.mkdir(parents=True, exist_ok=True)
-                try:
-                    expected_files = max(1, int(cfg.bank_k)) * 2
-                except (TypeError, ValueError):
-                    expected_files = 8
                 if _co_located(cfg):
                     for source in Path(out).glob(f"bank_{sid}_*.npy"):
                         shutil.copy2(source, bank_dir / source.name)
@@ -332,22 +584,31 @@ def _start_bank_sync(sid: str, cfg: PodConfig, out: str, bank_dir: Path) -> None
                 _set(
                     sid,
                     bank_status="ready" if copied else "error",
+                    bank_progress=100 if copied else bank_progress,
+                    bank_message=(
+                        "editing alternatives ready"
+                        if copied
+                        else "generated bank could not be copied"
+                    ),
                     bank_error="" if copied else "generated bank could not be copied",
                 )
                 return
             if state == "FAILED":
-                detail = ""
-                if not _co_located(cfg):
-                    tail = _ssh(cfg, f"tail -n 20 {shlex.quote(log)}", timeout=30)
-                    detail = (tail.stderr or tail.stdout).strip()
                 _set(
                     sid,
                     bank_status="error",
+                    bank_progress=bank_progress,
+                    bank_message="background editing bank failed",
                     bank_error=detail or "background bank failed",
                 )
                 return
-            time.sleep(15)
-        _set(sid, bank_status="error", bank_error="background bank timed out")
+            time.sleep(5)
+        _set(
+            sid,
+            bank_status="error",
+            bank_message="background editing bank timed out",
+            bank_error="background bank timed out",
+        )
 
     threading.Thread(target=sync, name=f"bank-sync-{sid}", daemon=True).start()
 
@@ -355,7 +616,19 @@ def _start_bank_sync(sid: str, cfg: PodConfig, out: str, bank_dir: Path) -> None
 
 # --------------------------------------------------------------------------- pipeline
 def start_processing(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> None:
-    _set(sid, status="queued", message="queued", progress=5, name=display_name)
+    _set(
+        sid,
+        status="queued",
+        stage="queued",
+        stage_progress=0,
+        message="queued",
+        progress=5,
+        name=display_name,
+        started=time.time(),
+        bank_status="pending",
+        bank_progress=0,
+        bank_message="",
+    )
     threading.Thread(target=_process, args=(sid, wav_path, media_dir, display_name), daemon=True).start()
 
 
@@ -369,7 +642,14 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
     pod_repo = _pod_repo(cfg)
     hosted = _co_located(cfg)
     try:
-        _set(sid, status="processing", progress=8, message="checking the GPU pod…")
+        _set(
+            sid,
+            status="processing",
+            stage="pod",
+            stage_progress=0,
+            progress=8,
+            message="checking the GPU pod…",
+        )
         probe = _run_pod(cfg, "echo ok", timeout=25)
         if probe.returncode != 0 or "ok" not in probe.stdout:
             _set(sid, status="error", progress=0,
@@ -378,7 +658,13 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
             return
 
         ws = cfg.ws
-        _set(sid, progress=14, message="uploading audio to the pod…")
+        _set(
+            sid,
+            stage="audio",
+            stage_progress=0,
+            progress=14,
+            message="uploading audio to the pod…",
+        )
         remote_wav_dir = f"{ws}/LODGE/data/finedance/music_wav"
         remote_wav = f"{remote_wav_dir}/{sid}.wav"
         remote_scripts = f"{pod_repo}/scripts"
@@ -422,7 +708,13 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
                     )
                     return
 
-        _set(sid, progress=22, message="generating the dance on the pod (several minutes)…")
+        _set(
+            sid,
+            stage="assets",
+            stage_progress=0,
+            progress=22,
+            message="starting the generation pipeline…",
+        )
         pod_python = _venv_python(cfg)
         pipeline_scripts = " ".join(
             shlex.quote(f"{remote_scripts}/{name}")
@@ -434,8 +726,8 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
                 "process_song.sh",
             )
         )
-        run = _run_pod(
-            cfg,
+        out = f"{ws}/upload_{sid}"
+        pipeline_command = (
             f"cd {shlex.quote(pod_repo)} && "
             f"sed -i 's/\\r$//' {pipeline_scripts} && "
             f"WORKSPACE={shlex.quote(ws)} "
@@ -443,7 +735,13 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
             f"AL_PY={shlex.quote(pod_python)} "
             f"AGENTLODGE_BANK_K={shlex.quote(str(cfg.bank_k))} "
             f"AGENTLODGE_SKIP_RENDER={'1' if hosted else '0'} "
-            f"bash {shlex.quote(remote_scripts + '/process_song.sh')} {shlex.quote(sid)}",
+            f"bash {shlex.quote(remote_scripts + '/process_song.sh')} {shlex.quote(sid)}"
+        )
+        run = _run_pipeline(
+            cfg,
+            pipeline_command,
+            sid=sid,
+            out=out,
             timeout=int(
                 os.environ.get("AGENTLODGE_UPLOAD_GENERATION_TIMEOUT", str(60 * 60))
             ),
@@ -453,14 +751,22 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
             _set(sid, status="error", progress=0, message=f"pod processing failed: {tail[-300:]}")
             return
 
-        _set(sid, progress=82, message="downloading the generated dance…")
+        _set(
+            sid,
+            stage="transfer",
+            stage_progress=0,
+            progress=82,
+            message="collecting the generated dance…",
+        )
         media_dir.mkdir(parents=True, exist_ok=True)
         bank_dir = media_dir / "bank"
         bank_dir.mkdir(exist_ok=True)
-        out = f"{ws}/upload_{sid}"
-        for name, dst in [("base_motion.npy", media_dir / "base_motion.npy"),
-                          ("beats.npy", media_dir / "beats.npy"),
-                          ("beat_strengths.npy", media_dir / "beat_strengths.npy")]:
+        assets = [
+            ("base_motion.npy", media_dir / "base_motion.npy"),
+            ("beats.npy", media_dir / "beats.npy"),
+            ("beat_strengths.npy", media_dir / "beat_strengths.npy"),
+        ]
+        for index, (name, dst) in enumerate(assets, start=1):
             source = f"{out}/{name}"
             if hosted:
                 shutil.copy2(source, dst)
@@ -474,35 +780,93 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
                         message=f"could not fetch {name}: {fetched.stderr[-160:]}",
                     )
                     return
+            _set(
+                sid,
+                progress=82 + round(3 * index / len(assets)),
+                stage_progress=round(75 * index / len(assets)),
+                message=f"collected {index}/{len(assets)} generated assets",
+            )
         if hosted:
             for source in Path(out).glob(f"bank_{sid}_*.npy"):
                 shutil.copy2(source, bank_dir / source.name)
         else:
             _scp_from(cfg, f"{out}/bank_{sid}_*.npy", str(bank_dir) + "/")
+        _set(sid, progress=86, stage_progress=100, message="generated assets are ready")
 
         if hosted:
             import numpy as np
 
             from server import rendering
 
-            _set(sid, progress=86, message="rendering the full-quality preview…")
-            motion = np.load(media_dir / "base_motion.npy")
-            if not rendering._render_warm_local(
+            _set(
                 sid,
-                motion,
-                media_dir,
-                "full",
-                audio_wav=str(wav_path),
-            ):
+                stage="render",
+                stage_progress=0,
+                progress=86,
+                message="starting the full-quality preview render…",
+            )
+            motion = np.load(media_dir / "base_motion.npy")
+            render_result: dict[str, object] = {"ok": False}
+
+            def render_preview() -> None:
+                try:
+                    render_result["ok"] = rendering._render_warm_local(
+                        sid,
+                        motion,
+                        media_dir,
+                        "full",
+                        audio_wav=str(wav_path),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    render_result["error"] = str(exc)
+
+            render_thread = threading.Thread(
+                target=render_preview,
+                name=f"upload-preview-{sid}",
+                daemon=True,
+            )
+            render_thread.start()
+            while render_thread.is_alive():
+                render_job = rendering.get_render_job(sid)
+                render_progress = max(
+                    0,
+                    min(100, int(render_job.get("progress") or 0)),
+                )
+                normalized = (
+                    max(0.0, min(1.0, (render_progress - 24) / 72.0))
+                    if render_progress >= 24
+                    else render_progress / 100.0
+                )
+                mapped = 86 + round(12 * normalized)
+                _set(
+                    sid,
+                    progress=mapped,
+                    stage_progress=round(100 * normalized),
+                    message=render_job.get("message")
+                    or "rendering the full-quality preview",
+                )
+                render_thread.join(timeout=1)
+            if not render_result.get("ok"):
                 _set(
                     sid,
                     status="error",
                     progress=0,
-                    message="full-quality warm render failed",
+                    message=(
+                        "full-quality warm render failed: "
+                        + str(render_result.get("error") or "unknown render error")
+                    ),
                 )
                 return
             shutil.copy2(media_dir / "edited.mp4", media_dir / "preview.mp4")
+            _set(sid, progress=98, stage_progress=100, message="preview render complete")
         else:
+            _set(
+                sid,
+                stage="transfer",
+                stage_progress=80,
+                progress=86,
+                message="downloading the rendered preview…",
+            )
             preview = _scp_from(cfg, f"{out}/preview.mp4", str(media_dir / "preview.mp4"))
             if preview.returncode != 0:
                 _set(
@@ -512,8 +876,16 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
                     message=f"could not fetch preview.mp4: {preview.stderr[-160:]}",
                 )
                 return
+            _set(sid, progress=98, stage_progress=100, message="preview downloaded")
 
         # persist a friendly display name
+        _set(
+            sid,
+            stage="finalize",
+            stage_progress=50,
+            progress=99,
+            message="finalizing the song in the editor…",
+        )
         (media_dir / "meta.json").write_text(
             json.dumps({"name": display_name}, ensure_ascii=False),
             encoding="utf-8",
@@ -528,9 +900,17 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
         _set(
             sid,
             status="done",
+            stage="ready",
+            stage_progress=100,
             progress=100,
             message="ready",
             bank_status="building" if bank_started else "ready",
+            bank_progress=0 if bank_started else 100,
+            bank_message=(
+                "generating additional editing alternatives"
+                if bank_started
+                else "editing alternatives ready"
+            ),
         )
         if bank_started:
             _start_bank_sync(sid, cfg, out, bank_dir)

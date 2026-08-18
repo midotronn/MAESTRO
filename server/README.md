@@ -39,6 +39,7 @@ copy `bank_<sid>_*.npy` into `server/media/<sid>/bank/`.
 - `WS   /api/session/{sid}/edit_ws` → streams live `cycle n/K` progress then the final result
 - `POST /api/session/{sid}/undo|redo`, `POST /api/session/{sid}/restore {ckpt_id}`
 - `GET  /api/session/{sid}/timeline`
+- `GET  /api/jobs/{sid}` → upload/generation stage, overall progress, elapsed time, and deferred-bank progress
 
 ## Notes
 
@@ -51,5 +52,9 @@ copy `bank_<sid>_*.npy` into `server/media/<sid>/bank/`.
   frame ranges by default and use lossless raw intermediates before the established H.264 encoder.
 - Upload readiness no longer waits for every editing candidate. The initial dance, seed-0 bank, and
   full preview complete first; additional LODGE/EDGE seeds populate `bank/` asynchronously.
+- The editor exposes one compact live-progress surface for startup, uploads, generation, edits,
+  history actions, comparisons, renders, media buffering, and deferred-bank generation. Upload bytes
+  are measured in the browser, pipeline stages come from structured pod markers, and warm Blender
+  jobs report completed frame counts without changing render settings or output quality.
 - Sessions persist under `server/sessions/<sid>/` (checkpoint tree + motion snapshots), so history
   survives a restart.

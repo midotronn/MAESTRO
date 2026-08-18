@@ -497,6 +497,39 @@ def test_render_ranges_cover_all_frames_once():
     assert rendering._render_ranges(0, 6) == []
 
 
+def test_render_progress_counts_only_completed_frame_format(tmp_path):
+    import server.rendering as rendering
+
+    (tmp_path / "frame_0000.tga").write_bytes(b"frame")
+    (tmp_path / "frame_0001.tga").write_bytes(b"frame")
+    (tmp_path / "frame_0002.png").write_bytes(b"frame")
+    (tmp_path / "notes.tga").write_bytes(b"not a frame")
+
+    assert rendering._count_frame_files(tmp_path, "tga") == 2
+    assert rendering._count_frame_files(tmp_path, "png") == 1
+
+
+def test_upload_pipeline_uses_latest_structured_progress_event():
+    import server.processing as processing
+
+    event = processing._pipeline_event(
+        "\n".join(
+            [
+                "MAESTRO_PROGRESS generation 40 Generating motion",
+                "ordinary model output",
+                "MAESTRO_SUBPROGRESS generation 45 LODGE generation complete",
+            ]
+        )
+    )
+
+    assert event == {
+        "stage": "generation",
+        "progress": None,
+        "message": "LODGE generation complete",
+        "subprogress": 45,
+    }
+
+
 def test_lists_songs_and_opens_session(client):
     songs = client.get("/api/songs").json()["songs"]
     assert any(s["sid"] == "sng" for s in songs)
@@ -619,6 +652,13 @@ def test_uploaded_song_pipeline_scripts_are_packaged():
         "process_song.sh",
     }
     assert required <= {path.name for path in (root / "scripts").iterdir()}
+    process_script = (root / "scripts" / "process_song.sh").read_text(encoding="utf-8")
+    generation_script = (root / "scripts" / "make_song_bestofk.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'progress preprocess 25 "Extracting LODGE and EDGE music features"' in process_script
+    assert 'progress generation 40 "Generating LODGE and EDGE motion"' in process_script
+    assert "MAESTRO_SUBPROGRESS generation" in generation_script
 
 
 def test_background_bank_launch_requires_every_seed(monkeypatch):
@@ -879,6 +919,13 @@ def test_editor_review_actions_explain_the_user_flow():
     assert "renderCompareHighlight" in js
     assert "drawProjectedBodyHighlights" in js
     assert "setCompareMode" in js
+    assert 'id="activityCenter"' in html
+    assert 'id="agentProgWrap"' in html
+    assert "activityStart" in js
+    assert "activityUpdate" in js
+    assert "XMLHttpRequest" in js
+    assert "xhr.upload.onprogress" in js
+    assert "waitForMediaReady" in js
 
     tour = js[js.index("const TOUR_STEPS"):js.index("let tourIdx")]
     assert "\\u2014" not in tour and "—" not in tour

@@ -144,6 +144,22 @@ def _render_ranges(frame_count: int, worker_count: int) -> list[tuple[int, int]]
     return ranges
 
 
+def _count_frame_files(frames_dir: Path, frame_format: str) -> int:
+    """Count completed render frames while a warm Blender request is running."""
+    suffix = "." + frame_format.lower().lstrip(".")
+    try:
+        with os.scandir(frames_dir) as entries:
+            return sum(
+                1
+                for entry in entries
+                if entry.is_file()
+                and entry.name.startswith("frame_")
+                and entry.name.lower().endswith(suffix)
+            )
+    except OSError:
+        return 0
+
+
 def start_render(sid: str, motion: np.ndarray, media_dir: Path, *, scope: str = "window",
                  a: int | None = None, b: int | None = None,
                  audio_wav: str | None = None) -> None:
@@ -262,15 +278,6 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
             )
             with result_lock:
                 results[index] = ok
-                complete = sum(bool(value) for value in results.values())
-                _set(
-                    sid,
-                    progress=min(88, 24 + int(64 * complete / worker_count)),
-                    message=(
-                        f"rendered {complete}/{worker_count} full-quality "
-                        f"shard{'s' if worker_count != 1 else ''}\u2026"
-                    ),
-                )
 
         threads = [
             threading.Thread(
@@ -281,8 +288,44 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
         ]
         for thread in threads:
             thread.start()
+        total_frames = int(motion.shape[0])
+        last_count = -1
+        while any(thread.is_alive() for thread in threads):
+            rendered_frames = min(
+                total_frames,
+                _count_frame_files(frames_dir, frame_format),
+            )
+            if rendered_frames != last_count:
+                last_count = rendered_frames
+                _set(
+                    sid,
+                    progress=min(
+                        88,
+                        24 + int(64 * rendered_frames / max(1, total_frames)),
+                    ),
+                    rendered_frames=rendered_frames,
+                    message=(
+                        f"rendered {rendered_frames}/{total_frames} full-quality "
+                        f"frame{'s' if total_frames != 1 else ''} on "
+                        f"{worker_count} worker{'s' if worker_count != 1 else ''}\u2026"
+                    ),
+                )
+            time.sleep(1)
         for thread in threads:
             thread.join()
+        rendered_frames = min(
+            total_frames,
+            _count_frame_files(frames_dir, frame_format),
+        )
+        _set(
+            sid,
+            progress=min(
+                88,
+                24 + int(64 * rendered_frames / max(1, total_frames)),
+            ),
+            rendered_frames=rendered_frames,
+            message=f"rendered {rendered_frames}/{total_frames} full-quality frames\u2026",
+        )
         if len(results) != worker_count or not all(results.values()):
             return False
         sequence = _frame_sequence(str(frames_dir))
@@ -869,6 +912,11 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
             return False
         for spec, daemon in zip(missing, daemon_ids):
             spec["daemon"] = daemon
+    missing_tags = {spec["tag"] for spec in missing}
+    for spec in missing:
+        frames_dir = Path(spec["frames_dir"])
+        shutil.rmtree(frames_dir, ignore_errors=True)
+        frames_dir.mkdir(parents=True, exist_ok=True)
 
     def _run(spec: dict) -> None:
         results[spec["tag"]] = wr.warm_render(
@@ -893,15 +941,58 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
     ]
     for t in threads:
         t.start()
+    total_frames = sum(int(spec["motion"].shape[0]) for spec in specs)
+    cached_frames = sum(
+        int(spec["motion"].shape[0])
+        for spec in specs
+        if spec["tag"] not in missing_tags
+    )
+    last_count = -1
+    while any(t.is_alive() for t in threads):
+        rendered_frames = cached_frames + sum(
+            min(
+                int(spec["motion"].shape[0]),
+                _count_frame_files(Path(spec["frames_dir"]), "png"),
+            )
+            for spec in missing
+        )
+        if rendered_frames != last_count:
+            last_count = rendered_frames
+            _cset(
+                sid,
+                progress=min(
+                    88,
+                    25 + int(63 * rendered_frames / max(1, total_frames)),
+                ),
+                rendered_frames=rendered_frames,
+                message=(
+                    f"rendered {rendered_frames}/{total_frames} full-quality "
+                    "comparison frames\u2026"
+                ),
+            )
+        time.sleep(0.5)
     for t in threads:
         t.join()
+    rendered_frames = cached_frames + sum(
+        min(
+            int(spec["motion"].shape[0]),
+            _count_frame_files(Path(spec["frames_dir"]), "png"),
+        )
+        for spec in missing
+    )
+    _cset(
+        sid,
+        progress=min(88, 25 + int(63 * rendered_frames / max(1, total_frames))),
+        rendered_frames=rendered_frames,
+        message=f"rendered {rendered_frames}/{total_frames} comparison frames\u2026",
+    )
     if not all(results.get(spec["tag"]) for spec in specs):
         return False
     _cset(sid, progress=90, message="encoding before & after\u2026")
-    missing_tags = {spec["tag"] for spec in missing}
     enc: dict[str, bool] = {
         spec["tag"]: True for spec in specs if spec["tag"] not in missing_tags
     }
+    enc_lock = threading.Lock()
 
     def _highlight() -> None:
         try:
@@ -922,6 +1013,13 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
             shutil.copyfile(out, spec["cache_video"])
             if spec["rig"] and after_rig.is_file():
                 shutil.copyfile(after_rig, spec["cache_rig"])
+        with enc_lock:
+            completed = sum(bool(enc.get(item["tag"])) for item in specs)
+            _cset(
+                sid,
+                progress=min(98, 90 + int(8 * completed / max(1, len(specs)))),
+                message=f"encoded {completed}/{len(specs)} comparison videos\u2026",
+            )
 
     ethreads = [
         threading.Thread(target=_highlight),

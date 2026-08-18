@@ -17,6 +17,7 @@ SKIP_RENDER="${AGENTLODGE_SKIP_RENDER:-0}"
 cd "$WORKSPACE"
 export PYTHONUNBUFFERED=1 WORKSPACE AGENTLODGE_ROOT="$AL"
 fail() { echo "PROCESS_${SID}_FAILED: $1" >&2; exit 1; }
+progress() { printf 'MAESTRO_PROGRESS %s %s %s\n' "$1" "$2" "$3"; }
 [ -x "$PY" ] || fail "Python environment not found: $PY"
 
 find_script() {  # look in $WORKSPACE then the repo scripts dir
@@ -27,11 +28,13 @@ find_script() {  # look in $WORKSPACE then the repo scripts dir
 }
 
 # Jukebox's 10GB prior must live on /workspace; /root is wiped on every pod restart.
+progress assets 22 "Checking generation model assets"
 PRIOR_SIZE=10288727721
 PRIOR_STORE="${AGENTLODGE_JUKEBOX_PRIOR:-$WORKSPACE/.cache/jukemirlib/prior_level_2.pth.tar}"
 PRIOR_LINK="$HOME/.cache/jukemirlib/prior_level_2.pth.tar"
 mkdir -p "$(dirname "$PRIOR_STORE")" "$(dirname "$PRIOR_LINK")"
 if [ "$(stat -c %s "$PRIOR_STORE" 2>/dev/null || echo 0)" -ne "$PRIOR_SIZE" ]; then
+  progress assets 23 "Downloading the persistent Jukebox model"
   echo "### fetching persistent Jukebox prior (~10GB, first time only)"
   PRIOR_URL=https://openaipublic.azureedge.net/jukebox/models/5b/prior_level_2.pth.tar
   if command -v aria2c >/dev/null 2>&1; then
@@ -54,6 +57,7 @@ RECAP="$(find_script make_energetic_recap_aligned.py || true)"
 BANK="$(find_script build_window_bank.py)" || fail "build_window_bank.py not found"
 REND="$(find_script render_one_ybot.sh)" || fail "render_one_ybot.sh not found"
 
+progress preprocess 25 "Extracting LODGE and EDGE music features"
 echo "### [1/6] preprocess (LODGE feats + EDGE jukebox slices)"
 PREP_LOG_DIR="$WORKSPACE/gen${SID}_work"; mkdir -p "$PREP_LOG_DIR"
 "$PY" "$PRE" "$SID" --lodge-only > "$PREP_LOG_DIR/preprocess_lodge.log" 2>&1 &
@@ -71,8 +75,10 @@ if [ "$EDGE_PREP_RC" -ne 0 ]; then
   echo "### parallel EDGE preprocessing failed; retrying alone"
   "$PY" "$PRE" "$SID" --edge-only || fail "EDGE preprocess failed"
 fi
+progress generation 40 "Generating LODGE and EDGE motion"
 echo "### [2/6] best-of-K generation + storyboard"
 "$PY" "$GEN" "$SID" || fail "generation failed"
+progress polish 68 "Assembling and polishing the choreography"
 if [ -n "${RECAP:-}" ]; then echo "### [2b] recap alignment"; "$PY" "$RECAP" "$SID" || true; fi
 echo "### [2c] resolve hand-through-body self-penetration"
 PEN="$(find_script resolve_penetration.py || true)"
@@ -80,9 +86,11 @@ if [ -n "${PEN:-}" ]; then
   "$PY" "$PEN" "fd_${SID}_STORY_bestofk.npy" "fd_${SID}_STORY_bestofk.npy" \
     --radius 0.12 --margin 0.03 --max-deg 30 || echo "  (penetration cleanup skipped)"
 fi
+progress seed_bank 73 "Building the initial editing bank"
 echo "### [3/6] seed-0 editing bank"
 AGENTLODGE_BANK_K=1 "$PY" "$BANK" "$SID" || fail "seed-0 bank build failed"
 
+progress beats 76 "Tracking beats and musical accents"
 echo "### [4/6] beats"
 "$PY" - "$SID" <<'PY' || fail "beat tracking failed"
 import sys, numpy as np, librosa
@@ -105,6 +113,7 @@ np.save(f"/workspace/beat_strengths_{sid}.npy", strengths)
 print("beats", len(beat_frames), "strongest", float(strengths.max()) if strengths.size else 0.0)
 PY
 
+progress staging 79 "Staging generated dance assets"
 echo "### [5/6] stage initial outputs"
 OUT="$WORKSPACE/upload_${SID}"; mkdir -p "$OUT"
 cp "fd_${SID}_STORY_bestofk.npy" "$OUT/base_motion.npy"
@@ -112,6 +121,7 @@ cp "beats_${SID}.npy"            "$OUT/beats.npy"
 cp "beat_strengths_${SID}.npy"   "$OUT/beat_strengths.npy"
 cp bank_${SID}_*_seed0.npy       "$OUT/" 2>/dev/null || true
 
+progress preview 80 "Preparing the initial preview"
 if [ "$SKIP_RENDER" = "1" ]; then
   echo "### [6/6] preview render delegated to the hosted warm renderer"
 else
@@ -120,5 +130,6 @@ else
   cp "v_${SID}_preview.mp4" "$OUT/preview.mp4"
 fi
 
+progress preview 82 "Generation pipeline complete"
 echo "BANK_DEFERRED $K"
 echo "PROCESS_${SID}_DONE"

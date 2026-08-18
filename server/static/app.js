@@ -42,37 +42,231 @@ function escapeHtml(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+const ACTIVITIES = new Map();
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function elapsedLabel(started) {
+  const seconds = Math.max(0, Math.round((Date.now() - started) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
+function renderActivities() {
+  const center = $("activityCenter"), list = $("activityList");
+  if (!center || !list) return;
+  const items = [...ACTIVITIES.entries()].sort((a, b) => a[1].started - b[1].started);
+  center.hidden = items.length === 0;
+  if (!items.length) { list.innerHTML = ""; return; }
+  $("activityCount").textContent = items.length === 1 ? "1 operation" : `${items.length} operations`;
+  list.innerHTML = items.map(([id, item]) => {
+    const determinate = Number.isFinite(item.progress);
+    const progress = determinate ? Math.max(0, Math.min(100, Math.round(item.progress))) : null;
+    return `<div class="activity-row ${item.state}" data-activity="${escapeHtml(id)}" role="status">`
+      + `<div class="activity-head"><strong>${escapeHtml(item.label)}</strong>`
+      + `<span class="activity-percent">${progress == null ? "live" : progress + "%"}</span></div>`
+      + `<div class="activity-track ${determinate ? "" : "indeterminate"}" role="progressbar"`
+      + ` aria-valuemin="0" aria-valuemax="100"${determinate ? ` aria-valuenow="${progress}"` : ""}>`
+      + `<i style="${determinate ? `width:${progress}%` : ""}"></i></div>`
+      + `<div class="activity-meta"><span class="activity-detail">${escapeHtml(item.detail || "")}</span>`
+      + `<span class="activity-elapsed">${elapsedLabel(item.started)}</span></div></div>`;
+  }).join("");
+}
+
+function tickActivityElapsed() {
+  const list = $("activityList");
+  if (!list) return;
+  list.querySelectorAll("[data-activity]").forEach((row) => {
+    const item = ACTIVITIES.get(row.dataset.activity);
+    const elapsed = row.querySelector(".activity-elapsed");
+    if (item && elapsed) elapsed.textContent = elapsedLabel(item.started);
+  });
+}
+setInterval(tickActivityElapsed, 1000);
+
+function activityStart(id, label, detail, progress = null) {
+  const old = ACTIVITIES.get(id);
+  if (old && old.timer) clearTimeout(old.timer);
+  ACTIVITIES.set(id, {
+    label,
+    detail: detail || "",
+    progress: Number.isFinite(progress) ? progress : null,
+    state: "active",
+    started: old && old.state === "active" ? old.started : Date.now(),
+    timer: null,
+  });
+  renderActivities();
+}
+
+function activityUpdate(id, patch) {
+  const item = ACTIVITIES.get(id);
+  if (!item) return;
+  if (patch.label !== undefined) item.label = patch.label;
+  if (patch.detail !== undefined) item.detail = patch.detail;
+  if (patch.progress !== undefined) {
+    item.progress = Number.isFinite(patch.progress) ? patch.progress : null;
+  }
+  item.state = patch.state || "active";
+  renderActivities();
+}
+
+function activityFinish(id, state, detail, removeAfter) {
+  const item = ACTIVITIES.get(id);
+  if (!item) return;
+  if (item.timer) clearTimeout(item.timer);
+  item.state = state;
+  item.detail = detail || item.detail;
+  item.progress = 100;
+  renderActivities();
+  item.timer = setTimeout(() => {
+    ACTIVITIES.delete(id);
+    renderActivities();
+  }, removeAfter);
+}
+
+function activityDone(id, detail) {
+  activityFinish(id, "done", detail || "complete", 1800);
+}
+
+function activityFail(id, detail) {
+  activityFinish(id, "error", detail || "failed", 7000);
+}
+
+function setProgressBar(barId, wrapId, progress) {
+  const bar = $(barId), wrap = $(wrapId);
+  if (!bar || !wrap) return;
+  wrap.hidden = false;
+  const determinate = Number.isFinite(progress);
+  wrap.classList.toggle("indeterminate", !determinate);
+  if (determinate) {
+    const value = Math.max(0, Math.min(100, Math.round(progress)));
+    bar.style.width = value + "%";
+    wrap.setAttribute("aria-valuenow", String(value));
+  } else {
+    bar.style.width = "";
+    wrap.removeAttribute("aria-valuenow");
+  }
+}
+
+function mediaProgress(video) {
+  if (video.readyState >= 3) return 1;
+  if (video.duration && video.buffered && video.buffered.length) {
+    try {
+      return Math.max(0.2, Math.min(0.95, video.buffered.end(video.buffered.length - 1) / video.duration));
+    } catch (e) {}
+  }
+  if (video.readyState >= 2) return 0.72;
+  if (video.readyState >= 1) return 0.35;
+  return 0.08;
+}
+
+function waitForMediaReady(videos, activityId, start, end, detail, timeout = 20000) {
+  const media = videos.filter(Boolean);
+  if (!media.length) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const cleanups = [];
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      cleanups.forEach((fn) => fn());
+      resolve(ok);
+    };
+    const update = () => {
+      const ratio = media.reduce((sum, item) => sum + mediaProgress(item), 0) / media.length;
+      activityUpdate(activityId, {
+        progress: start + (end - start) * ratio,
+        detail,
+      });
+      if (media.every((item) => item.readyState >= 3)) finish(true);
+    };
+    media.forEach((item) => {
+      ["loadstart", "loadedmetadata", "progress", "loadeddata", "canplay"].forEach((name) => {
+        item.addEventListener(name, update);
+        cleanups.push(() => item.removeEventListener(name, update));
+      });
+      const fail = () => finish(false);
+      item.addEventListener("error", fail, { once: true });
+      cleanups.push(() => item.removeEventListener("error", fail));
+    });
+    const timer = setTimeout(() => finish(false), timeout);
+    cleanups.push(() => clearTimeout(timer));
+    update();
+  });
+}
+
+function wireMediaBuffering(video, activityId, label) {
+  if (!video || video.dataset.progressWired) return;
+  video.dataset.progressWired = "1";
+  const buffering = () => {
+    if (!video.currentSrc || video.ended) return;
+    activityStart(activityId, label, "Waiting for more video data", null);
+  };
+  const resumed = () => {
+    const item = ACTIVITIES.get(activityId);
+    if (item && item.state === "active") activityDone(activityId, "Playback resumed");
+  };
+  video.addEventListener("waiting", buffering);
+  video.addEventListener("stalled", buffering);
+  video.addEventListener("playing", resumed);
+  video.addEventListener("canplay", resumed);
+}
+
 // -------------------------------------------------------------- render the complete edited dance (Blender/pod)
 async function startFullRender() {
   ST.lastRenderScope = "full";
   $("fullRenderBtn").disabled = true;
   const st = $("renderStatus"); st.style.display = "block"; st.className = "render-status";
   st.textContent = "starting the full-dance render with music\u2026";
-  $("renderProgWrap").hidden = false; $("renderProg").style.width = "3%";
+  setProgressBar("renderProg", "renderProgWrap", 3);
+  activityStart("render", "Rendering full dance", "Starting full-quality render", 3);
   try {
     await api(`/api/session/${ST.sid}/render`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scope: "full" }) });
     pollRender();
-  } catch (e) { st.textContent = "\u26a0 " + e.message; $("fullRenderBtn").disabled = false; }
+  } catch (e) {
+    st.textContent = "\u26a0 " + e.message;
+    st.className = "render-status bad";
+    $("renderProgWrap").hidden = true;
+    $("fullRenderBtn").disabled = false;
+    activityFail("render", e.message);
+  }
 }
 
 async function pollRender() {
   let j;
   try { j = await api(`/api/session/${ST.sid}/render`); }
-  catch (e) { setTimeout(pollRender, 3000); return; }
+  catch (e) {
+    activityUpdate("render", { detail: "Reconnecting to render status\u2026" });
+    setTimeout(pollRender, 1000);
+    return;
+  }
   const st = $("renderStatus");
   st.textContent = (j.status === "rendering" ? "\u{1F3AC} " : "") + (j.message || j.status);
-  $("renderProgWrap").hidden = false; $("renderProg").style.width = (j.progress || 0) + "%";
+  setProgressBar("renderProg", "renderProgWrap", Number(j.progress || 0));
+  activityUpdate("render", {
+    progress: Number(j.progress || 0),
+    detail: j.message || j.status,
+  });
   if (j.status === "done") {
     const v = $("video");
     v.src = `/api/session/${ST.sid}/media/${j.video}?t=` + Date.now();
-    v.load(); v.play().catch(() => {});
+    v.load();
+    activityUpdate("render", { progress: 96, detail: "Loading the rendered video\u2026" });
+    const mediaReady = await waitForMediaReady(
+      [v],
+      "render",
+      96,
+      100,
+      "Loading the rendered video\u2026",
+    );
+    v.play().catch(() => {});
     $("viewerTag").textContent = ST.lastRenderScope === "full" ? "full dance + music" : "edited render";
     st.className = "render-status ok";
     st.textContent = `\u2714 full dance ready${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
     $("renderProgWrap").hidden = true;
     $("fullRenderBtn").disabled = false;
+    activityDone("render", mediaReady ? "Full dance ready" : "Render ready; video is still buffering");
     toast("Full dance ready");
     setTimeout(() => { st.style.display = "none"; }, 5000);
     return;
@@ -81,10 +275,11 @@ async function pollRender() {
     st.className = "render-status bad"; st.textContent = "\u26a0 " + (j.message || "render failed");
     $("renderProgWrap").hidden = true;
     $("fullRenderBtn").disabled = false;
+    activityFail("render", j.message || "Render failed");
     toast("Render failed");
     return;
   }
-  setTimeout(pollRender, 3000);
+  setTimeout(pollRender, 1000);
 }
 
 // -------------------------------------------------------------- before/after window comparison
@@ -118,7 +313,8 @@ async function startCompare() {
   panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
   const st = $("cmpStatus"); st.style.display = "block"; st.className = "render-status";
   st.textContent = "starting comparison render\u2026";
-  $("cmpProgWrap").hidden = false; $("cmpProg").style.width = "3%";
+  setProgressBar("cmpProg", "cmpProgWrap", 3);
+  activityStart("compare", "Rendering edit comparison", "Starting before and after render", 3);
   $("compareBtn").disabled = true;
   try {
     const fromId = ($("cmpVersion") && $("cmpVersion").value) || null;
@@ -128,23 +324,44 @@ async function startCompare() {
     pollCompare();
   } catch (e) {
     st.className = "render-status bad"; st.textContent = "\u26a0 " + e.message;
+    $("cmpProgWrap").hidden = true;
     $("compareBtn").disabled = false;
+    activityFail("compare", e.message);
   }
 }
 
 async function pollCompare() {
   let j;
   try { j = await api(`/api/session/${ST.sid}/compare`); }
-  catch (e) { setTimeout(pollCompare, 750); return; }
+  catch (e) {
+    activityUpdate("compare", { detail: "Reconnecting to comparison status\u2026" });
+    setTimeout(pollCompare, 750);
+    return;
+  }
   const st = $("cmpStatus");
   st.textContent = (j.status === "rendering" ? "\u{1F3AC} " : "") + (j.message || j.status);
-  $("cmpProgWrap").hidden = false; $("cmpProg").style.width = (j.progress || 0) + "%";
+  setProgressBar("cmpProg", "cmpProgWrap", Number(j.progress || 0));
+  activityUpdate("compare", {
+    progress: Number(j.progress || 0),
+    detail: j.message || j.status,
+  });
   if (j.status === "done") {
-    setupCompareVideos(j.before_video, j.after_video, j.metrics || {}, j.audio, j.highlight || null);
+    activityUpdate("compare", { progress: 96, detail: "Loading comparison videos\u2026" });
+    const mediaReady = await setupCompareVideos(
+      j.before_video,
+      j.after_video,
+      j.metrics || {},
+      j.audio,
+      j.highlight || null,
+    );
     st.className = "render-status ok";
     st.textContent = `\u2714 comparison ready${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
     $("cmpProgWrap").hidden = true;
     $("compareBtn").disabled = false;
+    activityDone(
+      "compare",
+      mediaReady ? "Comparison ready" : "Comparison ready; videos are still buffering",
+    );
     setTimeout(() => { st.style.display = "none"; }, 5000);
     toast("Comparison ready");
     return;
@@ -152,10 +369,12 @@ async function pollCompare() {
   if (j.status === "error") {
     st.className = "render-status bad"; st.textContent = "\u26a0 " + (j.message || "compare failed");
     $("cmpProgWrap").hidden = true;
-    $("compareBtn").disabled = false; toast("Compare failed");
+    $("compareBtn").disabled = false;
+    activityFail("compare", j.message || "Comparison failed");
+    toast("Compare failed");
     return;
   }
-  setTimeout(pollCompare, 100);
+  setTimeout(pollCompare, 500);
 }
 
 function showCompareMetrics(m) {
@@ -350,10 +569,18 @@ function setCompareOriginalHeld(held) {
 
 function setupCompareVideos(beforeName, afterName, metrics, audioName, highlight) {
   const A = $("cmpAfter"), B = $("cmpBefore"), AU = $("cmpAudio");
+  wireMediaBuffering(A, "compare-buffer", "Buffering comparison");
   const bust = "?t=" + Date.now();
   A.src = `/api/session/${ST.sid}/media/${afterName}${bust}`;
   B.src = `/api/session/${ST.sid}/media/${beforeName}${bust}`;
   A.load(); B.load();
+  const mediaReady = waitForMediaReady(
+    [A, B],
+    "compare",
+    96,
+    100,
+    "Loading comparison videos\u2026",
+  );
   // window music: a small clip the same length as the window, looped in sync with the (looping)
   // videos. The clips and the audio are all 0-based over the window, so audio.currentTime == A.time.
   const haveAudio = !!(audioName && AU);
@@ -405,9 +632,24 @@ function setupCompareVideos(beforeName, afterName, metrics, audioName, highlight
   B.onseeked = renderCompareHighlight;
   B.onloadeddata = renderCompareHighlight;
   A.onloadeddata = () => { renderCompareHighlight(); playBoth(); };
+  return mediaReady;
 }
 
 // -------------------------------------------------------------- load songs + session
+async function runHistoryAction(label, endpoint) {
+  activityStart("history", label, "Updating the current checkpoint", null);
+  try {
+    const st = await api(`/api/session/${ST.sid}/${endpoint}`, { method: "POST" });
+    applyState(st);
+    activityDone("history", `${label} complete`);
+    return st;
+  } catch (e) {
+    activityFail("history", e.message);
+    toast(`${label} failed: ${e.message}`);
+    return null;
+  }
+}
+
 function wireControls() {
   wireTimeline();
   wireUpload();
@@ -441,18 +683,29 @@ function wireControls() {
   };
   const cmpVer = $("cmpVersion");
   if (cmpVer) cmpVer.onchange = () => { if (!$("compare").hidden) startCompare(); };
-  $("undo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/undo`, { method: "POST" }));
-  $("redo").onclick = async () => applyState(await api(`/api/session/${ST.sid}/redo`, { method: "POST" }));
+  $("undo").onclick = () => runHistoryAction("Undoing edit", "undo");
+  $("redo").onclick = () => runHistoryAction("Redoing edit", "redo");
   $("reset").onclick = async () => {
     if (!confirm("Clear the edit history and start over from the original dance? This cannot be undone.")) return;
-    const st = await api(`/api/session/${ST.sid}/reset`, { method: "POST" });
-    $("compare").hidden = true;
-    stopCompareHighlightLoop();
-    try { $("cmpAfter").pause(); $("cmpBefore").pause(); $("cmpAudio").pause(); } catch (e) {}
-    $("video").src = st.preview_url + "?t=" + Date.now();     // back to the original dance
-    applyState(st);
-    showCurrentMetrics(st.metrics || {});
-    toast("Edit history cleared \u2014 back to the original");
+    activityStart("history", "Resetting edit history", "Restoring the original dance", null);
+    try {
+      const st = await api(`/api/session/${ST.sid}/reset`, { method: "POST" });
+      $("compare").hidden = true;
+      stopCompareHighlightLoop();
+      try { $("cmpAfter").pause(); $("cmpBefore").pause(); $("cmpAudio").pause(); } catch (e) {}
+      const video = $("video");
+      video.src = st.preview_url + "?t=" + Date.now();       // back to the original dance
+      video.load();
+      activityUpdate("history", { progress: 70, detail: "Loading the original preview\u2026" });
+      await waitForMediaReady([video], "history", 70, 100, "Loading the original preview\u2026");
+      applyState(st);
+      showCurrentMetrics(st.metrics || {});
+      activityDone("history", "Original dance restored");
+      toast("Edit history cleared \u2014 back to the original");
+    } catch (e) {
+      activityFail("history", e.message);
+      toast("Reset failed: " + e.message);
+    }
   };
   $("instruction").addEventListener("keydown", (e) => { if (e.key === "Enter") runEdit(); });
   wireTour();
@@ -524,6 +777,7 @@ function maybeAutoTour() {
 async function loadMotionBank() {
   const host = $("motionSuggestions");
   if (!host) return;
+  activityStart("motion-catalog", "Loading motion catalog", "Fetching supported motions", null);
   try {
     const data = await api("/api/motions");
     host.innerHTML = "";
@@ -546,8 +800,10 @@ async function loadMotionBank() {
       };
       host.appendChild(button);
     });
+    activityDone("motion-catalog", `${motions.length} motions ready`);
   } catch (e) {
     host.textContent = "Named motions are unavailable.";
+    activityFail("motion-catalog", "Motion catalog unavailable");
   }
 }
 
@@ -560,13 +816,18 @@ async function loadSongs(maxAttempts = 20) {
       const { songs } = await api("/api/songs");
       if (songs && songs.length) return songs;
     } catch (e) { /* editor still coming up -- keep polling */ }
+    activityUpdate("startup", {
+      progress: Math.min(45, 8 + i * 2),
+      detail: `Waiting for the editor service${i ? `, retry ${i + 1}` : ""}`,
+    });
     if (i === 0) toast("Loading songs\u2026 the editor may still be starting");
-    await new Promise((r) => setTimeout(r, 1500));
+    await sleep(1500);
   }
   return [];
 }
 
 async function init() {
+  activityStart("startup", "Starting MAESTRO", "Loading songs and editor services", 5);
   const sel = $("song");
   sel.innerHTML = "<option>Loading\u2026</option>"; sel.disabled = true;
   wireControls();                                            // wire up-front so controls work at once
@@ -575,28 +836,63 @@ async function init() {
   sel.innerHTML = "";
   if (!songs.length) {
     sel.innerHTML = "<option>no songs \u2014 refresh</option>";
+    activityFail("startup", "Songs could not be loaded");
     toast("Couldn't load songs \u2014 the editor may still be starting. Please refresh in a moment.");
     return;
   }
+  activityUpdate("startup", { progress: 55, detail: "Opening the first song" });
   sel.disabled = false;
   songs.forEach((s) => { const o = document.createElement("option"); o.value = s.sid; o.textContent = s.name || s.sid; sel.appendChild(o); });
   sel.onchange = () => openSession(sel.value);
-  await openSession(songs[0].sid);
+  const opened = await openSession(songs[0].sid);
+  if (!opened) {
+    activityFail("startup", "The first song could not be opened");
+    return;
+  }
+  activityDone("startup", "Editor ready");
   maybeAutoTour();                                          // first-run walkthrough (skippable)
 }
 
 async function openSession(sid) {
+  const sel = $("song");
+  const label = sel && sel.selectedOptions.length ? sel.selectedOptions[0].textContent : sid;
+  activityStart("session", "Loading song", `Opening ${label}`, 8);
+  if (sel) sel.disabled = true;
   let st = null;
   for (let i = 0; i < 4 && !st; i++) {
     try { st = await api(`/api/session/${sid}`, { method: "POST" }); }
-    catch (e) { await new Promise((r) => setTimeout(r, 1200)); }   // pod may still be warming
+    catch (e) {
+      activityUpdate("session", {
+        progress: 12 + i * 8,
+        detail: `Waiting for the song session, attempt ${i + 2}`,
+      });
+      await sleep(1200);
+    }                                                            // pod may still be warming
   }
-  if (!st) { toast(`Couldn't open ${sid} \u2014 please refresh in a moment.`); return; }
+  if (!st) {
+    if (sel) sel.disabled = false;
+    activityFail("session", `Could not open ${label}`);
+    toast(`Couldn't open ${sid} \u2014 please refresh in a moment.`);
+    return false;
+  }
   ST.sid = sid;
+  applyState(st);
+  activityUpdate("session", { progress: 55, detail: "Loading the dance preview\u2026" });
   const v = $("video");
   v.src = st.preview_url + "?t=" + Date.now();
-  applyState(st);
+  v.load();
+  const mediaReady = await waitForMediaReady(
+    [v],
+    "session",
+    55,
+    100,
+    "Loading the dance preview\u2026",
+    12000,
+  );
+  if (sel) sel.disabled = false;
+  activityDone("session", mediaReady ? `${label} ready` : `${label} loaded; preview is buffering`);
   toast(`Loaded ${sid}: ${st.duration}s, ${st.n_beats} beats, ${st.generator} generator`);
+  return true;
 }
 
 function applyState(st, opts) {
@@ -652,12 +948,54 @@ function wireTimeline() {
   window.addEventListener("mousemove", (e) => { if (dragging) setSel(startSec, secAt(e)); });
   window.addEventListener("mouseup", () => { dragging = false; });
   const v = $("video");
+  wireMediaBuffering(v, "viewer-buffer", "Buffering dance preview");
   v.addEventListener("timeupdate", () => { $("playhead").style.left = pct(v.currentTime) + "%"; });
   [$("aSec"), $("bSec")].forEach((inp) => inp.addEventListener("change", () => setSel(parseFloat($("aSec").value) || 0, parseFloat($("bSec").value) || 0)));
 }
 
 // -------------------------------------------------------------- edit (WebSocket w/ live progress)
 // -------------------------------------------------------------- song upload (processed on the pod)
+function uploadAudio(file) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const fd = new FormData();
+    fd.append("file", file);
+    xhr.open("POST", "/api/upload");
+    xhr.responseType = "json";
+    xhr.timeout = 5 * 60 * 1000;
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) {
+        activityUpdate("upload", { progress: null, detail: `Uploading ${file.name}` });
+        setProgressBar("progbar", "agentProgWrap", null);
+        return;
+      }
+      const progress = Math.round(100 * event.loaded / Math.max(1, event.total));
+      activityUpdate("upload", {
+        progress,
+        detail: `Uploading ${file.name} (${progress}%)`,
+      });
+      setProgressBar("progbar", "agentProgWrap", progress);
+      $("progtext").textContent = `uploading audio: ${progress}%`;
+    };
+    xhr.upload.onload = () => {
+      activityUpdate("upload", {
+        progress: null,
+        detail: "Upload complete; preparing audio for generation",
+      });
+      setProgressBar("progbar", "agentProgWrap", null);
+      $("progtext").textContent = "preparing audio for generation\u2026";
+    };
+    xhr.onload = () => {
+      const body = xhr.response || {};
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body);
+      else reject(new Error(body.detail || body.error || xhr.statusText || "upload failed"));
+    };
+    xhr.onerror = () => reject(new Error("network error while uploading"));
+    xhr.ontimeout = () => reject(new Error("audio preparation timed out"));
+    xhr.send(fd);
+  });
+}
+
 function wireUpload() {
   const btn = $("uploadBtn"), input = $("uploadInput");
   if (!btn || !input) return;
@@ -666,39 +1004,117 @@ function wireUpload() {
     const f = input.files && input.files[0];
     input.value = "";
     if (!f) return;
-    const fd = new FormData(); fd.append("file", f);
+    btn.disabled = true;
+    activityStart("upload", "Uploading audio", `Uploading ${f.name}`, 0);
+    $("goal").innerHTML = `<b>Uploading “${escapeHtml(f.name)}”</b>`;
+    $("feedback").textContent = "";
+    $("feedback").className = "feedback";
+    setProgressBar("progbar", "agentProgWrap", 0);
     toast(`Uploading ${f.name}…`);
     let job;
-    try { job = await (await fetch("/api/upload", { method: "POST", body: fd })).json(); }
-    catch (e) { toast("Upload failed: " + e.message); return; }
-    if (job.error) { toast(job.error); return; }
+    try {
+      job = await uploadAudio(f);
+      activityDone("upload", "Audio received");
+    } catch (e) {
+      btn.disabled = false;
+      activityFail("upload", e.message);
+      setProgressBar("progbar", "agentProgWrap", 100);
+      $("progtext").textContent = "upload failed";
+      $("feedback").textContent = "\u26a0 " + e.message;
+      $("feedback").className = "feedback bad";
+      toast("Upload failed: " + e.message);
+      return;
+    }
+    btn.disabled = false;
+    if (job.error) {
+      activityFail("upload", job.error);
+      setProgressBar("progbar", "agentProgWrap", 100);
+      $("progtext").textContent = "upload failed";
+      toast(job.error);
+      return;
+    }
     pollJob(job.sid, f.name);
   };
 }
 
-function pollJob(sid, name) {
-  const goal = $("goal"), pt = $("progtext"), pb = $("progbar"), fb = $("feedback");
+async function watchBank(sid, name, initialJob) {
+  const activityId = `bank:${sid}`;
+  activityStart(
+    activityId,
+    "Expanding editing library",
+    initialJob.bank_message || `Generating more alternatives for ${name}`,
+    Number.isFinite(initialJob.bank_progress) ? initialJob.bank_progress : null,
+  );
+  while (true) {
+    let job;
+    try {
+      job = await api(`/api/jobs/${sid}`);
+    } catch (e) {
+      activityUpdate(activityId, { detail: "Reconnecting to editing-library status\u2026" });
+      await sleep(3000);
+      continue;
+    }
+    if (job.bank_status === "ready") {
+      activityDone(activityId, "Additional editing alternatives ready");
+      return;
+    }
+    if (job.bank_status === "error") {
+      activityFail(activityId, job.bank_error || job.bank_message || "Editing-library build failed");
+      return;
+    }
+    activityUpdate(activityId, {
+      progress: Number.isFinite(job.bank_progress) ? job.bank_progress : null,
+      detail: job.bank_message || "Generating additional editing alternatives",
+    });
+    await sleep(5000);
+  }
+}
+
+async function pollJob(sid, name) {
+  const goal = $("goal"), pt = $("progtext"), fb = $("feedback");
   fb.textContent = ""; fb.className = "feedback";
-  goal.innerHTML = `<b>Processing “${name}”</b> on the GPU pod`;
-  pb.style.width = "8%"; pt.textContent = "queued…";
-  const iv = setInterval(async () => {
-    let j; try { j = await api(`/api/jobs/${sid}`); } catch { return; }
-    pb.style.width = (j.progress || 10) + "%";
-    pt.textContent = j.message || j.status;
+  goal.innerHTML = `<b>Processing “${escapeHtml(name)}”</b> on the GPU pod`;
+  setProgressBar("progbar", "agentProgWrap", 5);
+  pt.textContent = "queued\u2026";
+  const activityId = `process:${sid}`;
+  activityStart(activityId, `Generating ${name}`, "Queued on the GPU pod", 5);
+  while (true) {
+    let j;
+    try {
+      j = await api(`/api/jobs/${sid}`);
+    } catch (e) {
+      activityUpdate(activityId, { detail: "Reconnecting to generation status\u2026" });
+      await sleep(1500);
+      continue;
+    }
+    const progress = Number(j.progress || 0);
+    setProgressBar("progbar", "agentProgWrap", progress);
+    const elapsed = j.elapsed ? ` \u00b7 ${elapsedLabel(Date.now() - Number(j.elapsed) * 1000)}` : "";
+    pt.textContent = (j.message || j.status) + elapsed;
+    activityUpdate(activityId, {
+      progress,
+      detail: j.message || j.status,
+    });
     if (j.status === "done") {
-      clearInterval(iv); pb.style.width = "100%";
+      setProgressBar("progbar", "agentProgWrap", 100);
       fb.textContent = "\u2714 Ready"; fb.className = "feedback ok";
+      activityDone(activityId, `${name} is ready`);
+      if (j.bank_status === "building") watchBank(sid, name, j);
       const { songs } = await api("/api/songs");
       const sel = $("song"); sel.innerHTML = "";
       songs.forEach((s) => { const o = document.createElement("option"); o.value = s.sid;
         o.textContent = s.name || s.sid; sel.appendChild(o); });
       sel.value = sid; await openSession(sid);
       toast(`“${name}” is ready`);
+      return;
     } else if (j.status === "error") {
-      clearInterval(iv); pb.style.width = "0%";
+      setProgressBar("progbar", "agentProgWrap", 100);
       fb.textContent = "\u26a0 " + (j.message || "processing failed"); fb.className = "feedback bad";
+      activityFail(activityId, j.message || "Song generation failed");
+      return;
     }
-  }, 2500);
+    await sleep(1000);
+  }
 }
 
 function runEdit() {
@@ -707,18 +1123,53 @@ function runEdit() {
   if (!instruction) { toast("Type an instruction"); return; }
   const [a, b] = ST.sel;
   $("apply").disabled = true; $("feedback").textContent = ""; $("feedback").className = "feedback";
-  $("goal").innerHTML = ""; $("progbar").style.width = "0%"; $("progtext").textContent = "connecting...";
+  $("goal").innerHTML = "";
+  setProgressBar("progbar", "agentProgWrap", null);
+  $("progtext").textContent = "connecting\u2026";
+  activityStart("edit", "Applying edit", "Connecting to the editing agent", null);
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/api/session/${ST.sid}/edit_ws`);
-  ws.onopen = () => ws.send(JSON.stringify({ a_sec: a, b_sec: b, instruction }));
+  let sent = false, finished = false, fallbackStarted = false;
+  ws.onopen = () => {
+    activityUpdate("edit", { progress: 3, detail: "Sending the edit request" });
+    ws.send(JSON.stringify({ a_sec: a, b_sec: b, instruction }));
+    sent = true;
+  };
   ws.onmessage = (msg) => {
     const ev = JSON.parse(msg.data);
     if (ev.type === "progress") onProgress(ev);
-    else if (ev.type === "final") { onFinal(ev); ws.close(); }
-    else if (ev.type === "error") { toast("Edit failed: " + ev.message); $("apply").disabled = false; ws.close(); }
+    else if (ev.type === "final") {
+      finished = true;
+      onFinal(ev);
+      ws.close();
+    }
+    else if (ev.type === "error") {
+      finished = true;
+      activityFail("edit", ev.message);
+      setProgressBar("progbar", "agentProgWrap", 100);
+      $("progtext").textContent = "edit failed";
+      toast("Edit failed: " + ev.message);
+      $("apply").disabled = false;
+      ws.close();
+    }
   };
-  ws.onerror = () => { $("progtext").textContent = "socket error; retrying over HTTP..."; runEditHTTP(a, b, instruction); };
+  ws.onerror = () => {
+    if (finished || fallbackStarted) return;
+    if (!sent) {
+      fallbackStarted = true;
+      $("progtext").textContent = "socket unavailable; retrying over HTTP\u2026";
+      activityUpdate("edit", { progress: null, detail: "Retrying the edit over HTTP" });
+      runEditHTTP(a, b, instruction);
+      return;
+    }
+    finished = true;
+    setProgressBar("progbar", "agentProgWrap", 100);
+    $("progtext").textContent = "connection lost during edit";
+    activityFail("edit", "Connection lost after the edit started; check history before retrying");
+    $("apply").disabled = false;
+    toast("Edit connection lost; check history before retrying");
+  };
 }
 
 async function runEditHTTP(a, b, instruction) {
@@ -727,29 +1178,45 @@ async function runEditHTTP(a, b, instruction) {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ a_sec: a, b_sec: b, instruction }) });
     onFinal(r);
-  } catch (e) { toast("Edit failed: " + e.message); } finally { $("apply").disabled = false; }
+  } catch (e) {
+    activityFail("edit", e.message);
+    setProgressBar("progbar", "agentProgWrap", 100);
+    $("progtext").textContent = "edit failed";
+    toast("Edit failed: " + e.message);
+  } finally { $("apply").disabled = false; }
 }
 
 function onProgress(ev) {
   if (ev.phase === "plan") {
     $("goal").innerHTML = `<b>Agent plan:</b> ${escapeHtml(ev.summary || "")}`;
     $("checks").innerHTML = ""; $("reasoning").hidden = true;
-    $("progbar").style.width = "8%";
-    $("progtext").textContent = `planning ${(ev.steps || []).length} step(s)\u2026`;
+    setProgressBar("progbar", "agentProgWrap", 8);
+    const detail = `planning ${(ev.steps || []).length} step(s)\u2026`;
+    $("progtext").textContent = detail;
+    activityUpdate("edit", { progress: 8, detail });
   } else if (ev.phase === "refine") {
-    $("progbar").style.width = "30%";
-    $("progtext").textContent = `refining (attempt ${ev.cycle}): ${ev.summary || ""}`;
+    setProgressBar("progbar", "agentProgWrap", 30);
+    const detail = `refining (attempt ${ev.cycle}): ${ev.summary || ""}`;
+    $("progtext").textContent = detail;
+    activityUpdate("edit", { progress: 30, detail });
   } else if (ev.phase === "step") {
     const p = ev.n_steps ? Math.round(20 + (ev.step / ev.n_steps) * 60) : 50;
-    $("progbar").style.width = p + "%";
+    setProgressBar("progbar", "agentProgWrap", p);
     const tag = ev.status === "rejected" ? " \u21a9 rejected" : ev.status === "applied" ? " \u2713" : "";
-    $("progtext").textContent = `attempt ${ev.cycle || 1} \u00b7 step ${ev.step}/${ev.n_steps}: ${ev.tool}${tag}`;
+    const detail = `attempt ${ev.cycle || 1} \u00b7 step ${ev.step}/${ev.n_steps}: ${ev.tool}${tag}`;
+    $("progtext").textContent = detail;
+    activityUpdate("edit", { progress: p, detail });
   } else if (ev.phase === "verify") {
-    $("progtext").textContent = `attempt ${ev.cycle}: ${ev.ok ? "goals met \u2714" : "short of goal, refining\u2026"}`;
+    const detail = `attempt ${ev.cycle}: ${ev.ok ? "goals met \u2714" : "short of goal, refining\u2026"}`;
+    setProgressBar("progbar", "agentProgWrap", ev.ok ? 94 : 86);
+    $("progtext").textContent = detail;
+    activityUpdate("edit", { progress: ev.ok ? 94 : 86, detail });
   } else if (ev.phase === "candidate") {   // legacy best-of-K generators
     const p = ev.total ? Math.round((ev.done / ev.total) * 100) : 0;
-    $("progbar").style.width = p + "%";
-    $("progtext").textContent = `trying ${ev.backbone} take #${ev.seed} (${ev.done}/${ev.total})`;
+    setProgressBar("progbar", "agentProgWrap", p);
+    const detail = `trying ${ev.backbone} take #${ev.seed} (${ev.done}/${ev.total})`;
+    $("progtext").textContent = detail;
+    activityUpdate("edit", { progress: p, detail });
   }
 }
 
@@ -824,7 +1291,7 @@ function renderTrace(trace) {
 
 function onFinal(payload) {
   const res = payload.result, st = payload.state;
-  $("progbar").style.width = "100%";
+  setProgressBar("progbar", "agentProgWrap", 100);
   $("progtext").textContent = "";
   if (res.agent_summary) {
     let g = `<b>Agent plan:</b> ${escapeHtml(res.agent_summary)}`;
@@ -844,6 +1311,7 @@ function onFinal(payload) {
   applyState(st, { keepMetrics: true });          // update history/toolbar but keep the before->after table
   showMetrics(res.metrics_before, res.metrics_after);
   $("apply").disabled = false;
+  activityDone("edit", res.ok ? "Edit applied and verified" : "Best-effort edit checkpointed");
   toast(res.ok ? "Edit applied + checkpointed" : "Best-effort edit checkpointed");
   // NOTE: to see the edit as video, hit 🎬 Render. Metric deltas + history reflect the edit now.
 }
@@ -906,9 +1374,22 @@ function renderHistory(timeline) {
     const win = ed.window ? `<small>${(ed.window[0] / ST.fps).toFixed(0)}-${(ed.window[1] / ST.fps).toFixed(0)}s</small>` : "";
     const label = c.label ? c.label.replace(/\s*\[[^\]]*\]/, "").replace(/_/g, " ") : "original";
     li.innerHTML = `<span class="dot"></span><span class="lbl">${label}${win}</span>${badge}`;
-    li.onclick = async () => { applyState(await api(`/api/session/${ST.sid}/restore`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ckpt_id: c.id }) }));
-      toast("Rolled back to: " + (c.label || "original")); };
+    li.onclick = async () => {
+      activityStart("history", "Restoring version", `Loading ${c.label || "original"}`, null);
+      try {
+        const state = await api(`/api/session/${ST.sid}/restore`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ckpt_id: c.id }),
+        });
+        applyState(state);
+        activityDone("history", `${c.label || "Original"} restored`);
+        toast("Rolled back to: " + (c.label || "original"));
+      } catch (e) {
+        activityFail("history", e.message);
+        toast("Restore failed: " + e.message);
+      }
+    };
     ol.appendChild(li);
   });
 }
