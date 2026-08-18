@@ -64,6 +64,9 @@ def _load_metrics(path: Path, expected_frames: int) -> dict[str, np.ndarray]:
             "projected",
             "mesh_floor",
             "joint_names",
+            "bone_heads",
+            "bone_tails",
+            "bone_names",
             "rendered_frames",
         }
         missing = sorted(required - set(payload.files))
@@ -73,9 +76,15 @@ def _load_metrics(path: Path, expected_frames: int) -> dict[str, np.ndarray]:
     names = tuple(str(value) for value in values["joint_names"].tolist())
     if names != _JOINT_NAMES:
         raise RuntimeError(f"{path.name}: unexpected Y-Bot joint order")
+    bone_names = tuple(str(value) for value in values["bone_names"].tolist())
+    missing_bones = [name for name in _JOINT_NAMES if name not in bone_names]
+    if missing_bones:
+        raise RuntimeError(f"{path.name}: missing Y-Bot bones {missing_bones}")
     joints = values["joints"]
     projected = values["projected"]
     floor = values["mesh_floor"]
+    bone_heads = values["bone_heads"]
+    bone_tails = values["bone_tails"]
     rendered = values["rendered_frames"]
     if joints.shape != (expected_frames, len(_JOINT_NAMES), 3):
         raise RuntimeError(f"{path.name}: invalid joint shape {joints.shape}")
@@ -83,14 +92,27 @@ def _load_metrics(path: Path, expected_frames: int) -> dict[str, np.ndarray]:
         raise RuntimeError(f"{path.name}: invalid projected-joint shape {projected.shape}")
     if floor.shape != (expected_frames,):
         raise RuntimeError(f"{path.name}: invalid mesh-floor shape {floor.shape}")
+    expected_bones = (expected_frames, len(bone_names), 3)
+    if bone_heads.shape != expected_bones or bone_tails.shape != expected_bones:
+        raise RuntimeError(f"{path.name}: invalid posed-bone shapes")
     if not np.array_equal(rendered, np.arange(expected_frames, dtype=rendered.dtype)):
         raise RuntimeError(f"{path.name}: metrics do not cover every rendered frame")
-    if not all(np.isfinite(array).all() for array in (joints, projected, floor)):
+    if not all(
+        np.isfinite(array).all()
+        for array in (joints, projected, floor, bone_heads, bone_tails)
+    ):
         raise RuntimeError(f"{path.name}: metrics contain non-finite values")
+    axes = bone_tails - bone_heads
+    axes /= np.linalg.norm(axes, axis=-1, keepdims=True) + 1e-9
+    ordered_axes = np.stack(
+        [axes[:, bone_names.index(name)] for name in _JOINT_NAMES],
+        axis=1,
+    )
     return {
         "joints": joints.astype(np.float32, copy=False),
         "projected": projected.astype(np.float32, copy=False),
         "mesh_floor": floor.astype(np.float32, copy=False),
+        "bone_axes": ordered_axes.astype(np.float32, copy=False),
     }
 
 
@@ -170,6 +192,24 @@ def _clap_checks(
             "rendered_overhead_clearance",
             above_head > 0.12,
             f"lower Y-Bot wrist is {above_head:.4f} m above the head at contact",
+        ))
+        alignment = []
+        for frame in (
+            max(start, event - 6),
+            event,
+            min(end - 1, event + 6),
+        ):
+            for wrist, elbow in ((20, 18), (21, 19)):
+                forearm = joints[frame, wrist] - joints[frame, elbow]
+                forearm /= np.linalg.norm(forearm) + 1e-9
+                alignment.append(float(front["bone_axes"][frame, wrist] @ forearm))
+        checks.append(_check(
+            "rendered_overhead_wrist_continuity",
+            min(alignment, default=-1.0) > np.cos(np.deg2rad(55.0)),
+            (
+                "minimum Y-Bot hand-bone/forearm alignment at approach, contact, "
+                f"and recoil {min(alignment, default=float('nan')):.4f}"
+            ),
         ))
     if contact_frames:
         lateral = float(np.mean([
@@ -287,19 +327,48 @@ def _bounce_cycle_check(
 def _level_change_check(
     motion_id: str,
     joints: np.ndarray,
+    control: np.ndarray,
     start: int,
     end: int,
     event: int,
 ) -> dict:
-    pelvis = joints[start:end, 0, 2]
+    pelvis = joints[start:end, 0, 2] - control[start:end, 0, 2]
     event_local = int(np.clip(event - start, 0, len(pelvis) - 1))
     travel = float(np.ptp(pelvis))
     if motion_id == "crouch_drop":
-        event_position = float(pelvis[event_local] - np.min(pelvis))
-        passed = travel > 0.22 and event_position < 0.05
+        low = int(np.argmin(pelvis))
+        minimum = float(pelvis[low])
+        drop = -minimum
+        event_position = float(pelvis[event_local] - minimum)
+        low_hold = int(np.count_nonzero(pelvis <= minimum + 0.02))
+        recovery = float(pelvis[-1] - minimum)
+        anticipation_end = max(3, int(round(0.22 * len(pelvis))))
+        descent_start = max(anticipation_end + 1, int(round(0.28 * len(pelvis))))
+        anticipation_low = int(np.argmin(pelvis[:anticipation_end]))
+        anticipation_drop = -float(pelvis[anticipation_low])
+        anticipation_release = float(
+            np.max(pelvis[anticipation_low:descent_start])
+            - pelvis[anticipation_low]
+        )
+        _left, forward = _body_axes(control, start + low)
+        torso = joints[start + low, 9] - joints[start + low, 0]
+        host_torso = control[start + low, 9] - control[start + low, 0]
+        torso_forward = float((torso[:2] - host_torso[:2]) @ forward)
+        passed = (
+            0.18 < drop < 0.30
+            and anticipation_drop > 0.008
+            and anticipation_release > 0.008
+            and event_position < 0.025
+            and 2 <= low_hold <= max(8, int(np.ceil(0.30 * len(pelvis))))
+            and recovery > 0.12
+            and 0.02 < torso_forward < 0.20
+        )
         detail = (
-            f"pelvis range {travel:.4f} m; event is {event_position:.4f} m "
-            "above the lowest pose"
+            f"pelvis drop {drop:.4f} m; event is {event_position:.4f} m "
+            f"above the lowest pose; preload/release "
+            f"{anticipation_drop:.4f}/{anticipation_release:.4f} m; low hold "
+            f"{low_hold} frames; recovery {recovery:.4f} m; torso forward delta "
+            f"{torso_forward:.4f} m"
         )
     else:
         passed = travel > 0.20
@@ -348,7 +417,7 @@ def _side_step_check(
     left, _forward = _body_axes(joints, start)
     sign = 1.0 if direction == "left" else -1.0
     lead_ankle = 7 if direction == "left" else 8
-    lead_wrist = 20 if direction == "left" else 21
+    trail_ankle = 8 if direction == "left" else 7
     root = (joints[start:end, 0, :2] - joints[start, 0, :2]) @ left
     foot = (
         joints[event, lead_ankle, :2] - joints[start, lead_ankle, :2]
@@ -356,28 +425,42 @@ def _side_step_check(
     stance = abs(float(
         (joints[event, 7, :2] - joints[event, 8, :2]) @ left
     ))
-    arm_delta = float(np.linalg.norm(
-        (joints[event, lead_wrist] - joints[event, 9])
-        - (control[event, lead_wrist] - control[event, 9])
-    ))
     signed_root = float(np.max(sign * root))
     signed_foot = sign * float(foot)
-    locomotion = signed_root + signed_foot
+    lead_position = sign * float(joints[event, lead_ankle, :2] @ left)
+    trail_position = sign * float(joints[event, trail_ankle, :2] @ left)
+    pelvis_position = sign * float(joints[event, 0, :2] @ left)
+    support_span = max(lead_position - trail_position, 1e-6)
+    support_u = (pelvis_position - trail_position) / support_span
+    root_foot_ratio = signed_root / max(signed_foot, 1e-6)
+    pelvis_vertical = (
+        joints[start:end, 0, 2] - control[start:end, 0, 2]
+    )
+    relative = (
+        (joints[start:end, 12:22] - joints[start:end, :1])
+        - (control[start:end, 12:22] - control[start:end, :1])
+    )
+    upper_body_delta = float(np.max(np.linalg.norm(relative, axis=-1)))
     passed = (
         direction in {"left", "right"}
-        and signed_root > 0.32
-        and signed_foot > 0.40
-        and stance > 0.48
-        and locomotion > 1.05 * arm_delta
+        and 0.16 < signed_root < 0.36
+        and 0.28 < signed_foot < 0.52
+        and 0.40 < stance < 0.66
+        and 0.45 < root_foot_ratio < 0.95
+        and 0.45 < support_u < 0.90
+        and float(np.ptp(pelvis_vertical)) < 0.16
+        and upper_body_delta < 0.18
     )
     return _check(
-        "rendered_side_step_locomotion_dominance",
+        "rendered_side_step_weight_transfer",
         passed,
         (
             f"{direction} signed root/lead-foot travel "
-            f"{signed_root:.4f}/{signed_foot:.4f} m, stance {stance:.4f} m, "
-            f"combined locomotion {locomotion:.4f} versus lead-arm delta "
-            f"{arm_delta:.4f} m"
+            f"{signed_root:.4f}/{signed_foot:.4f} m, root/foot ratio "
+            f"{root_foot_ratio:.3f}, stance {stance:.4f} m, support position "
+            f"{support_u:.3f}, pelvis vertical range "
+            f"{float(np.ptp(pelvis_vertical)):.4f} m, upper-body relative delta "
+            f"{upper_body_delta:.4f} m"
         ),
     )
 
@@ -463,6 +546,7 @@ def _punch_check(
     joints: np.ndarray,
     start: int,
     end: int,
+    event: int,
     direction: str,
 ) -> dict:
     action = joints[start:end]
@@ -481,12 +565,28 @@ def _punch_check(
     guard = float(np.linalg.norm(
         action[peak, guard_wrist] - action[peak, guard_shoulder]
     ))
+    event_local = int(np.clip(event - start, 0, len(action) - 1))
+    forward_reach = np.asarray([
+        float(
+            (action[frame, wrist, :2] - action[frame, 9, :2])
+            @ _body_axes(action, frame)[1]
+        )
+        for frame in range(len(action))
+    ])
+    reach_peak = int(np.argmax(forward_reach))
+    near_peak = int(np.count_nonzero(
+        forward_reach >= 0.995 * float(forward_reach[reach_peak])
+    ))
     passed = (
         direction in {"left", "right"}
         and 1 < peak < len(extension) - 2
         and float(extension[peak] - before) > 0.18
         and float(extension[peak] - after) > 0.18
         and float(extension[peak] - guard) > 0.18
+        and abs(reach_peak - event_local) <= 1
+        and float(forward_reach[event_local])
+        >= 0.97 * float(forward_reach[reach_peak])
+        and near_peak <= 5
     )
     return _check(
         "rendered_guard_strike_recoil",
@@ -494,7 +594,11 @@ def _punch_check(
         (
             f"Y-Bot strike peak local frame {peak}, arm length "
             f"{float(extension[peak]):.4f} m versus pre/post "
-            f"{before:.4f}/{after:.4f} m and guard {guard:.4f} m"
+            f"{before:.4f}/{after:.4f} m and guard {guard:.4f} m; "
+            f"declared event/forward-reach peak {event_local}/{reach_peak}, "
+            f"event/peak reach {float(forward_reach[event_local]):.4f}/"
+            f"{float(forward_reach[reach_peak]):.4f} m, near-peak span "
+            f"{near_peak} frames"
         ),
     )
 
@@ -634,7 +738,14 @@ def build_report(audit_dir: Path) -> dict:
             ])
         if motion_id == "crouch_drop":
             checks.extend([
-                _level_change_check(motion_id, front["joints"], start, end, event),
+                _level_change_check(
+                    motion_id,
+                    front["joints"],
+                    control["joints"],
+                    start,
+                    end,
+                    event,
+                ),
                 _planted_foot_check(front["joints"], start, end),
             ])
         if motion_id == "rise_reach":
@@ -670,7 +781,7 @@ def build_report(audit_dir: Path) -> dict:
             )
         if motion_id == "arm_punch":
             checks.extend([
-                _punch_check(front["joints"], start, end, resolved),
+                _punch_check(front["joints"], start, end, event, resolved),
                 _punch_plane_check(front["joints"], start, end, resolved),
             ])
         if motion_id == "side_step":
@@ -762,7 +873,7 @@ def build_report(audit_dir: Path) -> dict:
             else "fail"
         )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "audit_id": review["audit_id"],
         "motion_fingerprint": review["motion_fingerprint"],
         "status": (

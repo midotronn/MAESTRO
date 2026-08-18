@@ -28,6 +28,7 @@ from agentlodge.dance.transition import (  # noqa: E402
     _sixd_to_matrix,
 )
 from agentlodge.editor.motion_audit import (  # noqa: E402
+    REQUIRED_QUALITY_CHECKS,
     REVIEW_PROTOCOL_VERSION,
     REVIEWER_ATTESTATION_STATEMENT,
     audit_case_id,
@@ -355,45 +356,58 @@ def _machine_checks(
         root_lateral = (edited[start:end, :2] - edited[start, :2]) @ left_axis
         signed_root = float(np.max(direction_sign * root_lateral))
         lead_ankle = 7 if direction_sign > 0.0 else 8
-        lead_wrist = 20 if direction_sign > 0.0 else 21
-        trail_wrist = 21 if direction_sign > 0.0 else 20
+        trail_ankle = 8 if direction_sign > 0.0 else 7
         lead_foot = direction_sign * float(
             (joints[event, lead_ankle, :2] - joints[start, lead_ankle, :2])
             @ left_axis
         )
-        lead_lateral = direction_sign * float(
-            (joints[event, lead_wrist, :2] - joints[event, 9, :2]) @ left_axis
-        )
-        trail_lateral = direction_sign * float(
-            (joints[event, trail_wrist, :2] - joints[event, 9, :2]) @ left_axis
-        )
         stance_width = abs(float(
             (joints[event, 7, :2] - joints[event, 8, :2]) @ left_axis
         ))
-        lead_arm_delta = float(np.linalg.norm(
-            (joints[event, lead_wrist] - joints[event, 9])
-            - (host_joints[event, lead_wrist] - host_joints[event, 9])
-        ))
-        locomotion_signal = signed_root + lead_foot
+        lead_position = direction_sign * float(
+            joints[event, lead_ankle, :2] @ left_axis
+        )
+        trail_position = direction_sign * float(
+            joints[event, trail_ankle, :2] @ left_axis
+        )
+        pelvis_position = direction_sign * float(
+            joints[event, 0, :2] @ left_axis
+        )
+        support_span = max(lead_position - trail_position, 1e-6)
+        support_u = (pelvis_position - trail_position) / support_span
+        root_foot_ratio = signed_root / max(lead_foot, 1e-6)
+        pelvis_vertical_delta = (
+            joints[start:end, 0, 2] - host_joints[start:end, 0, 2]
+        )
+        upper_body_drift = 0.0
+        for joint in range(12, 22):
+            channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+            upper_body_drift = max(
+                upper_body_drift,
+                float(np.max(np.abs(
+                    edited[start:end, channels] - host[start:end, channels]
+                ))),
+            )
         direction_passed = (
             resolved_direction in {"left", "right"}
-            and signed_root > 0.32
-            and lead_foot > 0.40
-            and lead_lateral > 0.52
-            and lead_lateral - trail_lateral > 0.40
-            and stance_width > 0.48
-            and locomotion_signal > 1.05 * lead_arm_delta
+            and 0.16 < signed_root < 0.34
+            and 0.28 < lead_foot < 0.50
+            and 0.40 < stance_width < 0.64
+            and 0.45 < root_foot_ratio < 0.90
+            and 0.45 < support_u < 0.85
+            and float(np.ptp(pelvis_vertical_delta)) < 0.12
+            and upper_body_drift <= 5e-7
         )
         checks.append({
-            "name": "side_step_direction_signature",
+            "name": "side_step_weight_transfer_signature",
             "passed": bool(direction_passed),
             "detail": (
                 f"{resolved_direction} signed root travel {signed_root:.4f} m, "
                 f"lead-foot travel {lead_foot:.4f} m, "
-                f"lead/trailing hand offsets {lead_lateral:.4f}/{trail_lateral:.4f} m, "
-                f"stance width {stance_width:.4f} m, locomotion signal "
-                f"{locomotion_signal:.4f} versus lead-arm delta "
-                f"{lead_arm_delta:.4f} m"
+                f"root/foot ratio {root_foot_ratio:.3f}, stance width "
+                f"{stance_width:.4f} m, pelvis support position {support_u:.3f}, "
+                f"pelvis vertical-delta range {float(np.ptp(pelvis_vertical_delta)):.4f} m, "
+                f"maximum source upper-body channel drift {upper_body_drift:.2e}"
             ),
         })
 
@@ -562,16 +576,48 @@ def _machine_checks(
     if spec.id == "crouch_drop":
         start, end = map(int, report["action_range"])
         event = int(report["event_frame"])
-        pelvis = compute_poses(edited)["fk_joints"][start:end, 0, 2]
-        event_local = int(np.clip(event - start, 0, len(pelvis) - 1))
-        event_above_low = float(pelvis[event_local] - np.min(pelvis))
-        crouch_passed = float(np.ptp(pelvis)) > 0.22 and event_above_low < 0.05
+        joints = compute_poses(edited)["fk_joints"]
+        host_joints = compute_poses(host)["fk_joints"]
+        pelvis_delta = (
+            joints[start:end, 0, 2] - host_joints[start:end, 0, 2]
+        )
+        event_local = int(np.clip(event - start, 0, len(pelvis_delta) - 1))
+        low = int(np.argmin(pelvis_delta))
+        minimum = float(pelvis_delta[low])
+        drop = -minimum
+        event_above_low = float(pelvis_delta[event_local] - minimum)
+        low_hold = int(np.count_nonzero(pelvis_delta <= minimum + 0.02))
+        recovery = float(pelvis_delta[-1] - minimum)
+        anticipation_end = max(3, int(round(0.22 * len(pelvis_delta))))
+        descent_start = max(anticipation_end + 1, int(round(0.28 * len(pelvis_delta))))
+        anticipation_low = int(np.argmin(pelvis_delta[:anticipation_end]))
+        anticipation_drop = -float(pelvis_delta[anticipation_low])
+        anticipation_release = float(
+            np.max(pelvis_delta[anticipation_low:descent_start])
+            - pelvis_delta[anticipation_low]
+        )
+        _left_axis, forward_axis = _dancer_axes(edited, joints, start + low)
+        torso = joints[start + low, 9] - joints[start + low, 0]
+        host_torso = host_joints[start + low, 9] - host_joints[start + low, 0]
+        torso_forward_delta = float((torso[:2] - host_torso[:2]) @ forward_axis)
+        crouch_passed = (
+            0.18 < drop < 0.30
+            and anticipation_drop > 0.008
+            and anticipation_release > 0.008
+            and event_above_low < 0.025
+            and 2 <= low_hold <= max(8, int(np.ceil(0.30 * len(pelvis_delta))))
+            and recovery > 0.12
+            and 0.02 < torso_forward_delta < 0.20
+        )
         checks.append({
-            "name": "grounded_crouch_signature",
+            "name": "grounded_crouch_support_recovery",
             "passed": bool(crouch_passed),
             "detail": (
-                f"pelvis range {float(np.ptp(pelvis)):.4f} m; event "
-                f"{event_above_low:.4f} m above lowest pose"
+                f"pelvis drop {drop:.4f} m; event {event_above_low:.4f} m above "
+                f"lowest pose; preload/release {anticipation_drop:.4f}/"
+                f"{anticipation_release:.4f} m; {low_hold} frames within 0.02 m "
+                f"of low; recovery {recovery:.4f} m; torso forward delta "
+                f"{torso_forward_delta:.4f} m"
             ),
         })
 
@@ -636,6 +682,11 @@ def _machine_checks(
     if spec.id == "arm_punch":
         start, end = map(int, report["action_range"])
         joints = compute_poses(edited[start:end])["fk_joints"]
+        event_local = int(np.clip(
+            int(report["event_frame"]) - start,
+            0,
+            len(joints) - 1,
+        ))
         if resolved_direction == "left":
             punch_wrist, punch_shoulder = 20, 16
             guard_wrist, guard_shoulder = 21, 17
@@ -675,6 +726,34 @@ def _machine_checks(
                 f"{float(extension[peak]):.4f} m versus pre/post "
                 f"{before:.4f}/{after:.4f} m; guard arm/chest distances "
                 f"{guard_length:.4f}/{guard_chest:.4f} m"
+            ),
+        })
+        forward_reach = np.asarray([
+            float(
+                (joints[frame, punch_wrist, :2] - joints[frame, 9, :2])
+                @ _dancer_axes(edited[start:end], joints, frame)[1]
+            )
+            for frame in range(len(joints))
+        ])
+        reach_peak = int(np.argmax(forward_reach))
+        near_peak = int(np.count_nonzero(
+            forward_reach >= 0.995 * float(forward_reach[reach_peak])
+        ))
+        timing_passed = (
+            abs(reach_peak - event_local) <= 1
+            and float(forward_reach[event_local])
+            >= 0.97 * float(forward_reach[reach_peak])
+            and near_peak <= 5
+        )
+        checks.append({
+            "name": "punch_event_alignment",
+            "passed": bool(timing_passed),
+            "detail": (
+                f"declared event local frame {event_local}, forward-reach peak "
+                f"{reach_peak}, event/peak reach "
+                f"{float(forward_reach[event_local]):.4f}/"
+                f"{float(forward_reach[reach_peak]):.4f} m, "
+                f"{near_peak} frames within 0.5% of peak"
             ),
         })
 
@@ -927,7 +1006,12 @@ def _machine_checks(
             {
                 "name": "relaxed_hand_angle",
                 "passed": bool(contact_frames) and all(
-                    0.20 < finger_up < 0.75 for finger_up in finger_ups
+                    (
+                        0.75 < finger_up < 0.98
+                        if spec.id == "clap_overhead"
+                        else 0.20 < finger_up < 0.75
+                    )
+                    for finger_up in finger_ups
                 ),
                 "detail": (
                     "average world-up finger components "
@@ -987,14 +1071,23 @@ def _machine_checks(
         ])
         if spec.id == "clap_overhead":
             event = int(report["event_frame"])
-            pre = max(start, event - 6)
-            post = min(end - 1, event + 6)
+            pre_candidates = np.arange(
+                max(start, event - 10),
+                max(start, event - 2) + 1,
+            )
+            post_candidates = np.arange(
+                min(end - 1, event + 3),
+                min(end - 1, event + 10) + 1,
+            )
+            pre = int(pre_candidates[np.argmax(gaps[pre_candidates])])
+            post = int(post_candidates[np.argmax(gaps[post_candidates])])
             above_head = float(
                 min(joints[event, 20, 2], joints[event, 21, 2])
                 - joints[event, 15, 2]
             )
             local = _sixd_to_matrix(edited[start:end, 3:135].reshape(-1, 22, 6))
             wrist_step = 0.0
+            alignment = []
             for wrist in (20, 21):
                 step = (
                     local[1:, wrist]
@@ -1007,20 +1100,33 @@ def _machine_checks(
                         axis=-1,
                     ))),
                 )
+            for frame in (pre, event, post):
+                for wrist, elbow, finger_axis in (
+                    (20, 18, left_axis),
+                    (21, 19, right_axis),
+                ):
+                    finger = global_r[frame, wrist] @ finger_axis
+                    forearm = joints[frame, wrist] - joints[frame, elbow]
+                    forearm /= np.linalg.norm(forearm) + 1e-9
+                    alignment.append(float(finger @ forearm))
             overhead_passed = (
                 gaps[pre] > 0.10
                 and gaps[post] > 0.10
                 and above_head > 0.12
-                and wrist_step < 0.80
+                and wrist_step < np.deg2rad(35.0)
+                and min(alignment, default=-1.0) > np.cos(np.deg2rad(55.0))
             )
             checks.append({
                 "name": "overhead_clap_approach_recoil",
                 "passed": bool(overhead_passed),
                 "detail": (
                     f"wrist gaps {float(gaps[pre]):.4f}/{float(gaps[event]):.4f}/"
-                    f"{float(gaps[post]):.4f} m before/contact/after, "
+                    f"{float(gaps[post]):.4f} m at frames {pre}/{event}/{post} "
+                    "before/contact/after, "
                     f"lower hand {above_head:.4f} m above head, "
-                    f"maximum wrist step {wrist_step:.4f} rad"
+                    f"maximum wrist step {np.rad2deg(wrist_step):.2f} degrees, "
+                    f"minimum finger/forearm alignment "
+                    f"{min(alignment, default=float('nan')):.4f}"
                 ),
             })
     return checks, ("pass" if all(check["passed"] for check in checks) else "fail")
@@ -1152,6 +1258,8 @@ def _review_html(
                 <ul class="phases"></ul>
                 <p><strong>Reject competing silhouettes</strong></p>
                 <ul class="negative-signatures"></ul>
+                <p><strong>Biomechanics and continuity</strong></p>
+                <ul class="quality-checks"></ul>
                 <p><strong>Machine visual invariants</strong></p>
                 <ul class="machine-checks"></ul>
                 <section class="phase-review">
@@ -1164,7 +1272,7 @@ def _review_html(
                   </label>
                   <label>Required evidence note
                     <textarea class="visual-evidence" rows="3"
-                              placeholder="Describe contact, hand angle, host continuity, and required phases."></textarea>
+                              placeholder="Describe timing, balance, joint continuity, host preservation, and required phases."></textarea>
                   </label>
                 </section>
               </section>
@@ -1245,7 +1353,8 @@ def _review_html(
       <li>Open the synchronized source/edit/difference review for every take before locking it.</li>
       <li>Record and lock both the action and its observed direction.</li>
       <li>If the action is unclear or guessed incorrectly, mark it failed.</li>
-      <li>After revealing, inspect every required phase from both front and side.</li>
+      <li>After revealing, inspect every required phase and every biomechanics and continuity
+          criterion from both front and side.</li>
     </ol>
     <p id="playback-progress" class="status" aria-live="polite"></p>
     <label>Independent reviewer name
@@ -1274,6 +1383,7 @@ def _review_html(
     const normalizedFacing = {normalized_json};
     const motionFingerprint = {json.dumps(str(motion_fingerprint_value))};
     const reviewerStatement = {json.dumps(REVIEWER_ATTESTATION_STATEMENT)};
+    const requiredQualityChecks = {json.dumps(list(REQUIRED_QUALITY_CHECKS))};
     const storageKey = `maestro-motion-audit:${{auditId}}`;
     let state = JSON.parse(localStorage.getItem(storageKey) || "{{}}");
     let answersPromise = null;
@@ -1373,6 +1483,11 @@ def _review_html(
         && state[take].requiredNegativeSignatures.length > 0
         && state[take].requiredNegativeSignatures.every(signature =>
           (state[take].verifiedNegativeSignatures || []).includes(signature)
+        )
+        && Array.isArray(state[take].requiredQualityChecks)
+        && state[take].requiredQualityChecks.length === requiredQualityChecks.length
+        && state[take].requiredQualityChecks.every(check =>
+          (state[take].verifiedQualityChecks || []).includes(check)
         )
       );
     }}
@@ -1488,6 +1603,8 @@ def _review_html(
         verifiedPhases: state[take].verifiedPhases || [],
         requiredNegativeSignatures: [...answer.visual_contract.must_not_read_as],
         verifiedNegativeSignatures: state[take].verifiedNegativeSignatures || [],
+        requiredQualityChecks: [...requiredQualityChecks],
+        verifiedQualityChecks: state[take].verifiedQualityChecks || [],
         revealedAt: state[take].revealedAt || new Date().toISOString(),
       }};
       card.querySelector(".answer-name").textContent = answer.name;
@@ -1538,6 +1655,32 @@ def _review_html(
         label.append(checkbox, ` Confirmed the edit does not read as: ${{signature}}`);
         item.appendChild(label);
         negativeSignatures.appendChild(item);
+      }});
+      const qualityChecks = card.querySelector(".quality-checks");
+      qualityChecks.replaceChildren();
+      requiredQualityChecks.forEach(check => {{
+        const item = document.createElement("li");
+        const label = document.createElement("label");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.className = "quality-reviewed";
+        checkbox.checked = state[take].verifiedQualityChecks.includes(check);
+        checkbox.addEventListener("change", () => {{
+          const reviewed = new Set(state[take].verifiedQualityChecks || []);
+          if (checkbox.checked) reviewed.add(check);
+          else reviewed.delete(check);
+          state[take] = {{
+            ...state[take],
+            verifiedQualityChecks: requiredQualityChecks.filter(
+              item => reviewed.has(item)
+            ),
+          }};
+          save();
+          refreshExportAvailability();
+        }});
+        label.append(checkbox, ` Verified: ${{check}}`);
+        item.appendChild(label);
+        qualityChecks.appendChild(item);
       }});
       const direction = answer.requested_direction || "not directional";
       card.querySelector(".direction-detail").textContent =
@@ -1901,6 +2044,7 @@ def _review_html(
           evidence: state[take].visualEvidence,
           verified_phases: state[take].verifiedPhases,
           verified_negative_signatures: state[take].verifiedNegativeSignatures,
+          verified_quality_checks: state[take].verifiedQualityChecks,
         }}])),
       }};
       const blob = new Blob([JSON.stringify(payload, null, 2)], {{type: "application/json"}});

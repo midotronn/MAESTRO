@@ -55,7 +55,7 @@ AGENTLODGE_HYBRID=1 python run_pipeline.py --audio path/to/song.wav --output_dir
 dance reads as a *composed* piece rather than freestyle: it is organized around the song's
 **musical form** (intro / verse / chorus / bridge / drop / outro) with a deliberate energy arc
 (build → climax → resolution), sectional contrast, recurring motifs, and sparse accents from the
-curated 20-motion bank. It remains **training-free**, an LLM agent authors a high-level plan,
+curated 19-motion bank. It remains **training-free**, an LLM agent authors a high-level plan,
 which is realized by arranging LODGE and EDGE material, composing named motions, and adding
 inertialized joins.
 
@@ -96,7 +96,7 @@ AGENTLODGE_STORY=1 python run_pipeline.py --audio path/to/song.wav --output_dir 
 The editor routes each natural-language request through one or more agent tools:
 
 - deterministic levers for energy, beat alignment, smoothness, sharpness, mirror, and reverse;
-- a curated bank of 20 named actions for requests such as "add a clap here", "jump on the next
+- a curated bank of 19 named actions for requests such as "add a clap here", "jump on the next
   beat", or "wave here";
 - windowed LODGE or EDGE regeneration when the user asks for genuinely new choreography.
 

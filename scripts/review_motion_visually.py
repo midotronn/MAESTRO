@@ -1,6 +1,6 @@
 """Render a named motion large enough to judge its skeleton from multiple angles.
 
-The contact sheet this sits beside packs twenty motions onto one page, and at that size a
+The contact sheet this sits beside packs the full bank onto one page, and at that size a
 broken clap -- two wrists driven through each other to the same point -- is indistinguishable
 from a good one. Hands near the chest look like hands meeting. So this renders ONE motion at a
 time, big, and adds a top-down view where left and right wrists either sit side by side or occupy

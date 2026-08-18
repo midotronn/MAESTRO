@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 from agentlodge.editor.motion_audit import (  # noqa: E402
     DEFAULT_RECEIPT,
+    REQUIRED_QUALITY_CHECKS,
     REVIEW_PROTOCOL_VERSION,
     REVIEWER_ATTESTATION_STATEMENT,
     motion_fingerprint,
@@ -292,6 +293,16 @@ def finalize(audit_dir: Path, review_result: Path, output: Path) -> dict:
             raise ValueError(
                 f"{case_id}: every competing silhouette must be explicitly rejected"
             )
+        reviewed_quality_checks = tuple(
+            decision.get("verified_quality_checks") or ()
+        )
+        if (
+            len(reviewed_quality_checks) != len(REQUIRED_QUALITY_CHECKS)
+            or set(reviewed_quality_checks) != set(REQUIRED_QUALITY_CHECKS)
+        ):
+            raise ValueError(
+                f"{case_id}: every biomechanics and continuity check must be reviewed"
+            )
         if answer.get("machine_status") != "pass":
             raise ValueError(f"{case_id}: machine visual invariants failed")
         if not all(check.get("passed") is True for check in answer.get("machine_checks", ())):
@@ -307,6 +318,7 @@ def finalize(audit_dir: Path, review_result: Path, output: Path) -> dict:
             "source_edit_comparison": "pass",
             "verified_phases": list(expected_phases),
             "verified_negative_signatures": list(expected_negative_signatures),
+            "verified_quality_checks": list(REQUIRED_QUALITY_CHECKS),
             "evidence": evidence,
         }
 

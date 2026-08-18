@@ -274,7 +274,7 @@ beat), plus per-section `post_variations` in the assembler. Tested offline. *Opt
 Universal-Guidance beat steering (B4); learned captioner (MotionGPT); TMR fine-tuned on dance.
 
 **Phase 6, Curated common-motion choreography.** ✅ **DONE**
-`SectionPlan.common_motions` exposes the live 20-motion manifest to the whole-song LLM planner.
+`SectionPlan.common_motions` exposes the live 19-motion manifest to the whole-song LLM planner.
 Plans carry sparse beat-aware cues with intensity, direction, repetition, motif identity, and
 rationale. The assembler composes cues without changing section duration, caches composed sections
 for exact chorus/hook recurrence, and prevents double application on reused sections. Invalid or

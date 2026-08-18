@@ -793,7 +793,7 @@ def test_packaged_song_generator_writes_expected_outputs(tmp_path, monkeypatch):
 def test_lists_named_motions_from_the_shared_manifest(client):
     data = client.get("/api/motions").json()
     assert data["version"] == MotionBank().version
-    assert len(data["motions"]) == 20
+    assert len(data["motions"]) == 19
     clap = next(m for m in data["motions"] if m["id"] == "clap_single")
     assert clap["name"] == "Single clap"
     assert "clap" in clap["aliases"]

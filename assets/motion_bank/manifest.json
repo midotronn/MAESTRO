@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "bank_version": "1.1.8",
+  "bank_version": "1.2.0",
   "motions": [
     {
       "id": "clap_single",
@@ -285,31 +285,6 @@
       }
     },
     {
-      "id": "celebrate_hands_up",
-      "name": "Hands-up celebration",
-      "aliases": ["hands up", "hands in the air", "celebrate", "victory pose"],
-      "category": "gesture",
-      "clip": "clips/celebrate_hands_up.npy",
-      "fps": 30,
-      "frames": 60,
-      "source": "MAESTRO procedural authoring",
-      "license": "MIT",
-      "attribution": "Created for MAESTRO",
-      "stationary": true,
-      "travel_axis": null,
-      "mirrorable": false,
-      "repeatable": false,
-      "event_frame": 35,
-      "recommended_beats": 1.0,
-      "default_anchor": "beat",
-      "validator": {"type": "joint_activity", "joints": [16, 17], "threshold": 1.0},
-      "composition": {
-        "absolute_joints": [13, 14, 16, 17, 18, 19, 20, 21],
-        "additive_joints": [0, 3, 4, 5, 9, 12],
-        "event_pose_joints": [13, 14, 16, 17, 18, 19, 20, 21]
-      }
-    },
-    {
       "id": "chest_pop",
       "name": "Chest pop",
       "aliases": ["chest pop", "chest hit", "body pop", "pop the chest"],
@@ -365,7 +340,8 @@
         "absolute_joints": [13, 14, 16, 17, 18, 19, 21],
         "additive_joints": [0, 4, 9, 12],
         "phase_joints": [13, 14, 16, 17, 18, 19, 21],
-        "phase_blend_frames": 8
+        "phase_blend_frames": 8,
+        "intensity_lock_frames": [25, 26, 27]
       }
     },
     {
@@ -391,11 +367,11 @@
       "event_frame": 41,
       "recommended_beats": 2.0,
       "default_anchor": "center",
-      "validator": {"type": "root_displacement", "axis": "x", "threshold": 0.30},
+      "validator": {"type": "root_displacement", "axis": "x", "threshold": 0.18},
       "composition": {
-        "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21],
-        "additive_joints": [0, 3, 9, 12],
-        "phase_joints": [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21],
+        "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11],
+        "additive_joints": [0, 3, 9],
+        "phase_joints": [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11],
         "phase_blend_frames": 5,
         "translation_axes": ["x"],
         "replace_contacts": true
@@ -605,10 +581,10 @@
       "default_anchor": "beat",
       "validator": {"type": "root_level", "direction": "down", "threshold": 0.18},
       "composition": {
-        "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 18, 19],
-        "additive_joints": [3, 12],
-        "phase_joints": [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17, 18, 19],
-        "phase_blend_frames": 4,
+        "absolute_joints": [1, 2, 4, 5, 7, 8, 10, 11],
+        "additive_joints": [0, 3, 6, 9, 12],
+        "phase_joints": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        "phase_blend_frames": 6,
         "translation_axes": ["z"],
         "replace_contacts": true
       }

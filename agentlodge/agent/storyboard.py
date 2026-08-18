@@ -194,7 +194,7 @@ def _first_same_label(structure: MusicStructure, i: int) -> int | None:
 _ROLE_MOTION_PALETTES = {
     "intro": ("rise_reach", "bounce_in_place", "wave"),
     "verse": ("step_touch", "side_step", "step_forward", "point_side", "body_roll"),
-    "chorus": ("clap_repeat", "celebrate_hands_up", "jump_arms_up", "side_step"),
+    "chorus": ("clap_repeat", "jump_arms_up", "side_step", "turn_quarter"),
     "bridge": ("body_roll", "turn_quarter", "crouch_drop", "rise_reach", "wave"),
     "drop": ("jump_two_foot", "jump_arms_up", "arm_punch", "chest_pop", "turn_half"),
     "outro": ("turn_half", "crouch_drop", "clap_single", "rise_reach", "step_backward"),

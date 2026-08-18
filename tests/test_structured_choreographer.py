@@ -62,8 +62,8 @@ def test_prompt_exposes_exact_motion_bank_catalog():
 
     prompt = SB._build_prompt(structure, metadata, None)
 
-    assert len(bank.specs) == 20
-    assert prompt.count("category=") == 20
+    assert len(bank.specs) == 19
+    assert prompt.count("category=") == 19
     for spec in bank.specs:
         assert f"- {spec.id}:" in prompt
 
@@ -122,7 +122,7 @@ def test_author_storyboard_uses_llm_catalog_and_completes_empty_cues(monkeypatch
     assert board.plans[2].common_motions == []
 
 
-def test_all_twenty_motion_ids_parse_and_realize_through_story_assembly():
+def test_all_nineteen_motion_ids_parse_and_realize_through_story_assembly():
     bank = default_motion_bank()
     specs = list(bank.specs)
     structure = _structure(

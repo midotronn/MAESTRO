@@ -46,7 +46,7 @@ def _load_projected(
     path = audit_dir / f"{identifier}_{view}_ybot.npz"
     if not path.is_file():
         if required:
-            raise RuntimeError(f"{path.name}: protocol-9 skeleton evidence is missing")
+            raise RuntimeError(f"{path.name}: protocol-10 skeleton evidence is missing")
         return None
     with np.load(path, allow_pickle=False) as payload:
         if "projected" not in payload:

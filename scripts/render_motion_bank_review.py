@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -28,9 +29,12 @@ def main() -> None:
     import matplotlib.pyplot as plt
 
     bank = default_motion_bank()
-    fig, axes = plt.subplots(5, 4, figsize=(14, 17), facecolor="#f7f5fc")
+    columns = 4
+    rows = int(math.ceil(len(bank.specs) / columns))
+    fig, axes = plt.subplots(rows, columns, figsize=(14, 3.4 * rows), facecolor="#f7f5fc")
     colors = ("#9b8aca", "#6c4ce0", "#f07845")
-    for ax, spec in zip(axes.flat, bank.specs):
+    flat_axes = list(np.asarray(axes).flat)
+    for ax, spec in zip(flat_axes, bank.specs):
         motion = bank.load_clip(spec)
         joints = compute_poses(motion)["fk_joints"]
         event = int(spec.event_frame)
@@ -56,6 +60,8 @@ def main() -> None:
         ax.text(0.5, 0.01, spec.category, transform=ax.transAxes, ha="center",
                 fontsize=8, color="#736f80")
         ax.set_aspect("equal")
+        ax.axis("off")
+    for ax in flat_axes[len(bank.specs):]:
         ax.axis("off")
     fig.suptitle(
         "MAESTRO named motion bank\nbefore event  |  event  |  after event",

@@ -1,6 +1,6 @@
 {
-  "version": 6,
-  "acceptance_rule": "At normal speed, both the motion and its observed direction must be recognizable in the unlabeled edited render before its answer is revealed. Every automatic and explicit direction variant must compare the exact source and edit, review and pass all required phases, and include a written evidence note. Numeric metrics cannot override a failed recognition or phase review, and any failure blocks the production audit receipt.",
+  "version": 7,
+  "acceptance_rule": "At normal speed, both the motion and its observed direction must be recognizable in the unlabeled edited render before its answer is revealed. Every automatic and explicit direction variant must compare the exact source and edit, review and pass all required phases, explicitly verify the shared biomechanics and continuity checklist, and include a written evidence note. Numeric metrics cannot override a failed recognition, phase, biomechanics, or continuity review, and any failure blocks the production audit receipt.",
   "motions": {
     "clap_single": {
       "recognizable_as": "one chest-level clap directed with the surrounding dance or to the requested side",
@@ -34,7 +34,8 @@
         "palms visibly meet above the head for a readable contact hold without intersecting it",
         "the overhead contact shifts unmistakably toward the requested or inferred direction; only an explicit counter-flow side may add a bounded upper-torso turn",
         "the source root, torso, legs, and dance rhythm continue through the arm gesture",
-        "hands separate through a smooth recoil without a wrist flip",
+        "fingers continue the forearms through approach, contact, and recoil without wrist hyperextension or a hand-plane flip",
+        "hands separate through a smooth recoil without an elbow or wrist snap",
         "arms lower into the host dance at a readable normal-speed duration"
       ]
     },
@@ -92,16 +93,6 @@
         "the arm retracts smoothly"
       ]
     },
-    "celebrate_hands_up": {
-      "recognizable_as": "a hands-up celebration",
-      "must_not_read_as": ["overhead clap", "jump with arms up", "rise and reach"],
-      "required_phases": [
-        "both arms rise",
-        "the arms form a clear celebratory V",
-        "the pose lands on the accent",
-        "both arms lower smoothly"
-      ]
-    },
     "chest_pop": {
       "recognizable_as": "a chest pop",
       "must_not_read_as": ["arm punch", "single clap", "head nod"],
@@ -119,18 +110,19 @@
       "required_phases": [
         "the punching arm prepares",
         "the elbow extends dominantly forward",
+        "maximum forward reach lands on the declared musical event rather than before or after it",
         "the torso counter-rotates into the hit",
-        "the arm retracts without becoming a side reach"
+        "the arm retracts without becoming a side reach or locking the elbow"
       ]
     },
     "side_step": {
-      "recognizable_as": "a committed side step into a wide stance",
+      "recognizable_as": "a compact side step with a believable lateral weight transfer",
       "must_not_read_as": ["side point", "step touch", "arm-led gesture"],
       "required_phases": [
-        "the lead foot lifts and opens laterally",
-        "the root travels sideways over the lead leg",
-        "the lead-side arm and head make the dancer-relative direction unmistakable",
-        "weight settles into a visibly wide stance",
+        "the lead foot lifts and opens a moderate distance laterally",
+        "the pelvis follows after the foot commits instead of dragging the whole body sideways",
+        "the torso counterbalances subtly while the source arms, head rhythm, and upper-body choreography continue",
+        "weight settles between the planted feet in a stable stance",
         "the feet do not close into a trailing-foot touch"
       ]
     },
@@ -198,10 +190,12 @@
       "recognizable_as": "a controlled crouch or drop",
       "must_not_read_as": ["jump", "bounce in place", "airborne tuck"],
       "required_phases": [
-        "both hips and knees bend",
-        "the pelvis clearly lowers",
+        "the body anticipates before both hips and knees bend",
+        "the pelvis clearly lowers while the hips fold back and the knees remain supported over planted feet",
+        "the torso inclines as one connected line while the head keeps a forward gaze",
         "the feet remain planted",
-        "the low pose is stable rather than an airborne tuck"
+        "the low pose is held briefly rather than freezing for the rest of the action",
+        "a controlled recovery begins before the motion hands back to the host dance"
       ]
     },
     "rise_reach": {

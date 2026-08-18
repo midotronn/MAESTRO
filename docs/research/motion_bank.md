@@ -1,6 +1,6 @@
 # Named motion bank
 
-MAESTRO includes a manifest-driven bank of 20 common actions for semantic requests such as
+MAESTRO includes a manifest-driven bank of 19 common actions for semantic requests such as
 "add a clap here", "jump on the next beat", or "wave here". The bank
 complements the existing deterministic metric levers and diffusion regeneration:
 
@@ -12,8 +12,8 @@ complements the existing deterministic metric levers and diffusion regeneration:
 
 ## Vocabulary
 
-The initial bank contains single and repeated claps, overhead clap, two jump variants, bounce,
-wave, point, hands-up celebration, chest pop, arm punch, side step, step touch, forward and
+The bank contains single and repeated claps, overhead clap, two jump variants, bounce,
+wave, point, chest pop, arm punch, side step, step touch, forward and
 backward steps, quarter and half turns, body roll, crouch or drop, and rise or reach.
 
 `assets/motion_bank/manifest.json` is the single source of truth. Each entry declares:
@@ -46,7 +46,7 @@ The structure-aware choreographer uses the same manifest as the interactive edit
 - bounded intensity, supported direction or mirroring, and repeat count;
 - a short motif identity and choreographic rationale.
 
-The LLM sees all 20 live manifest entries with their category, recommended beats, stationarity,
+The LLM sees all 19 live manifest entries with their category, recommended beats, stationarity,
 repeatability, and directions. Its output is coerced back through the manifest: invented IDs are
 discarded, unsupported directions and repetitions are corrected, cues are capped at three per
 section, and motions that cannot fit at their natural minimum duration are rejected before
@@ -103,7 +103,7 @@ valid action; only a nonempty grid with no reachable beat is an alignment failur
 The production planner and executor currently reject named-motion wording such as "insert",
 "before", "after", or "between". The low-level fixed-duration insertion implementation remains
 covered by engineering tests, but it is not reachable from the live named-motion path because the
-43-case release audit covers replacement only. Insertion will remain blocked, with a surfaced
+42-case release audit covers replacement only. Insertion will remain blocked, with a surfaced
 error rather than silent replacement, until it has its own complete visual audit matrix.
 
 ### Channel ownership
@@ -177,7 +177,7 @@ advances like any other.
 
 The hand-over is as long as the pose gap needs, bounded at one beat. A fixed length closes a small
 gap gently and a large one violently, but an unbounded one would fade a clip's offset out across
-seconds of the song's own choreography. With both in place the worst seam across all twenty
+seconds of the song's own choreography. With both in place the worst seam across the full
 motions sits at 1.4x the song's own 99th-percentile joint speed, against 3.0x before.
 
 ## Validation
@@ -302,10 +302,10 @@ require their wrist data to remain host-identical. The other ten have explicit c
 
 - claps require opposing palm normals and parallel fingers at contact;
 - `jump_two_foot` inherits the host wrist pose rather than introducing a new one;
-- `wave`, `point_side`, `arm_punch`, `jump_arms_up`, `celebrate_hands_up`, and `rise_reach`
+- `wave`, `point_side`, `arm_punch`, `jump_arms_up`, and `rise_reach`
   keep the rigid open hand anatomically continuous with the forearm, with wave as the only
   deliberate local wrist oscillation;
-- all ten are checked for abrupt local wrist steps on several phases of real LODGE output in
+- all nine are checked for abrupt local wrist steps on several phases of real LODGE output in
   replacement and the dormant low-level insertion implementation, while authored hand planes are
   checked across eight headings and mirrored variants.
 
@@ -343,9 +343,9 @@ window. This is the same error as grading a spliced clip's speed against the son
 
 The generic version of this trap: an elbow at shoulder height is correct for an *extended* arm
 (a punch, a side point, a reach) and wrong only for a *folded* one. A check that ignores the
-distinction flags eight of the twenty motions and buries the one real defect in false positives.
+distinction flags many unrelated motions and buries the one real defect in false positives.
 
-**The clap was not the only one.** Reviewing all twenty the same way turned up a second motion
+**The clap was not the only one.** Reviewing the full bank the same way turned up a second motion
 doing the wrong action while passing everything: `chest_pop` never moved the chest. At its event
 frame spine3 sat at `+0.018 m` — its rest offset, unchanged to the millimetre — while the head
 speared `0.272 m` forward and dropped `0.134 m`. It read as a pigeon peck. The cause is a
@@ -366,7 +366,7 @@ promises** — the chest leads for `chest_pop`, the wave travels up the spine in
 `body_roll`, the hands meet in front of the chest for a clap. Magnitude checks are necessary and
 never sufficient.
 
-Nothing in that failure was subtle at full size — it survived because the twenty-per-page contact
+Nothing in that failure was subtle at full size — it survived because the all-bank contact
 sheet used to review the bank renders each action too small to see a hand at.
 `scripts/review_motion_visually.py` draws one motion per sheet from four angles, forces the
 closest-approach frame into the sample rather than sampling evenly past it, and keeps world height
@@ -390,7 +390,7 @@ generation output, session loading, direct editor calls, and tests.
 
 For visual review of the composed path, `scripts/scratch/review_composed_bank.py` produces one
 before/after sheet per action on the exact live TRS dance, while
-`scripts/scratch/render_composed_bank_video.py` renders all twenty at real 30 FPS in front and side
+`scripts/scratch/render_composed_bank_video.py` renders the full bank at real 30 FPS in front and side
 views. Static sheets establish posture and channel ownership; the playback reel establishes timing
 and continuity.
 
@@ -511,28 +511,29 @@ replaces the old global review checkboxes.
 The UI does not fetch the answer key until every take has a non-empty locked guess. Locked guesses
 persist in browser storage and can be exported as JSON. Each generated audit receives a fresh
 storage nonce, so rebuilding a reused output directory cannot restore answers revealed by an earlier
-run. The supported 20-motion vocabulary is visible to the reviewer, but no take-to-answer mapping is
+run. The supported 19-motion vocabulary is visible to the reviewer, but no take-to-answer mapping is
 embedded in the page. Shuffled take ids prevent the manifest order or filename from giving away the
 answer.
 
-Protocol version 9 runs machine visual invariants on the exact composed host motion. Claps
-cannot enter review unless palm contact is below 1 cm, palm planes oppose, fingers are not vertical,
-both hands visibly approach, the torso heading stays within 3 degrees of the source, and every
-unowned source channel remains unchanged. The same pre-render gate requires guard-strike-recoil
-punch phases, open-step-touch-stagger foot phases, and sequential lower-to-upper body-roll crests
-and releases. Protocol 9 additionally requires locomotion to dominate a side step's arm cue,
-forward and backward steps to travel in the named dancer-relative direction and keep following
-after the lead foot plants, turns to resolve early enough to hold the new facing, bounce to contain
-two complete down-up pulses instead of reading as one crouch, planted level changes to keep both
-feet stable, crouch to arrive near its lowest pose, and rise/reach to load before both hands become
-high. Before reveal, the reviewer locks both the action name and observed direction using the
-action-specific direction rules shown in the UI. Fixed forward/backward actions are directional
-even though they have no selectable manifest variant. The selector includes backward explicitly
-and labels dancer-left/dancer-right with their normalized front-view screen side so viewer-relative
-answers cannot silently invert the result. After reveal, the reviewer must mark
-every required visual phase and every prohibited competing silhouette as reviewed, then record
-pass or fail plus an evidence note for every take. These checks diagnose known failures but do not
-replace the human verdict. Finalize that exported result with:
+Protocol version 10 runs machine visual invariants on the exact composed host motion. Claps cannot
+enter review unless palm contact and orientation are correct, both hands visibly approach, overhead
+hand bones remain continuous with the forearms, the torso heading stays within 3 degrees of the
+source, and every unowned source channel remains unchanged. The same pre-render gate requires a
+guard-strike-recoil punch whose visible impact aligns with the declared event, a compact side step
+with credible pelvis support and preserved host upper body, a crouch with a short low phase and full
+recovery, open-step-touch-stagger foot phases, and sequential lower-to-upper body-roll crests and
+releases. It also requires forward and backward steps to travel in the named dancer-relative
+direction, turns to resolve early enough to hold the new facing, bounce to contain two complete
+down-up pulses instead of reading as one crouch, planted level changes to keep both feet stable, and
+rise/reach to load before both hands become high. Before reveal, the reviewer locks both the action
+name and observed direction using the action-specific direction rules shown in the UI. Fixed
+forward/backward actions are directional even though they have no selectable manifest variant. The
+selector includes backward explicitly and labels dancer-left/dancer-right with their normalized
+front-view screen side so viewer-relative answers cannot silently invert the result. After reveal,
+the reviewer must mark every required visual phase, every prohibited competing silhouette, and all
+five biomechanics and continuity checks as reviewed, then record pass or fail plus an evidence note
+for every take. These checks diagnose known failures but do not replace the human verdict. Finalize
+that exported result with:
 
 ```bash
 python scripts/finalize_motion_audit.py \
@@ -541,7 +542,8 @@ python scripts/finalize_motion_audit.py \
 ```
 
 The finalizer rejects missed blind guesses, failed phases, unreviewed competing silhouettes, failed
-machine checks, missing direction variants, empty evidence, incomplete per-take playback or
+machine checks, missing direction variants, empty evidence, incomplete biomechanics checks,
+incomplete per-take playback or
 comparison proof, invalid timestamp order, stale audit artifacts, or a fingerprint mismatch. The
 render step clears old videos and frame directories first, captures exact posed Y-Bot joints,
 camera projections, mesh-floor clearance, and rendered-frame coverage for every source/edit
@@ -575,7 +577,7 @@ must be judged in the same review pass. The primary static review strip adds tha
 every synchronized frame, so cadence, torso articulation, foot clearance, and hand contact remain
 visible together instead of requiring the reviewer to remember evidence from separate sheets. It is
 split into short horizontal pages so browser or terminal image scaling cannot compress a full action
-into unreadable thumbnails. Protocol 9 overlays the projected exact-Y-Bot skeleton, root and floor
+into unreadable thumbnails. Protocol 10 overlays the projected exact-Y-Bot skeleton, root and floor
 guides, and root, ankle, and wrist trails on those strips. The page includes persistent
 dancer-relative direction legends: in front view screen-left is dancer-right, while in side view
 screen-left is backward. Sheet generation fails if the required projected-joint evidence is missing
@@ -596,7 +598,7 @@ defects: some reviews relied on edit-only temporal strips or viewer-relative dir
 The detailed source/edit/difference pages must separate genuine action ambiguity from review-method
 errors before clips are changed. Because protocol-v5 code changes the motion fingerprint, the
 revealed v4 render is stale and cannot be reused as a blind pass. Release requires a fresh output
-directory, nonce, render, and 43-case review.
+directory, nonce, render, and the then-current complete case matrix.
 
 The earlier unpaired review protocol itself produced misleading failures. A chest pop inherited a
 small hop from the host and was guessed as a jump, while the actual jump was assigned the remaining
@@ -726,11 +728,14 @@ include a side step reading as a point, a jump reading as a crouch, and rise/rea
 celebration or overhead clap. Source-space and exact-rig discriminative checks cover the corresponding
 motion families, while the hidden answer key remains the only authority for scoring recognition.
 
-The current protocol-9 implementation passes all 43 seeded source-space cases and the audit/finalizer
+The current protocol-10 implementation adds a mandatory biomechanics and continuity checklist to
+every take, plus exact event-alignment, support, recovery, and wrist-continuity gates for the
+repaired motions. It passes the complete seeded source-space matrix and the audit/finalizer
 regressions. That is a development milestone, not a release authorization. Production remains
 blocked until a fresh seed is rendered on exact Y-Bot from the exact pushed commit, every rendered
-machine gate passes, all 43 action and direction guesses are locked before reveal, and the finalizer
-scores the full review 43/43 with complete positive-phase and negative-silhouette evidence.
+machine gate passes, all 42 action and direction guesses are locked before reveal, and the finalizer
+scores the full review 42/42 with complete phase, competing-silhouette, biomechanics, and continuity
+evidence.
 
 ## Adding a motion
 

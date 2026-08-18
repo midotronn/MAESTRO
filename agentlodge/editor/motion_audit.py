@@ -14,10 +14,18 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RECEIPT = ROOT / "assets" / "motion_bank" / "audit_receipt.json"
 RENDER_RECEIPT_NAME = "render_receipt.json"
 YBOT_METRICS_REPORT_NAME = "ybot_metrics_report.json"
-REVIEW_PROTOCOL_VERSION = 9
+REVIEW_PROTOCOL_VERSION = 10
+REQUIRED_QUALITY_CHECKS = (
+    "Joint paths remain continuous, with no visible snap, hyperextension, limb intersection, or detached hand or foot plane.",
+    "Weight transfer and balance remain plausibly supported by the planted, stepping, takeoff, or landing feet.",
+    "The visible accent agrees with the declared event, with readable anticipation and recovery at normal speed.",
+    "Unowned source choreography continues without whole-body dragging, freezing, or unnecessary style replacement.",
+    "Front and side views both show a natural silhouette with no foot skate, locked joint, or implausible center-of-mass path.",
+)
 REVIEWER_ATTESTATION_STATEMENT = (
     "I independently reviewed every source/edit pair at normal speed with answers hidden "
-    "until all guesses were locked, and I did not waive any failed or ambiguous case."
+    "until all guesses were locked, checked biomechanics and continuity, and did not waive "
+    "any failed or ambiguous case."
 )
 _TEXT_SUFFIXES = {".json", ".py", ".sh"}
 _AUDITED_FILES = (
@@ -261,7 +269,7 @@ def validate_ybot_metrics_report(
     if not path.is_file():
         raise RuntimeError("motion audit has no exact Y-Bot metrics report")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if int(payload.get("schema_version", 0)) != 1:
+    if int(payload.get("schema_version", 0)) != 2:
         raise RuntimeError("motion audit Y-Bot metrics report has an unsupported schema")
     if payload.get("audit_id") != review.get("audit_id"):
         raise RuntimeError("motion audit Y-Bot metrics belong to a different audit")
@@ -383,6 +391,16 @@ def validate_audit_receipt(
         ):
             raise RuntimeError(
                 f"{case_id}: competing silhouettes were not explicitly rejected"
+            )
+        reviewed_quality_checks = tuple(
+            result.get("verified_quality_checks") or ()
+        )
+        if (
+            len(reviewed_quality_checks) != len(REQUIRED_QUALITY_CHECKS)
+            or set(reviewed_quality_checks) != set(REQUIRED_QUALITY_CHECKS)
+        ):
+            raise RuntimeError(
+                f"{case_id}: shared biomechanics and continuity checks were not completed"
             )
         if not str(result.get("evidence", "")).strip():
             raise RuntimeError(f"{case_id}: visual review has no evidence note")

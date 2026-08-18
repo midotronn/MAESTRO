@@ -9,6 +9,7 @@ import pytest
 
 from agentlodge.editor import motion_audit
 from agentlodge.editor.motion_audit import (
+    REQUIRED_QUALITY_CHECKS,
     REVIEW_PROTOCOL_VERSION,
     REVIEWER_ATTESTATION_STATEMENT,
     motion_fingerprint,
@@ -25,7 +26,9 @@ from scripts.validate_motion_audit_ybot import (
     _chest_pop_check,
     _clap_checks,
     _jump_check,
+    _level_change_check,
     _planted_foot_check,
+    _punch_check,
     _punch_plane_check,
     _rise_phase_check,
     _side_step_check,
@@ -72,6 +75,7 @@ def _passing_receipt() -> dict:
                 "verified_negative_signatures": list(
                     negative_signatures[case_id.split("@", 1)[0]]
                 ),
+                "verified_quality_checks": list(REQUIRED_QUALITY_CHECKS),
                 "evidence": "Source and edit were compared at normal speed; all phases read clearly.",
             }
             for case_id in required_audit_cases()
@@ -92,7 +96,7 @@ def test_required_matrix_includes_automatic_and_explicit_direction_variants():
     assert "clap_single@left" in cases
     assert "clap_single@right" in cases
     assert "jump_two_foot" in cases
-    assert len(cases) == 43
+    assert len(cases) == 42
 
 
 def test_exact_ybot_geometry_gate_rejects_merged_claps_and_grounded_jumps():
@@ -166,7 +170,7 @@ def _facing_forward(joints):
     joints[:, 17, :2] = (-0.25, 0.0)
 
 
-def test_protocol_nine_exact_rig_checks_reject_competing_silhouettes():
+def test_protocol_ten_exact_rig_checks_reject_competing_silhouettes():
     joints = np.zeros((30, 22, 3), dtype=np.float32)
     _facing_forward(joints)
 
@@ -201,6 +205,16 @@ def test_protocol_nine_exact_rig_checks_reject_competing_silhouettes():
     punch[:, 21, :2] = (-0.20, -0.10)
     punch[15, 21, :2] = (-0.20, -0.75)
     assert _punch_plane_check(punch, 0, 30, "right")["passed"]
+    assert _punch_check(punch, 0, 30, 15, "right")["passed"]
+    assert not _punch_check(punch, 0, 30, 20, "right")["passed"]
+    turning_punch = punch.copy()
+    for frame, angle in enumerate(np.linspace(0.0, np.pi, len(punch))):
+        rotation = np.array([
+            [np.cos(angle), -np.sin(angle)],
+            [np.sin(angle), np.cos(angle)],
+        ])
+        turning_punch[frame, :, :2] = punch[frame, :, :2] @ rotation.T
+    assert _punch_check(turning_punch, 0, 30, 15, "right")["passed"]
     side_reach = punch.copy()
     side_reach[15, 21, :2] = (-0.85, 0.0)
     assert not _punch_plane_check(side_reach, 0, 30, "right")["passed"]
@@ -215,11 +229,12 @@ def test_protocol_nine_exact_rig_checks_reject_competing_silhouettes():
     assert not _chest_pop_check(nod, control, 15)["passed"]
 
     side_step = joints.copy()
-    side_step[:, 0, 0] = np.linspace(0.0, 0.36, 30)
-    side_step[:21, 7, 0] = np.linspace(0.18, 0.68, 21)
-    side_step[21:, 7, 0] = 0.68
-    side_step[20:, 8, 0] = -0.18
-    side_step[20, 20, 0] += 0.30
+    root_shift = np.linspace(0.0, 0.28, 30)
+    side_step[:, 0, 0] = root_shift
+    side_step[:, 12:22, 0] += root_shift[:, None]
+    side_step[:21, 7, 0] = np.linspace(0.10, 0.42, 21)
+    side_step[21:, 7, 0] = 0.42
+    side_step[20:, 8, 0] = -0.14
     assert _side_step_check(
         side_step, control, 0, 30, 20, "left"
     )["passed"]
@@ -227,6 +242,23 @@ def test_protocol_nine_exact_rig_checks_reject_competing_silhouettes():
     pointing_step[20, 20, 0] += 0.80
     assert not _side_step_check(
         pointing_step, control, 0, 30, 20, "left"
+    )["passed"]
+
+    crouch = control.copy()
+    depth = np.zeros(30, dtype=np.float32)
+    depth[2:5] = (-0.015, -0.025, -0.005)
+    depth[6:16] = np.linspace(0.0, -0.25, 10)
+    depth[16:19] = -0.25
+    depth[19:] = np.linspace(-0.25, 0.0, 11)
+    crouch[:, 0, 2] += depth
+    crouch[14:20, 9, 1] -= 0.08
+    assert _level_change_check(
+        "crouch_drop", crouch, control, 0, 30, 16
+    )["passed"]
+    unrecovered = crouch.copy()
+    unrecovered[19:, 0, 2] = -0.25
+    assert not _level_change_check(
+        "crouch_drop", unrecovered, control, 0, 30, 16
     )["passed"]
 
     rise = joints.copy()
@@ -300,6 +332,12 @@ def test_protocol_nine_exact_rig_checks_reject_competing_silhouettes():
                 verified_negative_signatures=[]
             ),
             "competing silhouettes",
+        ),
+        (
+            lambda receipt: next(iter(receipt["cases"].values())).update(
+                verified_quality_checks=[]
+            ),
+            "biomechanics and continuity",
         ),
         (
             lambda receipt: next(iter(receipt["cases"].values())).update(evidence=""),
@@ -460,6 +498,7 @@ def _complete_audit_export(tmp_path):
             "verified_negative_signatures": list(
                 negative_signatures[motion_id]
             ),
+            "verified_quality_checks": list(REQUIRED_QUALITY_CHECKS),
         }
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir(parents=True)
@@ -501,7 +540,7 @@ def _complete_audit_export(tmp_path):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(f"{relative}\n".encode())
     metrics_report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "audit_id": review["audit_id"],
         "motion_fingerprint": fingerprint,
         "status": "pass",
@@ -592,6 +631,27 @@ def test_finalizer_rejects_unchecked_competing_silhouettes(tmp_path):
     result_path.write_text(json.dumps(result), encoding="utf-8")
     with pytest.raises(ValueError, match="every competing silhouette"):
         finalize(audit_dir, result_path, tmp_path / "receipt.json")
+
+
+def test_finalizer_rejects_unchecked_biomechanics_and_continuity(tmp_path):
+    audit_dir, result_path, result = _complete_audit_export(tmp_path)
+    first = next(iter(result["takes"].values()))
+    first["verified_quality_checks"] = first["verified_quality_checks"][:-1]
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    with pytest.raises(ValueError, match="every biomechanics and continuity check"):
+        finalize(audit_dir, result_path, tmp_path / "receipt.json")
+
+
+def test_finalizer_accepts_biomechanics_checks_in_click_order(tmp_path):
+    audit_dir, result_path, result = _complete_audit_export(tmp_path)
+    for take in result["takes"].values():
+        take["verified_quality_checks"] = list(reversed(REQUIRED_QUALITY_CHECKS))
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    receipt = finalize(audit_dir, result_path, tmp_path / "receipt.json")
+    assert all(
+        tuple(case["verified_quality_checks"]) == REQUIRED_QUALITY_CHECKS
+        for case in receipt["cases"].values()
+    )
 
 
 @pytest.mark.parametrize(

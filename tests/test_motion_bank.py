@@ -60,9 +60,7 @@ _FOREARM_HAND_CONTRACTS = (
     "jump_arms_up",
     "wave",
     "point_side",
-    "celebrate_hands_up",
     "arm_punch",
-    "side_step",
     "rise_reach",
 )
 _WRIST_STEP_LIMITS = {
@@ -73,7 +71,6 @@ _WRIST_STEP_LIMITS = {
     "jump_arms_up": 0.25,
     "wave": 0.60,
     "point_side": 0.25,
-    "celebrate_hands_up": 0.28,
     "arm_punch": 0.25,
     "rise_reach": 0.38,
 }
@@ -131,10 +128,10 @@ def _clap_hand_alignment(motion, frame):
     return float(left_palm @ right_palm), float(left_fingers @ right_fingers)
 
 
-def test_manifest_has_twenty_valid_redistributable_motions():
+def test_manifest_has_nineteen_valid_redistributable_motions():
     bank = default_motion_bank()
-    assert len(bank.specs) == 20
-    assert len({s.id for s in bank.specs}) == 20
+    assert len(bank.specs) == 19
+    assert len({s.id for s in bank.specs}) == 19
     for spec in bank.specs:
         clip = bank.load_clip(spec)
         assert clip.shape == (spec.frames, 139)
@@ -278,6 +275,8 @@ def test_blind_review_locks_every_guess_before_loading_the_separate_answer_key()
     assert "normalSpeedPlayback" in page
     assert "comparisonOpenedAt" in page
     assert "comparisonAcknowledgment" in page
+    assert "requiredQualityChecks" in page
+    assert 'class="quality-checks"' in page
     assert "validComparisonAcknowledgment" in page
     assert "event.origin === window.location.origin" in page
     assert "event.source === comparisonWindows.get(take)" in page
@@ -562,7 +561,7 @@ def test_audit_phase_sheets_build_synchronized_dual_view(tmp_path):
     assert "window.opener.postMessage" in review_index
 
 
-def test_protocol_nine_phase_sheets_require_exact_projected_ybot_joints(tmp_path):
+def test_protocol_ten_phase_sheets_require_exact_projected_ybot_joints(tmp_path):
     from agentlodge.editor.motion_audit import REVIEW_PROTOCOL_VERSION
     from scripts.build_motion_audit_sheets import build_sheets
 
@@ -579,7 +578,7 @@ def test_protocol_nine_phase_sheets_require_exact_projected_ybot_joints(tmp_path
         }],
     }
     (tmp_path / "review.json").write_text(json.dumps(review), encoding="utf-8")
-    with pytest.raises(RuntimeError, match="protocol-9 skeleton evidence is missing"):
+    with pytest.raises(RuntimeError, match="protocol-10 skeleton evidence is missing"):
         build_sheets(tmp_path, size=96)
 
 
@@ -626,7 +625,7 @@ def test_motion_defaults_distinguish_beat_hits_from_phrase_motions():
     beat_hits = {
         "clap_single", "clap_repeat", "clap_overhead",
         "jump_two_foot", "jump_arms_up",
-        "point_side", "celebrate_hands_up", "chest_pop", "arm_punch",
+        "point_side", "chest_pop", "arm_punch",
         "crouch_drop", "rise_reach",
     }
     bank = default_motion_bank()
@@ -1095,7 +1094,6 @@ def test_real_output_clap_preserves_the_host_rhythm_and_reads_as_a_clap():
         ("clap_overhead", 3.0),
         ("jump_arms_up", 2.6),
         ("point_side", 1.6),
-        ("celebrate_hands_up", 2.0),
         ("rise_reach", 3.6),
     ],
 )
@@ -1440,7 +1438,10 @@ def test_clap_regression_keeps_dancing_and_makes_visible_contact(motion_id):
         assert gap < 0.01, (motion_id, direction, gap)
         assert palm_dot < -0.98, (motion_id, direction, palm_dot)
         assert finger_dot > 0.98, (motion_id, direction, finger_dot)
-        assert 0.20 < finger_up < 0.75, (motion_id, direction, finger_up)
+        if motion_id == "clap_overhead":
+            assert 0.75 < finger_up < 0.98, (motion_id, direction, finger_up)
+        else:
+            assert 0.20 < finger_up < 0.75, (motion_id, direction, finger_up)
         expected_turn = float(report["counterflow_turn_degrees"])
         observed_turn = float(np.rad2deg(chest_delta[event]))
         peak_turn = float(np.rad2deg(np.max(np.abs(chest_delta[start:end]))))
@@ -1702,7 +1703,7 @@ def test_visual_audit_derives_counterflow_ownership_instead_of_trusting_the_repo
 
 @needs_fk
 @pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
-def test_visual_audit_rejects_every_protocol_eight_failure_signature():
+def test_visual_audit_rejects_every_protocol_ten_failure_signature():
     from agentlodge.dance.format import to_editor139
     from scripts.build_motion_bank_audit import _machine_checks
 
@@ -1719,7 +1720,8 @@ def test_visual_audit_rejects_every_protocol_eight_failure_signature():
     )
     assert status == "fail"
     assert not next(
-        check for check in checks if check["name"] == "side_step_direction_signature"
+        check for check in checks
+        if check["name"] == "side_step_weight_transfer_signature"
     )["passed"]
 
     jump, jump_report = bank.apply(host, "jump_arms_up", beats=beats)
@@ -2127,7 +2129,7 @@ def test_lateral_step_signatures_survive_real_host_composition():
 
 @needs_fk
 @pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
-def test_side_step_root_and_lead_arm_agree_on_dancer_relative_direction():
+def test_side_step_uses_a_compact_transfer_and_preserves_the_host_upper_body():
     from agentlodge.dance.format import to_editor139
     from server.fk import compute_poses
 
@@ -2146,22 +2148,26 @@ def test_side_step_root_and_lead_arm_agree_on_dancer_relative_direction():
         forward = _body_forward(joints, start)
         left = np.array([-forward[1], forward[0], 0.0])
         root = (out[start:end, :2] - out[start, :2]) @ left[:2]
-        lead = 20 if direction == "left" else 21
-        trail = 21 if direction == "left" else 20
         lead_ankle = 7 if direction == "left" else 8
-        lead_offset = sign * float((joints[event, lead] - joints[event, 9]) @ left)
-        trail_offset = sign * float((joints[event, trail] - joints[event, 9]) @ left)
         lead_foot = sign * float(
             (joints[event, lead_ankle] - joints[start, lead_ankle]) @ left
         )
-        assert float(np.max(sign * root)) > 0.32, (direction, root)
-        assert lead_foot > 0.40, (direction, lead_foot)
-        assert lead_offset > 0.52, (direction, lead_offset)
-        assert lead_offset > trail_offset + 0.40, (
+        root_travel = float(np.max(sign * root))
+        stance = abs(float((joints[event, 7] - joints[event, 8]) @ left))
+        assert 0.16 < root_travel < 0.32, (direction, root_travel)
+        assert 0.28 < lead_foot < 0.48, (direction, lead_foot)
+        assert 0.38 < stance < 0.62, (direction, stance)
+        assert 0.45 < root_travel / lead_foot < 0.90, (
             direction,
-            lead_offset,
-            trail_offset,
+            root_travel,
+            lead_foot,
         )
+        for joint in (12, 13, 14, 15, 16, 17, 18, 19, 20, 21):
+            channels = slice(3 + 6 * joint, 3 + 6 * (joint + 1))
+            assert np.array_equal(out[:, channels], base[:, channels]), (
+                direction,
+                joint,
+            )
 
 
 # The manifest validators are generic shape checks -- joint_activity only asks that the arms
@@ -2478,6 +2484,34 @@ def test_the_overhead_clap_actually_clears_the_head():
 
 
 @needs_fk
+def test_the_overhead_clap_keeps_the_hands_continuous_with_the_forearms():
+    from agentlodge.dance.transition import _matrix_to_axis_angle
+    from server.fk import compute_poses
+
+    bank = default_motion_bank()
+    spec = bank.resolve("clap_overhead")
+    clip = bank.load_clip(spec)
+    joints = compute_poses(clip)["fk_joints"]
+    global_r = _global_joint_rotations(clip)
+    local = _local_joint_rotations(clip)
+    frames = range(spec.event_frame - 6, spec.event_frame + 7)
+    for wrist, elbow, finger in (
+        (20, 18, np.array([1.0, 0.0, 0.0])),
+        (21, 19, np.array([-1.0, 0.0, 0.0])),
+    ):
+        alignment = []
+        for frame in frames:
+            hand = global_r[frame, wrist] @ finger
+            forearm = joints[frame, wrist] - joints[frame, elbow]
+            forearm /= np.linalg.norm(forearm)
+            alignment.append(float(hand @ forearm))
+        assert min(alignment) > np.cos(np.deg2rad(55.0)), (wrist, alignment)
+        step = local[1:, wrist] @ np.swapaxes(local[:-1, wrist], -1, -2)
+        maximum = float(np.max(np.linalg.norm(_matrix_to_axis_angle(step), axis=-1)))
+        assert maximum < np.deg2rad(35.0), (wrist, np.rad2deg(maximum))
+
+
+@needs_fk
 @pytest.mark.skipif(not os.path.exists(_LODGE_SAMPLE), reason="LODGE sample dance not present")
 def test_jump_arms_up_is_a_wide_v_not_an_overhead_clap_on_the_real_host():
     from agentlodge.dance.format import to_editor139
@@ -2769,8 +2803,11 @@ def test_a_forward_punch_has_guard_strike_and_recoil_phases():
     side_reach = np.abs(np.sum((joints[:, 21] - joints[:, 17]) * lateral, axis=1))
     arm_length = np.linalg.norm(joints[:, 21] - joints[:, 17], axis=1)
     peak = int(np.argmax(forward_reach))
+    event = int(report["event_frame"]) - start
 
     assert 1 < peak < len(joints) - 2
+    assert abs(peak - event) <= 1, (peak, event)
+    assert float(forward_reach[event]) >= 0.97 * float(forward_reach[peak])
     assert float(forward_reach[peak]) > 1.5 * float(side_reach[peak])
     assert float(arm_length[peak] - np.min(arm_length[:peak])) > 0.15
     assert float(arm_length[peak] - np.min(arm_length[peak + 1:])) > 0.15
@@ -2778,6 +2815,41 @@ def test_a_forward_punch_has_guard_strike_and_recoil_phases():
     assert float(np.linalg.norm(joints[peak, 20] - joints[peak, 9])) < 0.30
     assert float(np.linalg.norm(joints[peak, 20] - joints[peak, 16])) < 0.35
     assert window_metrics(out, beats)["jerk"] < 5.0 * window_metrics(base, beats)["jerk"]
+
+
+@needs_fk
+def test_crouch_drop_has_supported_squat_mechanics_and_a_controlled_recovery():
+    from server.fk import compute_poses
+
+    bank = default_motion_bank()
+    spec = bank.resolve("crouch_drop")
+    clip = bank.load_clip(spec)
+    joints = compute_poses(clip)["fk_joints"]
+    pelvis = joints[:, 0, 2]
+    low = float(np.min(pelvis))
+    drop = float(pelvis[0] - low)
+    event_above_low = float(pelvis[spec.event_frame] - low)
+    low_hold = int(np.count_nonzero(pelvis <= low + 0.02))
+    recovery = float(pelvis[-1] - low)
+    anticipation_end = int(round(0.22 * len(pelvis)))
+    descent_start = int(round(0.28 * len(pelvis)))
+    anticipation_low = int(np.argmin(pelvis[:anticipation_end]))
+    anticipation_drop = float(pelvis[0] - pelvis[anticipation_low])
+    anticipation_release = float(
+        np.max(pelvis[anticipation_low:descent_start])
+        - pelvis[anticipation_low]
+    )
+
+    assert 0.18 < drop < 0.30, drop
+    assert anticipation_drop > 0.015, anticipation_drop
+    assert anticipation_release > 0.012, anticipation_release
+    assert event_above_low < 0.02, event_above_low
+    assert 3 <= low_hold <= 15, low_hold
+    assert recovery > 0.15, recovery
+    assert float(np.max(np.linalg.norm(
+        joints[:, 7:9, :2] - joints[:1, 7:9, :2],
+        axis=-1,
+    ))) < 0.01
 
 
 @pytest.mark.parametrize("motion_id", ["side_step", "step_touch"])
@@ -2885,10 +2957,8 @@ def test_no_motion_strands_a_raised_hand_behind_the_dancer(motion_id):
 
     The bound is placed against measured evidence rather than guessed. Rebuilding the pre-fix
     recipes (3122133) trips it on five motions -- arm_punch -0.557, rise_reach -0.308,
-    point_side -0.296, clap_repeat -0.236, clap_single -0.220 -- while the current bank's worst
-    case is celebrate_hands_up at -0.083, whose hands genuinely travel a little behind the chest
-    plane on the way into an overhead V. That leaves room on both sides: loose enough not to
-    outlaw a natural celebration, tight enough to catch a flipped sign.
+    point_side -0.296, clap_repeat -0.236, and clap_single -0.220. The margin remains loose
+    enough for a natural arm path while still catching a flipped forward axis.
     """
     from server.fk import compute_poses
     joints = compute_poses(default_motion_bank().load_clip(motion_id))["fk_joints"]

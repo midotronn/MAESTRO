@@ -1,6 +1,6 @@
 """Burn action labels into the rendered motion-bank reel.
 
-The reel is one continuous take of all twenty canonical actions, so without
+The reel is one continuous take of every canonical action, so without
 labels you cannot tell which action you are looking at or where one ends and
 the next begins. This overlays the current action name and a progress counter
 for exactly the frame range that action occupies, driving ffmpeg from the same
