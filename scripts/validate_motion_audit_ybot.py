@@ -616,7 +616,9 @@ def _punch_check(
         and float(forward_reach[event_local])
         >= 0.97 * float(forward_reach[reach_peak])
         and near_peak <= 5
-        and guard_forward_ratio < 0.36
+        # Y-Bot's retargeted shoulder frame projects a compact cheek guard farther forward
+        # than SMPL source space; the stricter 0.36 source gate still rejects two-arm presses.
+        and guard_forward_ratio < 0.50
     )
     return _check(
         "rendered_guard_strike_recoil",
