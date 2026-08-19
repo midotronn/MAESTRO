@@ -142,6 +142,8 @@ Time-sensitive observations from the August 2026 screening:
 - RunPod bills Pod compute by the second and states that ingress and egress have no separate fee.
 - Network volumes provide a shared rendezvous, but workers should write separate shard directories.
 - Standard network storage is $0.07/GB/month below 1 TB.
+- The current setup has no shared network volume, so separate Pods cannot use the filesystem
+  coordinator without an additional transfer layer.
 - Async job submission and polling should remain in place rather than holding one request open.
 - Multi-GPU pod availability is machine-dependent even though the API accepts `gpuCount`.
 
@@ -205,15 +207,20 @@ Add headroom for p95 only after measuring two-worker and four-worker scaling eff
 
 ### Proposed first paid calibration
 
-Pending explicit approval, use **two Secure Cloud RTX 5090 workers** for no more than two hours:
+Pending explicit approval, use **one Secure Cloud Pod with two RTX 5090 GPUs** for no more than two
+hours. The two workers share that Pod's container filesystem, avoiding a network-volume dependency:
 
 - official screened rate: $0.99/GPU-hour;
 - maximum compute charge: 2 GPUs x 2 hours x $0.99 = $3.96;
 - total authorization cap: $5.00, including incidental storage;
-- use the existing persistent assets where region compatibility permits;
+- use the same base template and container-disk sizing as the current benchmark Pod;
+- copy only the required MAESTRO repositories, checkpoints, Blender runtime, scene, and calibration
+  inputs from the current Pod;
+- first prove separate CUDA visibility and separate EEVEE/EGL GPU execution; do not report
+  two-worker render scaling if both Blender processes resolve to the same physical GPU;
 - run one-worker exact render throughput, two-worker scaling, LODGE/EDGE resident inference, and
   distributed Jukebox slice timing;
-- terminate both Pods immediately after reports and artifacts are copied.
+- terminate the Pod immediately after reports and artifacts are copied.
 
 Stop without scaling further if worker source integrity fails, FFV1 decoded pixels differ from
 their worker source, independent-render drift exceeds the frozen threshold, two-worker render
