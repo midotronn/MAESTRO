@@ -1,6 +1,6 @@
 {
-  "measurement_attempts": 5,
-  "accepted_runs": 4,
+  "measurement_attempts": 6,
+  "accepted_runs": 5,
   "excluded_runs": [
     {
       "sid": "trs_66731",
@@ -13,144 +13,144 @@
       "reason": "The local browser benchmark process terminated after the server completed but before the browser timing record was persisted. This run is excluded from latency statistics and was replaced with a fresh controlled run."
     }
   ],
-  "measurement_completion_rate": 0.8,
+  "measurement_completion_rate": 0.8333,
   "rejected_runs": [],
   "service_states": {
-    "warm_assets_cold_models": 4
+    "warm_assets_cold_models": 5
   },
   "browser_total_seconds": {
-    "n": 4,
-    "p50": 809.651,
-    "p95": 828.87,
+    "n": 5,
+    "p50": 812.903,
+    "p95": 884.71,
     "min": 790.448,
-    "max": 831.688,
-    "mean": 810.36,
-    "stddev": 14.778,
-    "coefficient_of_variation": 0.0182
+    "max": 897.966,
+    "mean": 827.881,
+    "stddev": 37.452,
+    "coefficient_of_variation": 0.0452
   },
   "browser_upload_seconds": {
-    "n": 4,
-    "p50": 7.913,
-    "p95": 9.9,
+    "n": 5,
+    "p50": 7.926,
+    "p95": 9.811,
     "min": 7.399,
     "max": 10.168,
-    "mean": 8.348,
-    "stddev": 1.121,
-    "coefficient_of_variation": 0.1343
+    "mean": 8.264,
+    "stddev": 1.017,
+    "coefficient_of_variation": 0.1231
   },
   "stages": {
     "assets": {
-      "n": 4,
-      "p50": 2.038,
+      "n": 5,
+      "p50": 2.036,
       "p95": 2.043,
       "min": 2.033,
       "max": 2.043,
-      "mean": 2.038,
+      "mean": 2.037,
       "stddev": 0.004,
       "coefficient_of_variation": 0.0019
     },
     "audio": {
-      "n": 4,
-      "p50": 0.095,
-      "p95": 0.14,
+      "n": 5,
+      "p50": 0.093,
+      "p95": 0.138,
       "min": 0.082,
       "max": 0.148,
-      "mean": 0.105,
+      "mean": 0.1,
       "stddev": 0.025,
-      "coefficient_of_variation": 0.2422
+      "coefficient_of_variation": 0.2443
     },
     "audio_prepare": {
-      "n": 4,
-      "p50": 0.057,
-      "p95": 0.1,
+      "n": 5,
+      "p50": 0.055,
+      "p95": 0.097,
       "min": 0.047,
       "max": 0.107,
-      "mean": 0.067,
-      "stddev": 0.023,
-      "coefficient_of_variation": 0.3507
+      "mean": 0.064,
+      "stddev": 0.022,
+      "coefficient_of_variation": 0.3362
     },
     "beats": {
-      "n": 4,
-      "p50": 4.018,
+      "n": 5,
+      "p50": 4.017,
       "p95": 4.029,
       "min": 4.013,
       "max": 4.031,
-      "mean": 4.02,
-      "stddev": 0.007,
-      "coefficient_of_variation": 0.0017
+      "mean": 4.019,
+      "stddev": 0.006,
+      "coefficient_of_variation": 0.0015
     },
     "browser_upload": {
-      "n": 4,
-      "p50": 12.423,
-      "p95": 14.39,
-      "min": 11.422,
+      "n": 5,
+      "p50": 12.165,
+      "p95": 14.29,
+      "min": 11.163,
       "max": 14.692,
-      "mean": 12.74,
-      "stddev": 1.213,
-      "coefficient_of_variation": 0.0952
+      "mean": 12.425,
+      "stddev": 1.255,
+      "coefficient_of_variation": 0.101
     },
     "finalize": {
-      "n": 4,
-      "p50": 0.035,
-      "p95": 0.04,
+      "n": 5,
+      "p50": 0.037,
+      "p95": 0.039,
       "min": 0.031,
       "max": 0.04,
-      "mean": 0.035,
+      "mean": 0.036,
       "stddev": 0.003,
-      "coefficient_of_variation": 0.099
+      "coefficient_of_variation": 0.0899
     },
     "generation": {
-      "n": 4,
-      "p50": 80.31,
-      "p95": 82.001,
+      "n": 5,
+      "p50": 80.325,
+      "p95": 82.383,
       "min": 78.267,
-      "max": 82.297,
-      "mean": 80.296,
-      "stddev": 1.425,
-      "coefficient_of_variation": 0.0177
+      "max": 82.405,
+      "mean": 80.718,
+      "stddev": 1.528,
+      "coefficient_of_variation": 0.0189
     },
     "pod": {
-      "n": 4,
+      "n": 5,
       "p50": 0.019,
-      "p95": 0.032,
+      "p95": 0.031,
       "min": 0.014,
       "max": 0.034,
-      "mean": 0.022,
+      "mean": 0.021,
       "stddev": 0.007,
-      "coefficient_of_variation": 0.3416
+      "coefficient_of_variation": 0.3177
     },
     "polish": {
-      "n": 4,
-      "p50": 4.014,
+      "n": 5,
+      "p50": 4.013,
       "p95": 4.021,
-      "min": 4.011,
+      "min": 2.005,
       "max": 4.022,
-      "mean": 4.015,
-      "stddev": 0.004,
-      "coefficient_of_variation": 0.001
+      "mean": 3.613,
+      "stddev": 0.804,
+      "coefficient_of_variation": 0.2225
     },
     "preprocess": {
-      "n": 4,
-      "p50": 225.984,
-      "p95": 230.513,
+      "n": 5,
+      "p50": 227.041,
+      "p95": 234.471,
       "min": 206.887,
-      "max": 231.126,
-      "mean": 222.495,
-      "stddev": 9.283,
-      "coefficient_of_variation": 0.0417
+      "max": 235.307,
+      "mean": 225.058,
+      "stddev": 9.757,
+      "coefficient_of_variation": 0.0434
     },
     "preview": {
-      "n": 4,
+      "n": 5,
       "p50": 0.007,
       "p95": 0.01,
       "min": 0.006,
       "max": 0.011,
       "mean": 0.008,
       "stddev": 0.002,
-      "coefficient_of_variation": 0.2478
+      "coefficient_of_variation": 0.2206
     },
     "queued": {
-      "n": 4,
+      "n": 5,
       "p50": 0.0,
       "p95": 0.0,
       "min": 0.0,
@@ -160,7 +160,7 @@
       "coefficient_of_variation": null
     },
     "ready": {
-      "n": 4,
+      "n": 5,
       "p50": 0.0,
       "p95": 0.0,
       "min": 0.0,
@@ -170,184 +170,184 @@
       "coefficient_of_variation": null
     },
     "remote:assets": {
-      "n": 4,
-      "p50": 0.042,
+      "n": 5,
+      "p50": 0.043,
       "p95": 0.044,
       "min": 0.04,
       "max": 0.044,
       "mean": 0.042,
       "stddev": 0.002,
-      "coefficient_of_variation": 0.0376
+      "coefficient_of_variation": 0.0383
     },
     "remote:audio_descriptor": {
-      "n": 4,
-      "p50": 0.72,
-      "p95": 0.736,
+      "n": 5,
+      "p50": 0.724,
+      "p95": 0.737,
       "min": 0.693,
       "max": 0.738,
-      "mean": 0.718,
+      "mean": 0.721,
       "stddev": 0.016,
-      "coefficient_of_variation": 0.0227
+      "coefficient_of_variation": 0.0222
     },
     "remote:beats": {
-      "n": 4,
-      "p50": 4.479,
-      "p95": 4.699,
+      "n": 5,
+      "p50": 4.457,
+      "p95": 4.688,
       "min": 4.428,
       "max": 4.732,
-      "mean": 4.529,
-      "stddev": 0.121,
-      "coefficient_of_variation": 0.0268
+      "mean": 4.515,
+      "stddev": 0.112,
+      "coefficient_of_variation": 0.0249
     },
     "remote:generation_edge": {
-      "n": 4,
-      "p50": 71.522,
-      "p95": 72.529,
+      "n": 5,
+      "p50": 71.659,
+      "p95": 72.667,
       "min": 68.289,
       "max": 72.682,
-      "mean": 71.004,
-      "stddev": 1.64,
-      "coefficient_of_variation": 0.0231
+      "mean": 71.324,
+      "stddev": 1.601,
+      "coefficient_of_variation": 0.0225
     },
     "remote:generation_lodge": {
-      "n": 4,
-      "p50": 67.902,
-      "p95": 69.417,
+      "n": 5,
+      "p50": 68.182,
+      "p95": 69.618,
       "min": 66.797,
       "max": 69.635,
-      "mean": 68.059,
-      "stddev": 1.035,
-      "coefficient_of_variation": 0.0152
+      "mean": 68.358,
+      "stddev": 1.101,
+      "coefficient_of_variation": 0.0161
     },
     "remote:generation_total": {
-      "n": 4,
-      "p50": 81.199,
-      "p95": 81.988,
+      "n": 5,
+      "p50": 81.397,
+      "p95": 82.193,
       "min": 77.744,
-      "max": 82.092,
-      "mean": 80.559,
-      "stddev": 1.671,
-      "coefficient_of_variation": 0.0207
+      "max": 82.218,
+      "mean": 80.89,
+      "stddev": 1.636,
+      "coefficient_of_variation": 0.0202
     },
     "remote:pipeline": {
-      "n": 4,
-      "p50": 316.727,
-      "p95": 322.672,
+      "n": 5,
+      "p50": 318.691,
+      "p95": 327.351,
       "min": 300.536,
-      "max": 323.375,
-      "mean": 314.341,
-      "stddev": 8.534,
-      "coefficient_of_variation": 0.0271
+      "max": 328.345,
+      "mean": 317.142,
+      "stddev": 9.468,
+      "coefficient_of_variation": 0.0299
     },
     "remote:polish": {
-      "n": 4,
-      "p50": 3.737,
-      "p95": 3.81,
+      "n": 5,
+      "p50": 3.742,
+      "p95": 3.826,
       "min": 3.526,
-      "max": 3.822,
-      "mean": 3.705,
+      "max": 3.827,
+      "mean": 3.73,
       "stddev": 0.109,
-      "coefficient_of_variation": 0.0295
+      "coefficient_of_variation": 0.0293
     },
     "remote:preprocess_edge": {
-      "n": 4,
-      "p50": 226.577,
-      "p95": 230.713,
+      "n": 5,
+      "p50": 226.944,
+      "p95": 234.48,
       "min": 207.615,
-      "max": 231.378,
-      "mean": 223.037,
-      "stddev": 9.121,
-      "coefficient_of_variation": 0.0409
+      "max": 235.255,
+      "mean": 225.48,
+      "stddev": 9.51,
+      "coefficient_of_variation": 0.0422
     },
     "remote:preprocess_lodge": {
-      "n": 4,
-      "p50": 6.668,
-      "p95": 6.824,
+      "n": 5,
+      "p50": 6.673,
+      "p95": 6.839,
       "min": 6.625,
       "max": 6.851,
-      "mean": 6.703,
-      "stddev": 0.087,
-      "coefficient_of_variation": 0.013
+      "mean": 6.721,
+      "stddev": 0.085,
+      "coefficient_of_variation": 0.0127
     },
     "remote:preview": {
-      "n": 4,
-      "p50": 0.022,
+      "n": 5,
+      "p50": 0.023,
       "p95": 0.028,
       "min": 0.017,
       "max": 0.029,
-      "mean": 0.022,
-      "stddev": 0.005,
-      "coefficient_of_variation": 0.212
+      "mean": 0.023,
+      "stddev": 0.004,
+      "coefficient_of_variation": 0.189
     },
     "remote:seed_bank": {
-      "n": 4,
-      "p50": 2.003,
-      "p95": 2.046,
+      "n": 5,
+      "p50": 2.013,
+      "p95": 2.05,
       "min": 1.966,
       "max": 2.052,
-      "mean": 2.006,
+      "mean": 2.013,
       "stddev": 0.031,
-      "coefficient_of_variation": 0.0156
+      "coefficient_of_variation": 0.0154
     },
     "remote:staging": {
-      "n": 4,
-      "p50": 0.176,
+      "n": 5,
+      "p50": 0.178,
       "p95": 0.198,
       "min": 0.162,
       "max": 0.202,
-      "mean": 0.179,
-      "stddev": 0.015,
-      "coefficient_of_variation": 0.0811
+      "mean": 0.18,
+      "stddev": 0.013,
+      "coefficient_of_variation": 0.0726
     },
     "remote:story_assembly": {
-      "n": 4,
-      "p50": 0.413,
-      "p95": 0.419,
+      "n": 5,
+      "p50": 0.414,
+      "p95": 0.582,
       "min": 0.333,
-      "max": 0.42,
-      "mean": 0.395,
-      "stddev": 0.036,
-      "coefficient_of_variation": 0.0906
+      "max": 0.623,
+      "mean": 0.44,
+      "stddev": 0.097,
+      "coefficient_of_variation": 0.2197
     },
     "remote:storyboard": {
-      "n": 4,
+      "n": 5,
       "p50": 0.017,
       "p95": 0.018,
       "min": 0.014,
       "max": 0.018,
-      "mean": 0.017,
+      "mean": 0.016,
       "stddev": 0.001,
-      "coefficient_of_variation": 0.0909
+      "coefficient_of_variation": 0.0907
     },
     "remote:structure_analysis": {
-      "n": 4,
-      "p50": 1.176,
-      "p95": 1.21,
+      "n": 5,
+      "p50": 1.175,
+      "p95": 1.208,
       "min": 1.123,
       "max": 1.216,
-      "mean": 1.173,
-      "stddev": 0.033,
-      "coefficient_of_variation": 0.0282
+      "mean": 1.163,
+      "stddev": 0.035,
+      "coefficient_of_variation": 0.0305
     },
     "render": {
-      "n": 4,
-      "p50": 481.274,
-      "p95": 497.445,
+      "n": 5,
+      "p50": 495.605,
+      "p95": 543.579,
       "min": 460.743,
-      "max": 497.77,
-      "mean": 480.265,
-      "stddev": 16.585,
-      "coefficient_of_variation": 0.0345
+      "max": 555.031,
+      "mean": 495.219,
+      "stddev": 33.383,
+      "coefficient_of_variation": 0.0674
     },
     "seed_bank": {
-      "n": 4,
+      "n": 5,
       "p50": 2.008,
-      "p95": 2.009,
+      "p95": 3.632,
       "min": 2.005,
-      "max": 2.009,
-      "mean": 2.007,
-      "stddev": 0.001,
-      "coefficient_of_variation": 0.0007
+      "max": 4.038,
+      "mean": 2.413,
+      "stddev": 0.812,
+      "coefficient_of_variation": 0.3366
     },
     "staging": {
       "n": 1,
@@ -360,14 +360,14 @@
       "coefficient_of_variation": 0.0
     },
     "transfer": {
-      "n": 4,
+      "n": 5,
       "p50": 0.221,
-      "p95": 0.346,
-      "min": 0.207,
+      "p95": 0.339,
+      "min": 0.202,
       "max": 0.368,
-      "mean": 0.254,
-      "stddev": 0.066,
-      "coefficient_of_variation": 0.2593
+      "mean": 0.244,
+      "stddev": 0.063,
+      "coefficient_of_variation": 0.2566
     }
   },
   "sla": {
@@ -380,6 +380,7 @@
     "c4bfe7f4-874d-43b3-95ae-717356ce4fe8",
     "2097e057-6078-4556-b7aa-1825d2e92ee4",
     "b5785346-3ec5-4db1-965c-8400ee11e45b",
-    "6c494c42-d7f6-4e5a-92c4-1743578a903c"
+    "6c494c42-d7f6-4e5a-92c4-1743578a903c",
+    "6e8bb174-831b-4d05-b82d-83aa308a4deb"
   ]
 }

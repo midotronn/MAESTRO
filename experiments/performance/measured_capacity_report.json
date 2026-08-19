@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "accepted_runs": 4,
+  "accepted_runs": 5,
   "service_states": [
     "warm_assets_cold_models"
   ],
@@ -24,77 +24,81 @@
     }
   },
   "browser_total_seconds": {
-    "n": 4,
-    "p50": 809.651,
-    "p95": 828.87,
+    "n": 5,
+    "p50": 812.903,
+    "p95": 884.71,
     "min": 790.448,
-    "max": 831.688,
-    "mean": 810.36,
-    "stddev": 14.778
+    "max": 897.966,
+    "mean": 827.881,
+    "stddev": 37.452
   },
   "render": {
     "measured_frames_per_second": {
-      "n": 4,
-      "p50": 10.648,
-      "p95": 11.09,
-      "min": 10.286,
+      "n": 5,
+      "p50": 10.331,
+      "p95": 11.083,
+      "min": 9.225,
       "max": 11.112,
-      "mean": 10.674,
-      "stddev": 0.369
+      "mean": 10.384,
+      "stddev": 0.667
     },
-    "p05_frames_per_second": 10.293,
+    "p05_frames_per_second": 9.437,
     "required_frames_per_second": {
       "p50_budget": 234.783,
       "p95_budget": 168.75
     },
     "ideal_gpu_equivalents": {
       "p50_budget_at_p50_rate": 23,
-      "p95_budget_at_p05_rate": 17,
+      "p95_budget_at_p05_rate": 18,
       "minimum_satisfying_both": 23
+    },
+    "planning_gpu_equivalents": {
+      "at_90_percent_scaling_efficiency": 26,
+      "at_80_percent_scaling_efficiency": 29
     }
   },
   "roles": {
     "jukebox_preprocessing": {
       "measured_seconds": {
-        "n": 4,
-        "p50": 226.577,
-        "p95": 230.713,
+        "n": 5,
+        "p50": 226.944,
+        "p95": 234.48,
         "min": 207.615,
-        "max": 231.378,
-        "mean": 223.037,
-        "stddev": 9.121
+        "max": 235.255,
+        "mean": 225.48,
+        "stddev": 9.51
       },
       "required_speedup": {
-        "p50_budget": 28.32,
-        "p95_budget": 17.75
+        "p50_budget": 28.37,
+        "p95_budget": 18.04
       },
       "parallelism": "Independent audio slices can be distributed."
     },
     "lodge_generation": {
       "measured_seconds": {
-        "n": 4,
-        "p50": 67.902,
-        "p95": 69.417,
+        "n": 5,
+        "p50": 68.182,
+        "p95": 69.618,
         "min": 66.797,
         "max": 69.635,
-        "mean": 68.059,
-        "stddev": 1.035
+        "mean": 68.358,
+        "stddev": 1.101
       },
       "required_speedup": {
-        "p50_budget": 3.4,
-        "p95_budget": 2.31
+        "p50_budget": 3.41,
+        "p95_budget": 2.32
       },
       "parallelism": "A single fixed-seed generation remains serial; role isolation removes contention but target-GPU latency must be calibrated."
     },
     "edge_generation": {
       "measured_seconds": {
-        "n": 4,
-        "p50": 71.522,
-        "p95": 72.529,
+        "n": 5,
+        "p50": 71.659,
+        "p95": 72.667,
         "min": 68.289,
         "max": 72.682,
-        "mean": 71.004,
-        "stddev": 1.64
+        "mean": 71.324,
+        "stddev": 1.601
       },
       "required_speedup": {
         "p50_budget": 3.58,
@@ -151,6 +155,18 @@
       "preprocess_edge_seconds": 226.944,
       "generation_lodge_seconds": 66.797,
       "generation_edge_seconds": 71.659
+    },
+    {
+      "request_id": "6e8bb174-831b-4d05-b82d-83aa308a4deb",
+      "benchmark_sid": "trs_68213",
+      "service_state": "warm_assets_cold_models",
+      "browser_total_seconds": 897.966,
+      "frames": 5120,
+      "render_seconds": 555.031,
+      "render_frames_per_second": 9.225,
+      "preprocess_edge_seconds": 235.255,
+      "generation_lodge_seconds": 69.552,
+      "generation_edge_seconds": 72.608
     }
   ],
   "warnings": [

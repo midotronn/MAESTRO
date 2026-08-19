@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "status": "passed",
+  "poses": "/workspace/maestro-calibration/trs_64296/poses.npz",
+  "frame_start": 600,
+  "frame_end": 612,
+  "frames": 12,
+  "quality": {
+    "width": 1080,
+    "height": 1080,
+    "samples": 96,
+    "engine": "eevee",
+    "denoise": 1,
+    "frame_format": "tga",
+    "fps": 30,
+    "render_every_frame": true
+  },
+  "timings_seconds": {
+    "reference_render": 12.099,
+    "worker_render": 12.059,
+    "lossless_package": 0.658
+  },
+  "reference_source_frames_sha256": "683abd0520ee80d304997edaf211c4dfa93637657d24f3bad5ac8ca7500adf0a",
+  "worker_source_frames_sha256": "2fa2af08ab482302722672a78f67aa1bb421758075b4c52873aabfcca43a9ccb",
+  "worker_reported_source_frames_sha256": "2fa2af08ab482302722672a78f67aa1bb421758075b4c52873aabfcca43a9ccb",
+  "worker_source_integrity_match": true,
+  "reference_source_frame_bytes_match": false,
+  "reference_decoded_rgb_sha256": "4585a284d1a05fa20ea2e09d32cc0248b375185d06ae4a8501d99ca95d872d27",
+  "worker_decoded_rgb_sha256": "60d5b32fd3650736b963fe8251f1b2975ef495a8f2858586b9473fee8abb3bd8",
+  "ffv1_decoded_rgb_sha256": "60d5b32fd3650736b963fe8251f1b2975ef495a8f2858586b9473fee8abb3bd8",
+  "transport_decoded_rgb_match": true,
+  "reference_worker_pixel_difference": {
+    "channels": 41990400,
+    "changed_channels": 4345,
+    "changed_channel_fraction": 0.000103476,
+    "identical_channel_fraction": 0.999896524,
+    "mean_absolute_error_8bit": 0.000105095,
+    "max_absolute_error_8bit": 5,
+    "psnr_db": 87.753
+  },
+  "reference_worker_tolerance": {
+    "max_changed_channel_fraction": 0.0005,
+    "max_mean_absolute_error_8bit": 0.001,
+    "max_absolute_error_8bit": 8
+  },
+  "reference_worker_within_tolerance": true,
+  "render_repeatability_note": "Independent EEVEE GPU renders are not byte-deterministic. The transport comparison is exact; the independent render comparison is bounded by strict 8-bit pixel thresholds.",
+  "shard_sha256": "6597368a0c8506df818bd38eb60dbf0703e91d5a0bfa802fbdd80009e82ea2cd",
+  "shard_path": "/workspace/maestro-calibration/trs_64296/equivalence/distributed_ffv1.mkv"
+}

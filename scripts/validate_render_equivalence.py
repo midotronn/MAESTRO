@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Compare direct Blender frames with the distributed FFV1 render path."""
+"""Validate exact FFV1 transport and bounded EEVEE rerender variation."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import math
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -18,18 +21,23 @@ sys.path.insert(0, str(ROOT))
 from server import warm_render  # noqa: E402
 from server.distributed.handlers import (  # noqa: E402
     RenderFramesHandler,
+    _package_ffv1,
     _ffmpeg_executable,
     _frame_digest,
 )
 
+DEFAULT_MAX_CHANGED_CHANNEL_FRACTION = 0.0005
+DEFAULT_MAX_MEAN_ABSOLUTE_ERROR = 0.001
+DEFAULT_MAX_CHANNEL_ERROR = 8
 
-def decoded_rgb_hash(
+
+def _decoded_rgb_command(
     source: Path,
     *,
     frame_count: int,
     frame_start: int = 0,
     sequence_format: str | None = None,
-) -> str:
+) -> list[str]:
     command = [_ffmpeg_executable(), "-v", "error"]
     if sequence_format:
         command.extend(
@@ -55,8 +63,49 @@ def decoded_rgb_hash(
             "pipe:1",
         ]
     )
+    return command
+
+
+def _decoded_rgb_bytes(
+    source: Path,
+    *,
+    frame_count: int,
+    frame_start: int = 0,
+    sequence_format: str | None = None,
+) -> bytes:
+    process = subprocess.run(
+        _decoded_rgb_command(
+            source,
+            frame_count=frame_count,
+            frame_start=frame_start,
+            sequence_format=sequence_format,
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if process.returncode != 0:
+        stderr = process.stderr.decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"ffmpeg RGB decode failed ({process.returncode}): {stderr.strip()}"
+        )
+    return process.stdout
+
+
+def decoded_rgb_hash(
+    source: Path,
+    *,
+    frame_count: int,
+    frame_start: int = 0,
+    sequence_format: str | None = None,
+) -> str:
     process = subprocess.Popen(
-        command,
+        _decoded_rgb_command(
+            source,
+            frame_count=frame_count,
+            frame_start=frame_start,
+            sequence_format=sequence_format,
+        ),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -72,6 +121,81 @@ def decoded_rgb_hash(
             f"ffmpeg RGB decode failed ({return_code}): {stderr.strip()}"
         )
     return digest.hexdigest()
+
+
+def decoded_rgb_difference(
+    reference: Path,
+    candidate: Path,
+    *,
+    frame_count: int,
+    reference_frame_start: int = 0,
+    reference_sequence_format: str | None = None,
+    candidate_frame_start: int = 0,
+    candidate_sequence_format: str | None = None,
+) -> dict:
+    reference_bytes = _decoded_rgb_bytes(
+        reference,
+        frame_count=frame_count,
+        frame_start=reference_frame_start,
+        sequence_format=reference_sequence_format,
+    )
+    candidate_bytes = _decoded_rgb_bytes(
+        candidate,
+        frame_count=frame_count,
+        frame_start=candidate_frame_start,
+        sequence_format=candidate_sequence_format,
+    )
+    if len(reference_bytes) != len(candidate_bytes):
+        raise RuntimeError(
+            "decoded RGB byte counts differ: "
+            f"reference={len(reference_bytes)}, candidate={len(candidate_bytes)}"
+        )
+    reference_values = np.frombuffer(reference_bytes, dtype=np.uint8).astype(
+        np.int16
+    )
+    candidate_values = np.frombuffer(candidate_bytes, dtype=np.uint8).astype(
+        np.int16
+    )
+    differences = np.abs(reference_values - candidate_values)
+    changed_channels = int(np.count_nonzero(differences))
+    channels = int(differences.size)
+    mean_absolute_error = float(np.mean(differences))
+    mean_squared_error = float(
+        np.mean(np.square(differences, dtype=np.float64))
+    )
+    psnr = (
+        math.inf
+        if mean_squared_error == 0.0
+        else 10.0 * math.log10((255.0**2) / mean_squared_error)
+    )
+    return {
+        "channels": channels,
+        "changed_channels": changed_channels,
+        "changed_channel_fraction": round(changed_channels / channels, 9),
+        "identical_channel_fraction": round(
+            (channels - changed_channels) / channels,
+            9,
+        ),
+        "mean_absolute_error_8bit": round(mean_absolute_error, 9),
+        "max_absolute_error_8bit": int(np.max(differences)),
+        "psnr_db": None if math.isinf(psnr) else round(psnr, 3),
+    }
+
+
+def render_difference_within_tolerance(
+    difference: dict,
+    *,
+    max_changed_channel_fraction: float,
+    max_mean_absolute_error: float,
+    max_channel_error: int,
+) -> bool:
+    return (
+        float(difference["changed_channel_fraction"])
+        <= max_changed_channel_fraction
+        and float(difference["mean_absolute_error_8bit"])
+        <= max_mean_absolute_error
+        and int(difference["max_absolute_error_8bit"]) <= max_channel_error
+    )
 
 
 def validate_render_equivalence(
@@ -91,6 +215,11 @@ def validate_render_equivalence(
     frame_format: str = "tga",
     fps: int = 30,
     timeout: float = 900.0,
+    max_changed_channel_fraction: float = (
+        DEFAULT_MAX_CHANGED_CHANNEL_FRACTION
+    ),
+    max_mean_absolute_error: float = DEFAULT_MAX_MEAN_ABSOLUTE_ERROR,
+    max_channel_error: int = DEFAULT_MAX_CHANNEL_ERROR,
 ) -> dict:
     poses_path = poses_path.resolve()
     shared_root = shared_root.resolve()
@@ -106,12 +235,13 @@ def validate_render_equivalence(
         raise ValueError("frame_end must be greater than frame_start")
 
     reference_frames = output_dir / "reference_frames"
+    worker_frames = output_dir / "worker_source_frames"
     shard_path = output_dir / "distributed_ffv1.mkv"
-    worker_tmp = output_dir / "worker_tmp"
     shutil.rmtree(reference_frames, ignore_errors=True)
-    shutil.rmtree(worker_tmp, ignore_errors=True)
+    shutil.rmtree(worker_frames, ignore_errors=True)
     shard_path.unlink(missing_ok=True)
     reference_frames.mkdir(parents=True, exist_ok=True)
+    worker_frames.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if warm_render.ensure_pool(
@@ -152,14 +282,13 @@ def validate_render_equivalence(
         denoise=denoise,
         frame_format=frame_format,
         daemon=worker_daemon,
-        local_tmp=worker_tmp,
     )
     handler.preload()
     worker_started_at = time.time()
     worker_result = handler(
         {
             "poses": str(poses_path),
-            "shard_output": str(shard_path),
+            "frames_dir": str(worker_frames),
             "frame_start": frame_start,
             "frame_end": frame_end,
             "width": width,
@@ -172,11 +301,27 @@ def validate_render_equivalence(
             "timeout": timeout,
         }
     )
-    worker_seconds = time.time() - worker_started_at
+    worker_render_seconds = time.time() - worker_started_at
 
     frame_count = frame_end - frame_start
+    packaging_started_at = time.time()
+    _package_ffv1(
+        worker_frames,
+        shard_path,
+        frame_start=frame_start,
+        frame_end=frame_end,
+        frame_format=frame_format,
+        fps=fps,
+    )
+    packaging_seconds = time.time() - packaging_started_at
     reference_source_hash = _frame_digest(
         reference_frames,
+        frame_start,
+        frame_end,
+        frame_format,
+    )
+    worker_source_hash = _frame_digest(
+        worker_frames,
         frame_start,
         frame_end,
         frame_format,
@@ -187,17 +332,47 @@ def validate_render_equivalence(
         frame_start=frame_start,
         sequence_format=frame_format,
     )
+    worker_rgb_hash = decoded_rgb_hash(
+        worker_frames,
+        frame_count=frame_count,
+        frame_start=frame_start,
+        sequence_format=frame_format,
+    )
     shard_rgb_hash = decoded_rgb_hash(
         shard_path,
         frame_count=frame_count,
     )
-    source_match = (
-        reference_source_hash == worker_result["source_frames_sha256"]
+    reference_worker_difference = decoded_rgb_difference(
+        reference_frames,
+        worker_frames,
+        frame_count=frame_count,
+        reference_frame_start=frame_start,
+        reference_sequence_format=frame_format,
+        candidate_frame_start=frame_start,
+        candidate_sequence_format=frame_format,
     )
-    rgb_match = reference_rgb_hash == shard_rgb_hash
+    reference_within_tolerance = render_difference_within_tolerance(
+        reference_worker_difference,
+        max_changed_channel_fraction=max_changed_channel_fraction,
+        max_mean_absolute_error=max_mean_absolute_error,
+        max_channel_error=max_channel_error,
+    )
+    worker_source_integrity_match = (
+        worker_source_hash == worker_result["source_frames_sha256"]
+    )
+    transport_rgb_match = worker_rgb_hash == shard_rgb_hash
+    shard_digest = hashlib.sha256()
+    with shard_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            shard_digest.update(chunk)
+    passed = (
+        worker_source_integrity_match
+        and transport_rgb_match
+        and reference_within_tolerance
+    )
     report = {
-        "schema_version": 1,
-        "status": "passed" if source_match and rgb_match else "failed",
+        "schema_version": 2,
+        "status": "passed" if passed else "failed",
         "poses": str(poses_path),
         "frame_start": frame_start,
         "frame_end": frame_end,
@@ -214,17 +389,37 @@ def validate_render_equivalence(
         },
         "timings_seconds": {
             "reference_render": round(reference_seconds, 3),
-            "worker_render_and_package": round(worker_seconds, 3),
+            "worker_render": round(worker_render_seconds, 3),
+            "lossless_package": round(packaging_seconds, 3),
         },
         "reference_source_frames_sha256": reference_source_hash,
-        "worker_source_frames_sha256": worker_result[
+        "worker_source_frames_sha256": worker_source_hash,
+        "worker_reported_source_frames_sha256": worker_result[
             "source_frames_sha256"
         ],
+        "worker_source_integrity_match": worker_source_integrity_match,
+        "reference_source_frame_bytes_match": (
+            reference_source_hash == worker_source_hash
+        ),
         "reference_decoded_rgb_sha256": reference_rgb_hash,
+        "worker_decoded_rgb_sha256": worker_rgb_hash,
         "ffv1_decoded_rgb_sha256": shard_rgb_hash,
-        "source_frame_bytes_match": source_match,
-        "decoded_rgb_match": rgb_match,
-        "shard_sha256": worker_result["shard_sha256"],
+        "transport_decoded_rgb_match": transport_rgb_match,
+        "reference_worker_pixel_difference": reference_worker_difference,
+        "reference_worker_tolerance": {
+            "max_changed_channel_fraction": (
+                max_changed_channel_fraction
+            ),
+            "max_mean_absolute_error_8bit": max_mean_absolute_error,
+            "max_absolute_error_8bit": max_channel_error,
+        },
+        "reference_worker_within_tolerance": reference_within_tolerance,
+        "render_repeatability_note": (
+            "Independent EEVEE GPU renders are not byte-deterministic. "
+            "The transport comparison is exact; the independent render "
+            "comparison is bounded by strict 8-bit pixel thresholds."
+        ),
+        "shard_sha256": shard_digest.hexdigest(),
         "shard_path": str(shard_path),
     }
     (output_dir / "equivalence_report.json").write_text(
@@ -252,6 +447,21 @@ def main() -> int:
     parser.add_argument("--reference-daemon", type=int, default=0)
     parser.add_argument("--worker-daemon", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=900)
+    parser.add_argument(
+        "--max-changed-channel-fraction",
+        type=float,
+        default=DEFAULT_MAX_CHANGED_CHANNEL_FRACTION,
+    )
+    parser.add_argument(
+        "--max-mean-absolute-error",
+        type=float,
+        default=DEFAULT_MAX_MEAN_ABSOLUTE_ERROR,
+    )
+    parser.add_argument(
+        "--max-channel-error",
+        type=int,
+        default=DEFAULT_MAX_CHANNEL_ERROR,
+    )
     args = parser.parse_args()
     report = validate_render_equivalence(
         args.poses,
@@ -262,6 +472,9 @@ def main() -> int:
         reference_daemon=args.reference_daemon,
         worker_daemon=args.worker_daemon,
         timeout=args.timeout,
+        max_changed_channel_fraction=args.max_changed_channel_fraction,
+        max_mean_absolute_error=args.max_mean_absolute_error,
+        max_channel_error=args.max_channel_error,
     )
     print(json.dumps(report, indent=2))
     return 0

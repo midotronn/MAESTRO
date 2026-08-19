@@ -9,33 +9,43 @@
   camera, color management, H.264, and audio.
 - Warm workers. Cold image, model, and scene startup is reported separately.
 
-## What the current successful baseline implies
+## What the controlled baseline implies
 
-The first successful browser-to-final trace used one RTX PRO 4500 Blackwell with six resident
-Blender daemons:
+Five accepted browser-to-final traces used the unchanged RTX PRO 4500 Blackwell Pod with six
+resident Blender daemons. One additional attempt completed server-side but is excluded because its
+browser runner terminated before persisting the final browser timing record. The completion rate is
+therefore 5/6 (83.33%), and the excluded attempt remains documented in
+`experiments/performance/baseline_failures.json`.
 
-- 5,120 frames;
-- browser upload: 10.168 seconds;
-- EDGE/Jukebox preprocessing: 226.210 seconds;
-- combined LODGE/EDGE generation: 77.744 seconds;
-- full-quality render and encode: 460.743 seconds;
-- browser upload to downloadable video: 790.448 seconds.
+All five accepted runs used the same `warm_assets_cold_models` service state and rendered 5,120
+full-quality frames. They establish this controlled baseline:
 
-This is one completed baseline, not yet an SLA distribution. The frozen trace is
-`experiments/performance/runs/trs_61887.json`; four additional unchanged-pod runs are required
-before reporting baseline p50/p95.
+| Measurement | p50 | p95 |
+|---|---:|---:|
+| Browser upload | 7.926s | 9.811s |
+| EDGE/Jukebox preprocessing | 227.041s | 234.471s |
+| Concurrent LODGE/EDGE generation | 80.325s | 82.383s |
+| Full-quality render and encode | 495.605s | 543.579s |
+| Browser upload to downloadable video | **812.903s** | **884.710s** |
 
-At 5,120 / 460.743, the measured aggregate render rate is approximately
-**11.11 frames/second**.
-The 23-second render budget for 5,400 frames requires approximately **234.78 frames/second**. Under
-unrealistic perfect linear scaling, this is **22 measured GPU equivalents for rendering alone**.
-A planning fleet of 24 equivalent render workers provides only limited coordination and p95
-headroom and remains provisional until target-GPU calibration.
+The observed end-to-end range is 790.448-897.966 seconds. These are controlled historical
+measurements, not warm-model SLA measurements; target-GPU calibration must separately measure the
+fully resident service state.
 
-Preprocessing plus generation currently consumes approximately 303 seconds. Jukebox's independent
-five-second slices dominate preprocessing, while LODGE and EDGE each take about 68 seconds while
-contending on the same GPU. These stages require resident, role-isolated workers rather than a
-single aggregate throughput multiplier.
+The median aggregate render rate is **10.331 frames/second**, and its low-tail p05 rate is
+**9.437 frames/second**. The 23-second render budget for 5,400 frames requires
+**234.783 frames/second**. Before coordination and encoding overhead, the capacity model therefore
+requires:
+
+- 23 measured RTX PRO 4500-equivalent render workers at ideal scaling;
+- 26 equivalents at 90% scaling efficiency;
+- 29 equivalents at 80% scaling efficiency.
+
+Jukebox preprocessing requires a 28.37x p50 speedup and an 18.04x p95 speedup to fit its 8/13-second
+budget. A single fixed-seed LODGE request requires 3.41x/2.32x acceleration against the
+20/30-second concurrent-generation budget, while EDGE requires 3.58x/2.42x. LODGE and EDGE role
+isolation removes contention but cannot parallelize one fixed-seed generation, so target-GPU
+latency is a hard feasibility measurement rather than a worker-count estimate.
 
 Therefore, a generic four-GPU proposal is not credible for the one-minute target unless the target
 GPU and revised pipeline are several times faster than the measured RTX PRO 4500 path.
@@ -76,8 +86,16 @@ The protocol requires a shared mounted root and is configured with
 idempotent result reuse, stale-worker rejection, path confinement, exact render settings, and
 complete non-overlapping frame ranges. A two-shard synthetic RGB validation decoded all frames in
 order with an exact aggregate pixel hash match; its immutable report is
-`experiments/performance/lossless_transport_validation.json`. An exact-scene source-frame hash
-comparison remains required on the calibration worker before paid fleet scaling. Paid target-GPU
+`experiments/performance/lossless_transport_validation.json`.
+
+The exact-scene validation over frames 600-611 also passed at the full quality contract. The
+worker's recorded source-frame hash matched the retained worker files, and the FFV1 decoded RGB hash
+matched those worker source pixels exactly. Separate EEVEE GPU renders are not byte-deterministic:
+the direct reference and worker render differed in 4,345 of 41,990,400 color channels (0.0103%),
+with mean absolute error 0.000105 on the 0-255 scale, maximum error 5/255, and PSNR 87.753 dB. This
+is below the frozen strict thresholds of 0.05% changed channels, 0.001 mean error on the 0-255
+scale, and 8/255 maximum error.
+The immutable report is `experiments/performance/exact_render_equivalence.json`. Paid target-GPU
 calibration is still gated on approval.
 
 ### Generation
@@ -109,7 +127,7 @@ lowest-risk isolation method until a multi-GPU pod proves device binding.
 
 Primary sources:
 
-- GPU and pricing page: <https://www.runpod.io/gpu-models>
+- GPU and pricing page: <https://www.runpod.io/pricing>
 - Pod API: <https://docs.runpod.io/api-reference/pods/POST/pods>
 - Pod pricing: <https://docs.runpod.io/pods/pricing>
 - Network volumes: <https://docs.runpod.io/storage/network-volumes>
@@ -121,21 +139,23 @@ Time-sensitive observations from the August 2026 screening:
 
 - Secure Cloud is preferable for a p95 latency target and supports network volumes.
 - Community Cloud has weaker availability guarantees and is not suitable for the final SLA run.
-- RunPod bills GPU time by the second.
+- RunPod bills Pod compute by the second and states that ingress and egress have no separate fee.
 - Network volumes provide a shared rendezvous, but workers should write separate shard directories.
+- Standard network storage is $0.07/GB/month below 1 TB.
 - Async job submission and polling should remain in place rather than holding one request open.
 - Multi-GPU pod availability is machine-dependent even though the API accepts `gpuCount`.
 
-Public Community Cloud starting rates observed during screening included approximately:
+Official Secure Cloud on-demand Pod rates shown on the RunPod pricing page during the August 2026
+screening were:
 
-- RTX 4090: $0.34/GPU-hour;
-- RTX 5090: $0.69/GPU-hour;
-- L40S: $0.79/GPU-hour;
-- RTX A6000: $0.33/GPU-hour;
-- A40: $0.35/GPU-hour;
-- H100 PCIe: $1.99/GPU-hour.
+- RTX 4090: $0.74/GPU-hour;
+- RTX 5090: $0.99/GPU-hour;
+- L40S: $0.99/GPU-hour;
+- RTX 6000 Ada: $0.84/GPU-hour;
+- H100 PCIe: $2.89/GPU-hour.
 
-These are not Secure Cloud quotes and must be rechecked immediately before approval.
+Inventory still changes by region and must be confirmed in the deployment console immediately
+before creation.
 
 ## Recommended paid experiment sequence
 
@@ -183,6 +203,24 @@ render_workers = ceil(5400 / (measured_frames_per_second_per_gpu * 23))
 
 Add headroom for p95 only after measuring two-worker and four-worker scaling efficiency.
 
+### Proposed first paid calibration
+
+Pending explicit approval, use **two Secure Cloud RTX 5090 workers** for no more than two hours:
+
+- official screened rate: $0.99/GPU-hour;
+- maximum compute charge: 2 GPUs x 2 hours x $0.99 = $3.96;
+- total authorization cap: $5.00, including incidental storage;
+- use the existing persistent assets where region compatibility permits;
+- run one-worker exact render throughput, two-worker scaling, LODGE/EDGE resident inference, and
+  distributed Jukebox slice timing;
+- terminate both Pods immediately after reports and artifacts are copied.
+
+Stop without scaling further if worker source integrity fails, FFV1 decoded pixels differ from
+their worker source, independent-render drift exceeds the frozen threshold, two-worker render
+efficiency is below 80%, a fixed first-draw LODGE or EDGE request remains above its 30-second p95
+budget, or the measured capacity/cost model cannot plausibly satisfy the 60/90-second service
+target.
+
 ## Cost formulas
 
 ```text
@@ -196,10 +234,12 @@ per_song_storage_and_transfer =
   measured shared-storage and publication cost
 ```
 
-For context only, 21 RTX 4090 equivalents at the screened Community rate would be $7.14/hour,
-approximately $0.12 for one fully utilized 60-second job, and $171.36/day if kept warm continuously.
-Secure Cloud would cost more. This is not a recommendation because RTX 4090 throughput relative to
-the measured RTX PRO 4500 is unknown.
+For context only, if a Secure Cloud RTX 5090 delivered merely the measured RTX PRO 4500 render rate,
+23 ideal render workers would cost $22.77/hour, approximately $0.38 for one fully utilized
+60-second render interval, or $546.48/day if held warm continuously. The 90%-efficiency planning
+count of 26 would cost $25.74/hour or $617.76/day. These figures exclude generation workers,
+storage, coordination, and idle capacity and are not a fleet recommendation because RTX 5090
+throughput has not yet been measured on this exact EEVEE workload.
 
 ## Approval gate
 
