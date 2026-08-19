@@ -159,6 +159,12 @@ screening were:
 Inventory still changes by region and must be confirmed in the deployment console immediately
 before creation.
 
+The live deployment console currently shows RTX PRO 4500 at $0.72/GPU-hour with high availability,
+versus RTX 5090 at $0.99/GPU-hour with low availability. The first controlled scaling experiment
+therefore uses RTX PRO 4500: matching the existing baseline removes GPU-model uplift as a confound
+and directly measures isolation and two-GPU scaling. RTX 5090 remains a second-stage upper-bound
+test only if serial generation latency still misses its budget.
+
 ## Recommended paid experiment sequence
 
 Do not provision the full fleet first.
@@ -207,11 +213,12 @@ Add headroom for p95 only after measuring two-worker and four-worker scaling eff
 
 ### Proposed first paid calibration
 
-Pending explicit approval, use **one Secure Cloud Pod with two RTX 5090 GPUs** for no more than two
-hours. The two workers share that Pod's container filesystem, avoiding a network-volume dependency:
+Pending explicit approval, use **one Secure Cloud Pod with two RTX PRO 4500 GPUs** for no more than
+two hours. The two workers share that Pod's container filesystem, avoiding a network-volume
+dependency:
 
-- official screened rate: $0.99/GPU-hour;
-- maximum compute charge: 2 GPUs x 2 hours x $0.99 = $3.96;
+- live console rate: $0.72/GPU-hour;
+- maximum compute charge: 2 GPUs x 2 hours x $0.72 = $2.88;
 - total authorization cap: $5.00, including incidental storage;
 - use the same base template and container-disk sizing as the current benchmark Pod;
 - copy only the required MAESTRO repositories, checkpoints, Blender runtime, scene, and calibration
@@ -241,12 +248,11 @@ per_song_storage_and_transfer =
   measured shared-storage and publication cost
 ```
 
-For context only, if a Secure Cloud RTX 5090 delivered merely the measured RTX PRO 4500 render rate,
-23 ideal render workers would cost $22.77/hour, approximately $0.38 for one fully utilized
-60-second render interval, or $546.48/day if held warm continuously. The 90%-efficiency planning
-count of 26 would cost $25.74/hour or $617.76/day. These figures exclude generation workers,
-storage, coordination, and idle capacity and are not a fleet recommendation because RTX 5090
-throughput has not yet been measured on this exact EEVEE workload.
+For context only, 23 Secure Cloud RTX PRO 4500 render workers at the live $0.72 rate would cost
+$16.56/hour, approximately $0.28 for one fully utilized 60-second render interval, or $397.44/day
+if held warm continuously. The 90%-efficiency planning count of 26 would cost $18.72/hour or
+$449.28/day. These figures exclude generation workers, storage, coordination, and idle capacity and
+are not a fleet recommendation.
 
 ## Approval gate
 
