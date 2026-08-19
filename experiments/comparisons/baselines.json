@@ -28,7 +28,7 @@
       "representation": "SMPL-24 positions and rotation output",
       "conversion": [
         "downsample 60 FPS to 30 FPS with a frozen policy",
-        "convert rotation matrices to axis-angle",
+        "convert rotation matrices to the common 6D rotation representation",
         "map the body-joint subset into the MAESTRO representation",
         "validate root scale, contacts, and Y-Bot retargeting"
       ],

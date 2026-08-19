@@ -8,7 +8,7 @@ official repository does not provide runnable inference code or pretrained weigh
 
 | Method | Technical pilot | Publication gate | Main conversion work |
 |---|---|---|---|
-| Bailando++ | Yes | Non-commercial NTU S-Lab license is compatible with research evaluation | 60 to 30 FPS, rotation-matrix conversion, SMPL-24 body mapping |
+| Bailando++ | Yes | Non-commercial NTU S-Lab license is compatible with research evaluation | 60 to 30 FPS, rotation-matrix to 6D conversion, SMPL-24 body mapping |
 | FineDance | Yes | Confirm the unstated repository license before publishing generated artifacts | SMPL-H body subset, 6D rotation conversion, root/contact validation |
 | Beat-It | No | No code, weights, or license are available | Not applicable |
 
@@ -20,6 +20,8 @@ official repository does not provide runnable inference code or pretrained weigh
 - Inference code and pretrained weights are linked by the official repository.
 - Native motion is based on the AIST++ 60 FPS convention. MAESTRO must freeze and test one 60 to
   30 FPS conversion policy before comparison.
+- Bailando++ rotation matrices are converted directly to MAESTRO's 22-joint 6D rotation layout;
+  they are not unnecessarily round-tripped through axis-angle.
 - The repository depends on an older Python/PyTorch stack, `essentia`, `chumpy`, and a separately
   licensed SMPL model.
 - The official license is the NTU S-Lab License 1.0 for non-commercial research use.
