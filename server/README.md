@@ -123,3 +123,15 @@ python scripts/benchmark_render_scaling.py \
 
 The report records per-worker duration, aggregate and median frame throughput, source/shard hashes,
 and the idealized worker count for the frozen 5,400-frame/23-second render budget.
+
+Before scaling a target GPU, compare a small exact-scene range with the direct warm renderer:
+
+```bash
+python scripts/validate_render_equivalence.py \
+  --poses /workspace/calibration/poses.npz \
+  --output-dir /workspace/calibration/equivalence \
+  --shared-root /workspace
+```
+
+The check requires both the direct and worker renders to have identical source-frame bytes and
+requires the decoded FFV1 shard to have the same aggregate RGB hash.
