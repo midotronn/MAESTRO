@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "passed": true,
+  "checks": {
+    "beat_alignment": {
+      "pass": true,
+      "aligned": 1.0,
+      "shifted": 0.0038659201394728076
+    },
+    "beat_coverage": {
+      "pass": true,
+      "full": 1.0,
+      "partial": 0.25
+    },
+    "energy_arc": {
+      "pass": true,
+      "matching": 0.9637379295927132,
+      "reversed": -0.9637379300176167
+    },
+    "section_structure": {
+      "pass": true,
+      "identical_recurrence": 1.0,
+      "altered_recurrence": 0.2500000028124999,
+      "identical_correlation": 0.9999999403953552,
+      "altered_correlation": 0.9574270844459534,
+      "sectional_contrast": 2.0
+    },
+    "transition_jerk": {
+      "pass": true,
+      "smooth_peak": 1.1920928955078125e-07,
+      "jump_peak": 8.0,
+      "smooth_area": 1.8328428268432617e-06,
+      "jump_area": 8.00000111758709
+    }
+  }
+}
