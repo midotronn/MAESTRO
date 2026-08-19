@@ -99,6 +99,7 @@ def model_trace_capacity(
     required_p95_rate = target_frames / render_p95_budget
     p50_workers = math.ceil(required_p50_rate / p50_rate)
     p95_workers = math.ceil(required_p95_rate / p05_rate)
+    ideal_workers = max(p50_workers, p95_workers)
 
     role_values = {}
     for key in (
@@ -186,7 +187,15 @@ def model_trace_capacity(
             "ideal_gpu_equivalents": {
                 "p50_budget_at_p50_rate": p50_workers,
                 "p95_budget_at_p05_rate": p95_workers,
-                "minimum_satisfying_both": max(p50_workers, p95_workers),
+                "minimum_satisfying_both": ideal_workers,
+            },
+            "planning_gpu_equivalents": {
+                "at_90_percent_scaling_efficiency": math.ceil(
+                    ideal_workers / 0.90
+                ),
+                "at_80_percent_scaling_efficiency": math.ceil(
+                    ideal_workers / 0.80
+                ),
             },
         },
         "roles": role_requirements,

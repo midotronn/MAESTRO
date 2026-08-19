@@ -40,6 +40,18 @@ def test_trace_capacity_uses_low_tail_render_rate_for_p95():
         == 21
     )
     assert (
+        report["render"]["planning_gpu_equivalents"][
+            "at_90_percent_scaling_efficiency"
+        ]
+        == 24
+    )
+    assert (
+        report["render"]["planning_gpu_equivalents"][
+            "at_80_percent_scaling_efficiency"
+        ]
+        == 27
+    )
+    assert (
         report["roles"]["jukebox_preprocessing"]["required_speedup"][
             "p50_budget"
         ]
