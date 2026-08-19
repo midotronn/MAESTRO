@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "accepted_runs": 2,
+  "accepted_runs": 3,
   "service_states": [
     "warm_assets_cold_models"
   ],
@@ -24,25 +24,25 @@
     }
   },
   "browser_total_seconds": {
-    "n": 2,
-    "p50": 801.676,
-    "p95": 811.78,
+    "n": 3,
+    "p50": 806.399,
+    "p95": 812.253,
     "min": 790.448,
     "max": 812.903,
-    "mean": 801.676,
-    "stddev": 11.228
+    "mean": 803.25,
+    "stddev": 9.434
   },
   "render": {
     "measured_frames_per_second": {
-      "n": 2,
-      "p50": 10.699,
-      "p95": 11.071,
+      "n": 3,
+      "p50": 10.965,
+      "p95": 11.098,
       "min": 10.286,
       "max": 11.112,
-      "mean": 10.699,
-      "stddev": 0.413
+      "mean": 10.788,
+      "stddev": 0.36
     },
-    "p05_frames_per_second": 10.327,
+    "p05_frames_per_second": 10.354,
     "required_frames_per_second": {
       "p50_budget": 234.783,
       "p95_budget": 168.75
@@ -56,48 +56,48 @@
   "roles": {
     "jukebox_preprocessing": {
       "measured_seconds": {
-        "n": 2,
-        "p50": 216.913,
-        "p95": 225.28,
+        "n": 3,
+        "p50": 226.21,
+        "p95": 230.861,
         "min": 207.615,
-        "max": 226.21,
-        "mean": 216.913,
-        "stddev": 9.297
+        "max": 231.378,
+        "mean": 221.734,
+        "stddev": 10.204
       },
       "required_speedup": {
-        "p50_budget": 27.11,
-        "p95_budget": 17.33
+        "p50_budget": 28.28,
+        "p95_budget": 17.76
       },
       "parallelism": "Independent audio slices can be distributed."
     },
     "lodge_generation": {
       "measured_seconds": {
-        "n": 2,
-        "p50": 68.629,
-        "p95": 69.534,
+        "n": 3,
+        "p50": 68.182,
+        "p95": 69.49,
         "min": 67.622,
         "max": 69.635,
-        "mean": 68.629,
-        "stddev": 1.007
+        "mean": 68.48,
+        "stddev": 0.848
       },
       "required_speedup": {
-        "p50_budget": 3.43,
+        "p50_budget": 3.41,
         "p95_budget": 2.32
       },
       "parallelism": "A single fixed-seed generation remains serial; role isolation removes contention but target-GPU latency must be calibrated."
     },
     "edge_generation": {
       "measured_seconds": {
-        "n": 2,
-        "p50": 70.486,
-        "p95": 72.462,
+        "n": 3,
+        "p50": 71.384,
+        "p95": 72.552,
         "min": 68.289,
         "max": 72.682,
-        "mean": 70.486,
-        "stddev": 2.197
+        "mean": 70.785,
+        "stddev": 1.843
       },
       "required_speedup": {
-        "p50_budget": 3.52,
+        "p50_budget": 3.57,
         "p95_budget": 2.42
       },
       "parallelism": "A single fixed-seed generation remains serial; role isolation removes contention but target-GPU latency must be calibrated."
@@ -127,6 +127,18 @@
       "preprocess_edge_seconds": 207.615,
       "generation_lodge_seconds": 69.635,
       "generation_edge_seconds": 72.682
+    },
+    {
+      "request_id": "b5785346-3ec5-4db1-965c-8400ee11e45b",
+      "benchmark_sid": "trs_64296",
+      "service_state": "warm_assets_cold_models",
+      "browser_total_seconds": 806.399,
+      "frames": 5120,
+      "render_seconds": 466.944,
+      "render_frames_per_second": 10.965,
+      "preprocess_edge_seconds": 231.378,
+      "generation_lodge_seconds": 68.182,
+      "generation_edge_seconds": 71.384
     }
   ],
   "warnings": [
