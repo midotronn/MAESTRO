@@ -93,5 +93,5 @@ def test_section_repetition_correlation_high_for_recurring_material():
     feats = np.array([[1, 0, 0], [0, 1, 0], [1, 0, 0]], dtype=float)
     ms = S._build_sections(bounds, ec, feats, 120.0, 90, used_fallback=False)
     src = SM.section_repetition_correlation(motion, ms.sections)
-    assert src > 0.99  # sections 0 and 2 have identical mean pose -> cosine ~1
+    assert src > 0.99
     assert "section_repetition_correlation" in SM.compute_story_metrics(motion, ms)

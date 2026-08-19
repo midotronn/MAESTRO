@@ -19,18 +19,56 @@
     },
     "section_structure": {
       "pass": true,
-      "identical_recurrence": 1.0,
-      "altered_recurrence": 0.2500000028124999,
-      "identical_correlation": 0.9999999403953552,
-      "altered_correlation": 0.9574270844459534,
-      "sectional_contrast": 2.0
+      "controls": {
+        "identical": {
+          "raw_repetition": 0.9999999999999998,
+          "invariant_recurrence": 0.9999999999999998
+        },
+        "unrelated": {
+          "raw_repetition": 0.36170555691544964,
+          "invariant_recurrence": 0.4241650982389209
+        },
+        "shifted": {
+          "raw_repetition": 0.5697536144976799,
+          "invariant_recurrence": 0.9975553278701367
+        },
+        "mirrored": {
+          "raw_repetition": -0.0496776451896503,
+          "invariant_recurrence": 0.9999999999999983
+        },
+        "retrograded": {
+          "raw_repetition": -0.5690086819233846,
+          "invariant_recurrence": 0.9999999999999998
+        },
+        "frozen": {
+          "raw_repetition": 0.0,
+          "invariant_recurrence": 0.0
+        },
+        "jittered": {
+          "raw_repetition": 0.4863808065420665,
+          "invariant_recurrence": 0.6334441973486538
+        }
+      },
+      "sectional_contrast": 0.03733844310045242
     },
     "transition_jerk": {
       "pass": true,
       "smooth_peak": 1.1920928955078125e-07,
       "jump_peak": 8.0,
       "smooth_area": 1.8328428268432617e-06,
-      "jump_area": 8.00000111758709
+      "jump_area": 8.00000111758709,
+      "jitter_peak": 3.492406129837036,
+      "jitter_area": 25.74928867816925
+    },
+    "boundary_alignment": {
+      "pass": true,
+      "aligned": 1.0,
+      "misaligned": 0.0
+    },
+    "foot_contact": {
+      "pass": true,
+      "planted": 1.0,
+      "sliding": 0.01666666666666672
     }
   }
 }

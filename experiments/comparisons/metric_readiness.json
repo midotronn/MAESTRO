@@ -12,6 +12,12 @@
       "validation": "complete and incomplete synthetic music-beat coverage"
     },
     {
+      "id": "foot_contact_consistency_proxy",
+      "implementation": "agentlodge.dance.beat_metrics.foot_contact_consistency",
+      "validation": "stationary planted contact and deliberate root sliding",
+      "limitation": "Diagnostic proxy only; it cannot replace the blocked FK-based physical foot contact metric."
+    },
+    {
       "id": "energy_arc_correlation",
       "implementation": "agentlodge.dance.story_metrics.arc_adherence",
       "validation": "matching and reversed synthetic energy arcs"
@@ -24,14 +30,15 @@
     {
       "id": "motif_recurrence",
       "implementation": "agentlodge.dance.story_metrics.motif_recurrence",
-      "validation": "identical and altered repeated sections",
-      "limitation": "Mean-pose distance is not mirror invariant."
+      "validation": "identical, unrelated, phase-shifted, mirrored, retrograded, frozen, and jittered repeated sections",
+      "definition": "Dynamic section similarity after bounded phase-shift, mirror, and retrograde invariance."
     },
     {
       "id": "section_repetition_correlation",
       "implementation": "agentlodge.dance.story_metrics.section_repetition_correlation",
-      "validation": "identical and altered repeated sections",
-      "limitation": "Mean-pose cosine is not mirror invariant and cannot by itself establish perceptual coherence."
+      "validation": "identical, unrelated, phase-shifted, mirrored, retrograded, frozen, and jittered repeated sections",
+      "definition": "Strict dynamic section similarity before choreographic transformation invariance.",
+      "limitation": "Use with motif_recurrence; raw repetition intentionally penalizes transformed variations."
     },
     {
       "id": "transition_peak_jerk",

@@ -55,6 +55,62 @@ def _section_features(motion: np.ndarray, sections: list) -> list[np.ndarray]:
             for s in sections if s.end_frame > s.start_frame]
 
 
+def _resampled_kinematics(segment: np.ndarray, frames: int = 64) -> np.ndarray:
+    """Resample a section and remove its initial pose so static identity channels cannot dominate."""
+    source = np.asarray(segment[:, :_KIN], dtype=np.float64)
+    if source.shape[0] < 2:
+        return np.zeros((frames, _KIN), dtype=np.float64)
+    old_time = np.linspace(0.0, 1.0, source.shape[0])
+    new_time = np.linspace(0.0, 1.0, frames)
+    sampled = np.stack(
+        [np.interp(new_time, old_time, source[:, channel]) for channel in range(_KIN)],
+        axis=1,
+    )
+    return sampled - sampled[:1]
+
+
+def _cosine_motion_similarity(first: np.ndarray, second: np.ndarray) -> float:
+    a = _resampled_kinematics(first).reshape(-1)
+    b = _resampled_kinematics(second).reshape(-1)
+    denominator = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denominator < _EPS:
+        return 0.0
+    return float(np.clip(np.dot(a, b) / denominator, -1.0, 1.0))
+
+
+def _motif_similarity(first: np.ndarray, second: np.ndarray) -> float:
+    """Best dynamic similarity under bounded phase shift, mirror, and retrograde transforms."""
+    from agentlodge.dance.transition import mirror, retrograde
+
+    candidates = [
+        second,
+        retrograde(second),
+        mirror(second),
+        retrograde(mirror(second)),
+    ]
+    reference = _resampled_kinematics(first)
+    reference_flat = reference.reshape(-1)
+    reference_norm = float(np.linalg.norm(reference_flat))
+    if reference_norm < _EPS:
+        return 0.0
+    best = -1.0
+    max_shift = max(1, reference.shape[0] // 8)
+    for candidate in candidates:
+        sampled = _resampled_kinematics(candidate)
+        for shift in range(-max_shift, max_shift + 1):
+            shifted = np.roll(sampled, shift, axis=0)
+            shifted = shifted - shifted[:1]
+            flat = shifted.reshape(-1)
+            denominator = reference_norm * float(np.linalg.norm(flat))
+            if denominator < _EPS:
+                continue
+            best = max(
+                best,
+                float(np.clip(np.dot(reference_flat, flat) / denominator, -1.0, 1.0)),
+            )
+    return max(0.0, best)
+
+
 def sectional_contrast(motion: np.ndarray, sections: list) -> float:
     """Mean pose distance between sections with DIFFERENT repetition labels (higher = distinct)."""
     feats = _section_features(motion, sections)
@@ -66,24 +122,25 @@ def sectional_contrast(motion: np.ndarray, sections: list) -> float:
 
 
 def motif_recurrence(motion: np.ndarray, sections: list) -> float:
-    """Mean pose SIMILARITY within same-label sections (higher = recurring motifs).
+    """Dynamic same-label similarity invariant to mirror, retrograde, and small phase shifts.
 
-    Similarity = -distance normalized by the overall inter-section distance scale, so higher is
-    better and it is comparable to sectional_contrast. Returns 0.0 when no section repeats.
+    Sections are resampled, expressed relative to their initial pose, and compared under the
+    choreographic transformations MAESTRO intentionally uses for motif variation. A fully frozen
+    section has no dynamic signature and scores 0 rather than receiving false credit for repetition.
     """
-    feats = _section_features(motion, sections)
+    segments = [
+        motion[s.start_frame:s.end_frame]
+        for s in sections
+        if s.end_frame > s.start_frame
+    ]
     labels = [s.label for s in sections if s.end_frame > s.start_frame]
-    same, alld = [], []
-    for i in range(len(feats)):
-        for j in range(i + 1, len(feats)):
-            d = float(np.linalg.norm(feats[i] - feats[j]))
-            alld.append(d)
-            if labels[i] == labels[j]:
-                same.append(d)
-    if not same or not alld:
-        return 0.0
-    scale = float(np.mean(alld)) + _EPS
-    return float(1.0 - np.mean(same) / scale)  # 1 == identical recurring motifs
+    similarities = [
+        _motif_similarity(segments[i], segments[j])
+        for i in range(len(segments))
+        for j in range(i + 1, len(segments))
+        if labels[i] == labels[j]
+    ]
+    return float(np.mean(similarities)) if similarities else 0.0
 
 
 def boundary_alignment(motion: np.ndarray, sections: list, tol_seconds: float = 0.5) -> float:
@@ -131,20 +188,22 @@ def seam_jerk(motion: np.ndarray, sections: list, window: int = 15) -> tuple[flo
 
 
 def section_repetition_correlation(motion: np.ndarray, sections: list) -> float:
-    """Mean COSINE similarity of mean-pose features between SAME-label sections (ABA fidelity).
+    """Raw dynamic similarity between same-label sections before transformation invariance.
 
-    Directly measures whether the dance mirrors the music's repetition structure: when the music
-    repeats a section, does the motion recur? 1.0 == identical recurring material, 0.0 == none /
-    no repeats. Complements ``motif_recurrence`` (distance-based) with a scale-free cosine.
+    This preserves a strict view of literal repetition, while :func:`motif_recurrence` separately
+    recognizes mirrored, retrograded, and phase-shifted choreographic variations.
     """
-    feats = _section_features(motion, sections)
+    segments = [
+        motion[s.start_frame:s.end_frame]
+        for s in sections
+        if s.end_frame > s.start_frame
+    ]
     labels = [s.label for s in sections if s.end_frame > s.start_frame]
     sims = []
-    for i in range(len(feats)):
-        for j in range(i + 1, len(feats)):
+    for i in range(len(segments)):
+        for j in range(i + 1, len(segments)):
             if labels[i] == labels[j]:
-                a, b = feats[i], feats[j]
-                sims.append(float(np.dot(a, b) / ((np.linalg.norm(a) * np.linalg.norm(b)) + _EPS)))
+                sims.append(_cosine_motion_similarity(segments[i], segments[j]))
     return float(np.mean(sims)) if sims else 0.0
 
 

@@ -8,3 +8,13 @@ def test_comparison_metric_controls_pass():
 
     assert report["passed"], report
     assert all(check["pass"] for check in report["checks"].values())
+    controls = report["checks"]["section_structure"]["controls"]
+    assert set(controls) == {
+        "identical",
+        "unrelated",
+        "shifted",
+        "mirrored",
+        "retrograded",
+        "frozen",
+        "jittered",
+    }
