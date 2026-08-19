@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "runs": [
+    {
+      "workers": 1,
+      "sequence": 1,
+      "wall_seconds": 102.726,
+      "worker_seconds": [
+        102.309
+      ],
+      "outputs": 69
+    },
+    {
+      "workers": 2,
+      "sequence": 2,
+      "wall_seconds": 53.052,
+      "worker_seconds": [
+        52.693,
+        47.491
+      ],
+      "outputs": 69
+    },
+    {
+      "workers": 2,
+      "sequence": 3,
+      "wall_seconds": 50.929,
+      "worker_seconds": [
+        50.331,
+        45.986
+      ],
+      "outputs": 69
+    },
+    {
+      "workers": 2,
+      "sequence": 4,
+      "wall_seconds": 51.297,
+      "worker_seconds": [
+        50.891,
+        46.65
+      ],
+      "outputs": 69
+    }
+  ]
+}

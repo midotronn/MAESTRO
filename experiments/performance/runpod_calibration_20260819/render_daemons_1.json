@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "run_id": "render-scale-58a29cbbe887",
+  "status": "completed",
+  "started_at": 1787173166.7991416,
+  "finished_at": 1787173280.4892876,
+  "wall_seconds": 113.69,
+  "frames": 600,
+  "worker_count": 1,
+  "aggregate_frames_per_second": 5.278,
+  "median_worker_frames_per_second": 5.297,
+  "quality": {
+    "width": 1080,
+    "height": 1080,
+    "samples": 96,
+    "engine": "eevee",
+    "denoise": 1,
+    "frame_format": "tga",
+    "fps": 30,
+    "render_every_frame": true,
+    "transport": "ffv1"
+  },
+  "capacity_projection": {
+    "target_frames": 5400,
+    "render_budget_seconds": 23.0,
+    "ideal_workers_at_median_rate": 45,
+    "note": "Add p95 and coordination headroom only after measured scaling runs."
+  },
+  "workers": [
+    {
+      "assigned_worker_id": "render-d0",
+      "frame_start": 0,
+      "frame_end": 600,
+      "frames": 600,
+      "task_id": "render-frames-7e4a17675ef0202f7c50c13eb30a29b9",
+      "worker_id": "render-d0",
+      "duration_seconds": 113.271,
+      "frames_per_second": 5.297,
+      "source_frames_sha256": "44d4638d6fd771238419fc282e6b1f1d215b0ce053905ae282debe8113ff8a8a",
+      "shard_sha256": "b78870adee3c9080fac3dc4cbef0e94476912f23f60fd4d620a159cdb58d4750",
+      "shard_path": "/workspace/maestro-render-calibration/daemon-scaling/render-scale-58a29cbbe887/shards/shard_000000_000600.mkv",
+      "shard_bytes": 247066088
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "slice_count": 69,
+  "runs": [
+    {
+      "workers": 1,
+      "repeat": 1,
+      "wall_seconds": 194.717,
+      "worker_seconds": [
+        193.983
+      ],
+      "outputs": 69,
+      "output_bytes": 198728832
+    },
+    {
+      "workers": 1,
+      "repeat": 2,
+      "wall_seconds": 100.797,
+      "worker_seconds": [
+        100.106
+      ],
+      "outputs": 69,
+      "output_bytes": 198728832
+    },
+    {
+      "workers": 2,
+      "repeat": 1,
+      "wall_seconds": 110.563,
+      "worker_seconds": [
+        51.565,
+        109.802
+      ],
+      "outputs": 69,
+      "output_bytes": 198728832
+    },
+    {
+      "workers": 2,
+      "repeat": 2,
+      "wall_seconds": 51.216,
+      "worker_seconds": [
+        50.71,
+        45.579
+      ],
+      "outputs": 69,
+      "output_bytes": 198728832
+    }
+  ]
+}

@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "status": "completed",
+  "pod": {
+    "id": "lvc21nmkwm3gkr",
+    "gpu_model": "NVIDIA RTX PRO 4500 Blackwell",
+    "gpu_count": 2,
+    "gpu_memory_mib": 32623,
+    "price_per_gpu_hour_usd": 0.72,
+    "container_started_utc": "2026-08-19T20:25:09Z",
+    "measurements_finished_utc": "2026-08-19T21:36:11Z",
+    "measured_elapsed_seconds": 4262,
+    "estimated_compute_cost_usd_through_measurement_end": 1.7048,
+    "driver_version": "580.126.20",
+    "blender_version": "4.2.3 LTS"
+  },
+  "render": {
+    "full_quality": {
+      "width": 1080,
+      "height": 1080,
+      "samples": 96,
+      "engine": "eevee",
+      "denoise": 1,
+      "render_every_frame": true,
+      "transport": "ffv1"
+    },
+    "daemon_scaling_on_one_physical_gpu": [
+      {
+        "daemons": 1,
+        "aggregate_frames_per_second": 5.278
+      },
+      {
+        "daemons": 2,
+        "aggregate_frames_per_second": 9.17
+      },
+      {
+        "daemons": 4,
+        "aggregate_frames_per_second": 11.147
+      },
+      {
+        "daemons": 6,
+        "aggregate_frames_per_second": 11.959
+      }
+    ],
+    "required_frames_per_second_for_23_second_budget": 234.783,
+    "projected_render_gpu_equivalents": {
+      "ideal": 20,
+      "at_90_percent_scaling_efficiency": 22,
+      "at_80_percent_scaling_efficiency": 25
+    },
+    "multi_gpu_same_container_binding_passed": false,
+    "multi_gpu_blocker": "Both Blender/EGL daemons executed on physical GPU 1 despite CUDA_VISIBLE_DEVICES=0 and 1. The container could not create device-filter mount namespaces or change device-node ownership.",
+    "quality_validation_passed": true,
+    "worker_to_ffv1_decoded_rgb_exact": true,
+    "independent_rerender_changed_channel_fraction": 4.05e-07,
+    "independent_rerender_max_absolute_error_8bit": 1
+  },
+  "generation": {
+    "workers": {
+      "lodge": "GPU 0",
+      "edge": "GPU 1"
+    },
+    "runs": 3,
+    "concurrent_wall_seconds": {
+      "p50": 10.106,
+      "p95": 10.522
+    },
+    "lodge_seconds": {
+      "p50": 9.364,
+      "p95": 9.793
+    },
+    "edge_seconds": {
+      "p50": 5.104,
+      "p95": 5.726
+    },
+    "generation_budget_passed": true,
+    "outputs_distinct_across_seeds": true
+  },
+  "jukebox": {
+    "slices": 69,
+    "one_gpu_steady_seconds": {
+      "n": 2,
+      "p50": 101.761,
+      "p95": 102.63
+    },
+    "two_gpu_steady_seconds": {
+      "n": 4,
+      "p50": 51.257,
+      "p95": 52.789
+    },
+    "two_gpu_speedup": 1.985,
+    "two_gpu_scaling_efficiency": 0.993,
+    "preload_wall_seconds_for_two_workers": 224.855,
+    "first_request_after_ready_seconds": 50.908,
+    "outputs_exactly_match_baseline": true,
+    "projected_gpu_equivalents": {
+      "ideal_for_8_second_p50_budget": 13,
+      "at_90_percent_scaling_efficiency": 15,
+      "at_80_percent_scaling_efficiency": 16
+    },
+    "four_gpu_pod_can_meet_preprocessing_budget": false,
+    "estimated_four_gpu_steady_seconds_at_measured_efficiency": 25.628
+  },
+  "conclusion": {
+    "generation_target_is_feasible_on_two_resident_gpus": true,
+    "render_target_is_not_feasible_on_one_four_gpu_container": true,
+    "preprocessing_target_is_not_feasible_on_four_rtx_pro_4500_gpus_by_scaling_alone": true,
+    "next_architecture_requirement": "Use one-GPU render containers plus a non-filesystem cross-pod artifact transport, and optimize or replace the Jukebox first-round preprocessing path before fleet-scale SLA validation."
+  }
+}

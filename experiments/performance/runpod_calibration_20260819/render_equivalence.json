@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "status": "passed",
+  "poses": "/workspace/maestro-calibration/trs_64296/poses.npz",
+  "frame_start": 600,
+  "frame_end": 612,
+  "frames": 12,
+  "quality": {
+    "width": 1080,
+    "height": 1080,
+    "samples": 96,
+    "engine": "eevee",
+    "denoise": 1,
+    "frame_format": "tga",
+    "fps": 30,
+    "render_every_frame": true
+  },
+  "timings_seconds": {
+    "reference_render": 8.825,
+    "worker_render": 9.65,
+    "lossless_package": 0.636
+  },
+  "reference_source_frames_sha256": "04f29a6022b901a1f1c6724d14d7b6d495dfd1bb1313b423d5272cadac671b7c",
+  "worker_source_frames_sha256": "d44de3e663d7a1e908f4be477bc6503f6539b89b4a57a0c4f848713305bdac21",
+  "worker_reported_source_frames_sha256": "d44de3e663d7a1e908f4be477bc6503f6539b89b4a57a0c4f848713305bdac21",
+  "worker_source_integrity_match": true,
+  "reference_source_frame_bytes_match": false,
+  "reference_decoded_rgb_sha256": "fb944a977813311ed3e3a60890c0376e25edffe9fe330c7b3b00252895111278",
+  "worker_decoded_rgb_sha256": "00636e28d6306cd25253b165dc98e03e12298f7850c136da4ff2b6783ecd5e51",
+  "ffv1_decoded_rgb_sha256": "00636e28d6306cd25253b165dc98e03e12298f7850c136da4ff2b6783ecd5e51",
+  "transport_decoded_rgb_match": true,
+  "reference_worker_pixel_difference": {
+    "channels": 41990400,
+    "changed_channels": 17,
+    "changed_channel_fraction": 4.05e-07,
+    "identical_channel_fraction": 0.999999595,
+    "mean_absolute_error_8bit": 4.05e-07,
+    "max_absolute_error_8bit": 1,
+    "psnr_db": 112.058
+  },
+  "reference_worker_tolerance": {
+    "max_changed_channel_fraction": 0.0005,
+    "max_mean_absolute_error_8bit": 0.001,
+    "max_absolute_error_8bit": 8
+  },
+  "reference_worker_within_tolerance": true,
+  "render_repeatability_note": "Independent EEVEE GPU renders are not byte-deterministic. The transport comparison is exact; the independent render comparison is bounded by strict 8-bit pixel thresholds.",
+  "shard_sha256": "63eb66c6698033c155db7c97e96e1a8d7b77ac570671a9e9260abecbac76322d",
+  "shard_path": "/workspace/maestro-calibration/new-pod-equivalence/distributed_ffv1.mkv"
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "status": "failed",
+  "pod_gpu_count": 2,
+  "workers": [
+    {
+      "worker_id": "render-gpu0",
+      "cuda_visible_devices": "0",
+      "blender_pid": 4210,
+      "observed_gpu_uuid": "GPU-0bca43b2-23d3-c94f-a873-75b4e7b576cb"
+    },
+    {
+      "worker_id": "render-gpu1",
+      "cuda_visible_devices": "1",
+      "blender_pid": 4277,
+      "observed_gpu_uuid": "GPU-0bca43b2-23d3-c94f-a873-75b4e7b576cb"
+    }
+  ],
+  "expected_distinct_gpu_uuids": true,
+  "observed_distinct_gpu_uuids": false,
+  "conclusion": "NVIDIA EGL ignored process-level CUDA_VISIBLE_DEVICES. A render worker must run in a container that exposes exactly one physical GPU."
+}

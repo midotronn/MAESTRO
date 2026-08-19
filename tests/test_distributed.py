@@ -1,7 +1,10 @@
 import json
+import sys
 import threading
 import time
+import wave
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -64,6 +67,62 @@ def test_runpod_launcher_forwards_full_render_quality_contract():
     ):
         assert option in launcher
         assert environment in launcher
+
+    assert "AGENTLODGE_GPU_INDEX" in launcher
+    assert 'export CUDA_VISIBLE_DEVICES="$GPU_INDEX"' in launcher
+    assert "NVIDIA EGL ignores process-level CUDA_VISIBLE_DEVICES" in launcher
+
+
+def test_jukebox_preload_executes_representative_inference(
+    tmp_path,
+    monkeypatch,
+):
+    from server.distributed.handlers import JukeboxExtractHandler
+
+    edge = tmp_path / "edge"
+    shared = tmp_path / "shared"
+    edge.mkdir()
+    shared.mkdir()
+    calls = []
+
+    def fake_extract(path):
+        with wave.open(path, "rb") as audio:
+            calls.append(
+                {
+                    "channels": audio.getnchannels(),
+                    "sample_width": audio.getsampwidth(),
+                    "sample_rate": audio.getframerate(),
+                    "frames": audio.getnframes(),
+                }
+            )
+        return np.ones((2, 3), dtype=np.float32), "unused"
+
+    monkeypatch.setitem(
+        sys.modules,
+        "jukemirlib",
+        SimpleNamespace(
+            VQVAE=object(),
+            TOP_PRIOR=object(),
+            setup_models=lambda: pytest.fail("models are already loaded"),
+        ),
+    )
+    handler = JukeboxExtractHandler(
+        edge_root=edge,
+        shared_root=shared,
+        extractor=fake_extract,
+        preload_audio_seconds=0.1,
+    )
+
+    handler.preload()
+
+    assert calls == [
+        {
+            "channels": 1,
+            "sample_width": 2,
+            "sample_rate": 44_100,
+            "frames": 4_410,
+        }
+    ]
 
 
 def test_file_worker_executes_and_reuses_idempotent_result(tmp_path):

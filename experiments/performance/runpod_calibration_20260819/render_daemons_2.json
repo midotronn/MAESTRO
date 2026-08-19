@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "run_id": "render-scale-95ef1050cdbd",
+  "status": "completed",
+  "started_at": 1787173281.3323293,
+  "finished_at": 1787173346.7665484,
+  "wall_seconds": 65.434,
+  "frames": 600,
+  "worker_count": 2,
+  "aggregate_frames_per_second": 9.17,
+  "median_worker_frames_per_second": 4.635,
+  "quality": {
+    "width": 1080,
+    "height": 1080,
+    "samples": 96,
+    "engine": "eevee",
+    "denoise": 1,
+    "frame_format": "tga",
+    "fps": 30,
+    "render_every_frame": true,
+    "transport": "ffv1"
+  },
+  "capacity_projection": {
+    "target_frames": 5400,
+    "render_budget_seconds": 23.0,
+    "ideal_workers_at_median_rate": 51,
+    "note": "Add p95 and coordination headroom only after measured scaling runs."
+  },
+  "workers": [
+    {
+      "assigned_worker_id": "render-d0",
+      "frame_start": 0,
+      "frame_end": 300,
+      "frames": 300,
+      "task_id": "render-frames-9f8ab0fa43ccb332552d144b6ca5cabb",
+      "worker_id": "render-d0",
+      "duration_seconds": 64.836,
+      "frames_per_second": 4.627,
+      "source_frames_sha256": "877a654f1cb6b4d782965a2a24cf5224316b6c4457d579c0db9f5949a1f3d3ac",
+      "shard_sha256": "593c18365f87ba9ad3ff8d6ab67b37360424b3b79214227142c54f49dd953950",
+      "shard_path": "/workspace/maestro-render-calibration/daemon-scaling/render-scale-95ef1050cdbd/shards/shard_000000_000300.mkv",
+      "shard_bytes": 123555704
+    },
+    {
+      "assigned_worker_id": "render-d1",
+      "frame_start": 300,
+      "frame_end": 600,
+      "frames": 300,
+      "task_id": "render-frames-b1049bf8663d304b44c2fc61dff7dea4",
+      "worker_id": "render-d1",
+      "duration_seconds": 64.63,
+      "frames_per_second": 4.642,
+      "source_frames_sha256": "ed0b35f816749031e326f6838989622884303e158a9b2e1ce83ea0c61694e206",
+      "shard_sha256": "aff3fcac0b266f3dbf89a41d03b167437c470109bb80c270b6fe8e7e260a2751",
+      "shard_path": "/workspace/maestro-render-calibration/daemon-scaling/render-scale-95ef1050cdbd/shards/shard_000300_000600.mkv",
+      "shard_bytes": 123511299
+    }
+  ]
+}

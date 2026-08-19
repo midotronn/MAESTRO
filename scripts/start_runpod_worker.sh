@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start one capability-scoped MAESTRO worker in a one-GPU RunPod container.
+# Start one capability-scoped MAESTRO worker on an isolated GPU.
 set -euo pipefail
 
 WORKSPACE="${WORKSPACE:-/workspace}"
@@ -60,10 +60,31 @@ GPU_COUNT="$(
     wc -l |
     tr -d ' '
 )"
-[ "$GPU_COUNT" = "1" ] || {
-  echo "worker container must expose exactly one GPU; detected $GPU_COUNT" >&2
+GPU_INDEX="${AGENTLODGE_GPU_INDEX:-}"
+if [ "$GPU_COUNT" = "1" ]; then
+  if [ -n "$GPU_INDEX" ] && [ "$GPU_INDEX" != "0" ]; then
+    echo "single-GPU container only exposes GPU index 0, not $GPU_INDEX" >&2
+    exit 1
+  fi
+elif [ -z "$GPU_INDEX" ]; then
+  echo "multi-GPU container requires AGENTLODGE_GPU_INDEX; detected $GPU_COUNT GPUs" >&2
   exit 1
-}
+elif ! nvidia-smi --query-gpu=index --format=csv,noheader,nounits 2>/dev/null |
+  sed 's/[[:space:]]//g' |
+  grep -qx "$GPU_INDEX"; then
+  echo "AGENTLODGE_GPU_INDEX=$GPU_INDEX is not exposed by this container" >&2
+  exit 1
+fi
+
+if [ "$CAPABILITY" = "render.frames" ] && [ "$GPU_COUNT" != "1" ]; then
+  echo "render.frames requires a container exposing exactly one GPU; NVIDIA EGL ignores process-level CUDA_VISIBLE_DEVICES in a multi-GPU container" >&2
+  exit 1
+fi
+
+if [ -n "$GPU_INDEX" ]; then
+  export CUDA_DEVICE_ORDER=PCI_BUS_ID
+  export CUDA_VISIBLE_DEVICES="$GPU_INDEX"
+fi
 
 mkdir -p "$TASK_DIR" "$SHARED_ROOT"
 export AGENTLODGE_SHARED_ROOT="$SHARED_ROOT"

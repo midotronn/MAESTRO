@@ -120,8 +120,9 @@ calibration is still gated on approval.
 - Verify decoded source-frame hashes before the one final H.264/audio encode.
 
 `CUDA_VISIBLE_DEVICES` is not sufficient by itself because EEVEE renders through OpenGL/EGL rather
-than the CUDA runtime. NVIDIA EGL must be selected explicitly, and one-GPU containers remain the
-lowest-risk isolation method until a multi-GPU pod proves device binding.
+than the CUDA runtime. The paid dual-GPU calibration proved that both Blender daemons select the
+same physical GPU in a multi-GPU container. Render workers therefore require a container exposing
+exactly one physical GPU.
 
 ## RunPod deployment constraints
 
@@ -165,75 +166,95 @@ therefore uses RTX PRO 4500: matching the existing baseline removes GPU-model up
 and directly measures isolation and two-GPU scaling. RTX 5090 remains a second-stage upper-bound
 test only if serial generation latency still misses its budget.
 
-## Recommended paid experiment sequence
+## Paid calibration outcome: August 19, 2026
 
-Do not provision the full fleet first.
+The user provisioned one Secure Cloud Pod with two RTX PRO 4500 Blackwell GPUs at
+$0.72/GPU-hour each. Measurements ran for approximately 4,262 seconds, for an estimated compute
+charge of **$1.70** through the end of measurement. This remained below the $2.88 compute ceiling
+and $5 hard cap.
 
-### Calibration 1: one render GPU
+The immutable reports are under
+`experiments/performance/runpod_calibration_20260819/`.
 
-Benchmark the exact warm Blender scene on one candidate from each useful price/performance class:
+### Device isolation
 
-- RTX 4090 or RTX 5090;
-- L40S or RTX 6000 Ada;
-- optionally H100 only if EEVEE/OpenGL performance justifies its price.
+CUDA workers isolated correctly:
 
-Measure:
+- LODGE executed on physical GPU 0;
+- EDGE executed on physical GPU 1;
+- two Jukebox workers executed on distinct physical GPUs.
 
-- frames/second for the exact 1080 x 1080, 96-sample workload;
-- p50 and p95 shard startup;
-- GPU utilization and memory;
-- lossless shard packaging throughput;
-- final encoding time.
+`scripts/start_runpod_worker.sh` now accepts `AGENTLODGE_GPU_INDEX` for CUDA-based generation and
+Jukebox workers in a multi-GPU container. It explicitly rejects `render.frames` unless the
+container exposes exactly one GPU.
 
-### Calibration 2: generation split
+EEVEE did not isolate by process. Blender workers launched with `CUDA_VISIBLE_DEVICES=0` and
+`CUDA_VISIBLE_DEVICES=1` both appeared on the GPU 1 UUID. The container also prohibited creating a
+device-filter mount namespace or changing device-node ownership. Therefore:
 
-Use two workers:
+- do not report two-GPU render scaling from one multi-GPU Pod;
+- require one GPU exposed per render container;
+- add non-filesystem task and artifact transport before distributing render workers across Pods.
 
-- LODGE resident on one GPU;
-- EDGE/Jukebox resident on one GPU.
+### One-GPU render saturation
 
-Then measure Jukebox slice sharding with one additional worker. This establishes which serial
-component remains before buying a render fleet.
+The exact 1080 x 1080, 96-sample EEVEE/FFV1 path rendered 600 frames:
 
-### Scale test
+| Resident Blender daemons | Aggregate fps |
+|---:|---:|
+| 1 | 5.278 |
+| 2 | 9.170 |
+| 4 | 11.147 |
+| 6 | **11.959** |
 
-Choose between:
+Six daemons are the best tested one-GPU configuration. At 11.959 fps, the 234.783 fps render target
+requires 20 ideal GPU equivalents, 22 at 90% scaling efficiency, or 25 at 80%. The real-scene
+quality check passed: worker pixels survived FFV1 exactly, and independent EEVEE rerenders differed
+in only 17 of 41,990,400 color channels, with maximum error 1/255.
 
-1. one 4- or 8-GPU Secure Cloud pod if EEVEE device isolation and availability are proven;
-2. a Secure Cloud fleet of single-GPU workers using network storage; or
-3. an 8-GPU render pod plus separate generation workers.
+### Resident generation
 
-The likely worker count is:
+LODGE and EDGE ran concurrently on separate GPUs for three full-song seeds:
 
-```text
-render_workers = ceil(5400 / (measured_frames_per_second_per_gpu * 23))
-```
+| Measurement | p50 | p95 |
+|---|---:|---:|
+| LODGE | 9.364s | 9.793s |
+| EDGE | 5.104s | 5.726s |
+| Concurrent generation wall time | **10.106s** | **10.522s** |
 
-Add headroom for p95 only after measuring two-worker and four-worker scaling efficiency.
+The 20/30-second generation budget is feasible on two resident RTX PRO 4500 workers. The previous
+68-72-second role timings were dominated by repeated process/model startup rather than GPU
+throughput.
 
-### Proposed first paid calibration
+### Jukebox preprocessing
 
-Pending explicit approval, use **one Secure Cloud Pod with two RTX PRO 4500 GPUs** for no more than
-two hours. The two workers share that Pod's container filesystem, avoiding a network-volume
-dependency:
+All distributed outputs matched the original 69 x 150 x 4,800 baseline feature tensor bit-for-bit.
 
-- live console rate: $0.72/GPU-hour;
-- maximum compute charge: 2 GPUs x 2 hours x $0.72 = $2.88;
-- total authorization cap: $5.00, including incidental storage;
-- use the same base template and container-disk sizing as the current benchmark Pod;
-- copy only the required MAESTRO repositories, checkpoints, Blender runtime, scene, and calibration
-  inputs from the current Pod;
-- first prove separate CUDA visibility and separate EEVEE/EGL GPU execution; do not report
-  two-worker render scaling if both Blender processes resolve to the same physical GPU;
-- run one-worker exact render throughput, two-worker scaling, LODGE/EDGE resident inference, and
-  distributed Jukebox slice timing;
-- terminate the Pod immediately after reports and artifacts are copied.
+| Configuration | p50 | p95 |
+|---|---:|---:|
+| 1 warmed GPU | 101.761s | 102.630s |
+| 2 warmed GPUs | **51.257s** | **52.789s** |
 
-Stop without scaling further if worker source integrity fails, FFV1 decoded pixels differ from
-their worker source, independent-render drift exceeds the frozen threshold, two-worker render
-efficiency is below 80%, a fixed first-draw LODGE or EDGE request remains above its 30-second p95
-budget, or the measured capacity/cost model cannot plausibly satisfy the 60/90-second service
-target.
+The measured two-GPU speedup is 1.985x, or 99.3% scaling efficiency. Four equivalent GPUs would
+still require approximately 25.6 seconds, so the Pod's four-GPU maximum cannot meet the 8/13-second
+preprocessing budget by scaling alone. The p50 budget requires 13 ideal equivalents, 15 at 90%
+efficiency, or 16 at 80%.
+
+Jukebox model preload alone was insufficient: each worker's first extraction paid a large
+first-inference cost. The worker now runs representative inference before advertising ready.
+Preloading both workers took 224.855 seconds, after which the first two-GPU request completed in
+50.908 seconds and remained bit-identical.
+
+## Decision after calibration
+
+- Do not buy a larger render Pod: multi-GPU EEVEE isolation failed.
+- Do not switch to RTX 5090 yet: resident LODGE/EDGE already meet their budget, while Jukebox and
+  cross-Pod rendering are architecture bottlenecks rather than simple serial-GPU bottlenecks.
+- Implement object/API-backed cross-Pod tasks and artifacts for one-GPU render containers.
+- Optimize, batch, cache, or replace the first-round Jukebox preprocessing path before SLA fleet
+  validation.
+- Re-run a capped paid benchmark only after those changes can plausibly satisfy the 60/90-second
+  target.
 
 ## Cost formulas
 
@@ -248,13 +269,13 @@ per_song_storage_and_transfer =
   measured shared-storage and publication cost
 ```
 
-For context only, 23 Secure Cloud RTX PRO 4500 render workers at the live $0.72 rate would cost
-$16.56/hour, approximately $0.28 for one fully utilized 60-second render interval, or $397.44/day
-if held warm continuously. The 90%-efficiency planning count of 26 would cost $18.72/hour or
-$449.28/day. These figures exclude generation workers, storage, coordination, and idle capacity and
-are not a fleet recommendation.
+For context only, 20 Secure Cloud RTX PRO 4500 render workers at the live $0.72 rate would cost
+$14.40/hour, approximately $0.24 for one fully utilized 60-second render interval, or $345.60/day
+if held warm continuously. The 90%-efficiency planning count of 22 would cost $15.84/hour or
+$380.16/day. These figures exclude generation workers, preprocessing workers, storage,
+coordination, and idle capacity and are not a fleet recommendation.
 
-## Approval gate
+## Further paid-resource gate
 
 Before any paid resource is created, provide:
 
@@ -265,4 +286,4 @@ Before any paid resource is created, provide:
 - teardown procedure;
 - the measurements that determine whether to continue or stop.
 
-Plan approval did not authorize GPU spending.
+The completed two-GPU calibration did not authorize any additional GPU spending.

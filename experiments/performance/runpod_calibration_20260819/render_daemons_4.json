@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "run_id": "render-scale-d6403308cce1",
+  "status": "completed",
+  "started_at": 1787173347.8608866,
+  "finished_at": 1787173401.6850853,
+  "wall_seconds": 53.824,
+  "frames": 600,
+  "worker_count": 4,
+  "aggregate_frames_per_second": 11.147,
+  "median_worker_frames_per_second": 2.859,
+  "quality": {
+    "width": 1080,
+    "height": 1080,
+    "samples": 96,
+    "engine": "eevee",
+    "denoise": 1,
+    "frame_format": "tga",
+    "fps": 30,
+    "render_every_frame": true,
+    "transport": "ffv1"
+  },
+  "capacity_projection": {
+    "target_frames": 5400,
+    "render_budget_seconds": 23.0,
+    "ideal_workers_at_median_rate": 83,
+    "note": "Add p95 and coordination headroom only after measured scaling runs."
+  },
+  "workers": [
+    {
+      "assigned_worker_id": "render-d0",
+      "frame_start": 0,
+      "frame_end": 150,
+      "frames": 150,
+      "task_id": "render-frames-9b5153a3a41e3797eaa610d790646838",
+      "worker_id": "render-d0",
+      "duration_seconds": 52.564,
+      "frames_per_second": 2.854,
+      "source_frames_sha256": "b5d39c6da7ade23370f6add7dd2e72af708b04c03426ea1647390466caf76894",
+      "shard_sha256": "298b07af7998ec261837471ab8e7c8f7f53ad89cb1ae837a0ecf2d9e7850f486",
+      "shard_path": "/workspace/maestro-render-calibration/daemon-scaling/render-scale-d6403308cce1/shards/shard_000000_000150.mkv",
+      "shard_bytes": 61721329
+    },
+    {
+      "assigned_worker_id": "render-d1",
+      "frame_start": 150,
+      "frame_end": 300,
+      "frames": 150,
+      "task_id": "render-frames-c2dbe50870903c057ff974abfee2a493",
+      "worker_id": "render-d1",
+      "duration_seconds": 52.159,
+      "frames_per_second": 2.876,
+      "source_frames_sha256": "c4fed52327a134f338b099829f33aa09ae31e1c75ce33dce520b0bc788dfc7c5",
+      "shard_sha256": "5620192c22aef82a7e4e3b07793d327450c45cfbded340dde2f1866a42b72a54",
+      "shard_path": "/workspace/maestro-render-calibration/daemon-scaling/render-scale-d6403308cce1/shards/shard_000150_000300.mkv",
+      "shard_bytes": 61834790
+    },
+    {
+      "assigned_worker_id": "render-d2",
+      "frame_start": 300,
+      "frame_end": 450,
+      "frames": 150,
+      "task_id": "render-frames-81404e2ed35baaf3951777065cc1b7ab",
+      "worker_id": "render-d2",
+      "duration_seconds": 52.394,
+      "frames_per_second": 2.863,
+      "source_frames_sha256": "ef68e5b401d302ecc8aef0c0fac2c9f13552ae0eb0d4ec3f814d35536e885691",
+      "shard_sha256": "28ee54e2bf34fc74edec2ca054bed30960091ed043b12b27b8cbb92b2c0932c9",
+      "shard_path": "/workspace/maestro-render-calibration/daemon-scaling/render-scale-d6403308cce1/shards/shard_000300_000450.mkv",
+      "shard_bytes": 61789849
+    },
+    {
+      "assigned_worker_id": "render-d3",
+      "frame_start": 450,
+      "frame_end": 600,
+      "frames": 150,
+      "task_id": "render-frames-2e7e2394f117442ed1dcf96d12f29203",
+      "worker_id": "render-d3",
+      "duration_seconds": 52.54,
+      "frames_per_second": 2.855,
+      "source_frames_sha256": "75fa3a76de1e79038bb993a9800f2570e6c35ad9fdd2c2661c01c1fe4afd719b",
+      "shard_sha256": "9723b3eaf5e55803284fe29d18a524a43ca2b46410b1af0202df67ccdd7b3013",
+      "shard_path": "/workspace/maestro-render-calibration/daemon-scaling/render-scale-d6403308cce1/shards/shard_000450_000600.mkv",
+      "shard_bytes": 61722184
+    }
+  ]
+}

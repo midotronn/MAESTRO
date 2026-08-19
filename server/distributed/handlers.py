@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+import wave
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -44,10 +45,17 @@ class JukeboxExtractHandler:
         edge_root: Path,
         shared_root: Path,
         extractor: Callable[[str], tuple[Any, Any]] | None = None,
+        preload_audio_seconds: float | None = None,
     ):
         self.edge_root = Path(edge_root).resolve()
         self.shared_root = Path(shared_root).resolve()
         self._extractor = extractor
+        configured_seconds = (
+            os.environ.get("AGENTLODGE_JUKEBOX_WARMUP_SECONDS", "5")
+            if preload_audio_seconds is None
+            else preload_audio_seconds
+        )
+        self.preload_audio_seconds = max(0.0, float(configured_seconds))
 
     def _load_extractor(self) -> Callable[[str], tuple[Any, Any]]:
         if self._extractor is not None:
@@ -63,11 +71,40 @@ class JukeboxExtractHandler:
         return extract
 
     def preload(self) -> None:
-        self._load_extractor()
+        extractor = self._load_extractor()
         import jukemirlib
 
         if jukemirlib.VQVAE is None and jukemirlib.TOP_PRIOR is None:
             jukemirlib.VQVAE, jukemirlib.TOP_PRIOR = jukemirlib.setup_models()
+        if self.preload_audio_seconds <= 0:
+            return
+
+        sample_rate = 44_100
+        sample_count = max(1, round(sample_rate * self.preload_audio_seconds))
+        time_axis = np.arange(sample_count, dtype=np.float64) / sample_rate
+        pcm = np.asarray(
+            np.sin(2.0 * np.pi * 440.0 * time_axis) * 3276,
+            dtype="<i2",
+        )
+        previous_directory = Path.cwd()
+        with tempfile.TemporaryDirectory(
+            prefix="maestro-jukebox-warmup-"
+        ) as temporary:
+            temporary_path = Path(temporary)
+            audio_path = temporary_path / "warmup.wav"
+            with wave.open(str(audio_path), "wb") as audio:
+                audio.setnchannels(1)
+                audio.setsampwidth(2)
+                audio.setframerate(sample_rate)
+                audio.writeframes(pcm.tobytes())
+            try:
+                os.chdir(temporary_path)
+                representations, _ = extractor(str(audio_path))
+            finally:
+                os.chdir(previous_directory)
+        warmed = np.asarray(representations)
+        if warmed.size == 0 or not np.isfinite(warmed).all():
+            raise RuntimeError("Jukebox preload inference produced invalid features")
 
     def __call__(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         items = payload.get("items")

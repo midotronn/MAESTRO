@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "runs": [
+    {
+      "run": 1,
+      "wall_seconds": 10.568,
+      "lodge_seconds": 9.841,
+      "edge_seconds": 5.795,
+      "lodge_frames": 5120,
+      "edge_frames": 5250,
+      "lodge_worker": "lodge-gpu0",
+      "edge_worker": "edge-gpu1"
+    },
+    {
+      "run": 2,
+      "wall_seconds": 9.899,
+      "lodge_seconds": 9.141,
+      "edge_seconds": 5.036,
+      "lodge_frames": 5120,
+      "edge_frames": 5250,
+      "lodge_worker": "lodge-gpu0",
+      "edge_worker": "edge-gpu1"
+    },
+    {
+      "run": 3,
+      "wall_seconds": 10.106,
+      "lodge_seconds": 9.364,
+      "edge_seconds": 5.104,
+      "lodge_frames": 5120,
+      "edge_frames": 5250,
+      "lodge_worker": "lodge-gpu0",
+      "edge_worker": "edge-gpu1"
+    }
+  ]
+}
