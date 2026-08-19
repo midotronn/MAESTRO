@@ -41,7 +41,13 @@ def _stage_durations(trace: dict) -> dict[str, float]:
     return dict(totals)
 
 
-def summarize_traces(traces: list[dict], *, warm_only: bool = True) -> dict:
+def summarize_traces(
+    traces: list[dict],
+    *,
+    warm_only: bool = True,
+    excluded_runs: list[dict] | None = None,
+) -> dict:
+    external_exclusions = list(excluded_runs or [])
     accepted = []
     rejected = []
     for trace in traces:
@@ -97,7 +103,13 @@ def summarize_traces(traces: list[dict], *, warm_only: bool = True) -> dict:
     for trace in accepted:
         service_states[str(trace.get("service_state") or "unknown")] += 1
     return {
+        "measurement_attempts": len(accepted) + len(external_exclusions),
         "accepted_runs": len(accepted),
+        "excluded_runs": external_exclusions,
+        "measurement_completion_rate": round(
+            len(accepted) / max(1, len(accepted) + len(external_exclusions)),
+            4,
+        ),
         "rejected_runs": rejected,
         "service_states": dict(sorted(service_states.items())),
         "browser_total_seconds": stats(totals),
@@ -128,11 +140,21 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("traces", nargs="+", type=Path)
     parser.add_argument("--include-non-warm", action="store_true")
+    parser.add_argument(
+        "--failures",
+        type=Path,
+        help="JSON file containing an excluded_runs array.",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    excluded_runs = []
+    if args.failures:
+        failure_record = json.loads(args.failures.read_text(encoding="utf-8"))
+        excluded_runs = list(failure_record.get("excluded_runs") or [])
     report = summarize_traces(
         _load_paths(args.traces),
         warm_only=not args.include_non_warm,
+        excluded_runs=excluded_runs,
     )
     text = json.dumps(report, indent=2) + "\n"
     if args.output:

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "excluded_runs": [
+    {
+      "sid": "trs_66731",
+      "request_id": "db8f576e-b106-441e-b232-f9733b1ebc9b",
+      "source_bytes": 7759950,
+      "server_status": "done",
+      "server_elapsed_seconds": 834.2,
+      "browser_done_record": false,
+      "browser_total_seconds": null,
+      "reason": "The local browser benchmark process terminated after the server completed but before the browser timing record was persisted. This run is excluded from latency statistics and was replaced with a fresh controlled run."
+    }
+  ]
+}

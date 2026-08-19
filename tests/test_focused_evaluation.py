@@ -96,9 +96,15 @@ def test_trace_summary_uses_browser_latency_and_stage_timings():
         },
     ]
 
-    report = summarize_traces(traces)
+    report = summarize_traces(
+        traces,
+        excluded_runs=[{"sid": "failed", "reason": "browser exited"}],
+    )
 
+    assert report["measurement_attempts"] == 3
     assert report["accepted_runs"] == 2
+    assert report["measurement_completion_rate"] == 0.6667
+    assert report["excluded_runs"][0]["sid"] == "failed"
     assert report["service_states"] == {"warm": 2}
     assert report["browser_total_seconds"]["p50"] == 60.0
     assert report["browser_total_seconds"]["mean"] == 60.0

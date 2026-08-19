@@ -1,142 +1,156 @@
 {
-  "accepted_runs": 3,
+  "measurement_attempts": 5,
+  "accepted_runs": 4,
+  "excluded_runs": [
+    {
+      "sid": "trs_66731",
+      "request_id": "db8f576e-b106-441e-b232-f9733b1ebc9b",
+      "source_bytes": 7759950,
+      "server_status": "done",
+      "server_elapsed_seconds": 834.2,
+      "browser_done_record": false,
+      "browser_total_seconds": null,
+      "reason": "The local browser benchmark process terminated after the server completed but before the browser timing record was persisted. This run is excluded from latency statistics and was replaced with a fresh controlled run."
+    }
+  ],
+  "measurement_completion_rate": 0.8,
   "rejected_runs": [],
   "service_states": {
-    "warm_assets_cold_models": 3
+    "warm_assets_cold_models": 4
   },
   "browser_total_seconds": {
-    "n": 3,
-    "p50": 806.399,
-    "p95": 812.253,
+    "n": 4,
+    "p50": 809.651,
+    "p95": 828.87,
     "min": 790.448,
-    "max": 812.903,
-    "mean": 803.25,
-    "stddev": 9.434,
-    "coefficient_of_variation": 0.0117
+    "max": 831.688,
+    "mean": 810.36,
+    "stddev": 14.778,
+    "coefficient_of_variation": 0.0182
   },
   "browser_upload_seconds": {
-    "n": 3,
-    "p50": 7.445,
-    "p95": 9.896,
+    "n": 4,
+    "p50": 7.913,
+    "p95": 9.9,
     "min": 7.399,
     "max": 10.168,
-    "mean": 8.337,
-    "stddev": 1.295,
-    "coefficient_of_variation": 0.1553
+    "mean": 8.348,
+    "stddev": 1.121,
+    "coefficient_of_variation": 0.1343
   },
   "stages": {
     "assets": {
-      "n": 3,
-      "p50": 2.036,
-      "p95": 2.04,
+      "n": 4,
+      "p50": 2.038,
+      "p95": 2.043,
       "min": 2.033,
-      "max": 2.041,
-      "mean": 2.037,
-      "stddev": 0.003,
-      "coefficient_of_variation": 0.0016
-    },
-    "audio": {
-      "n": 3,
-      "p50": 0.093,
-      "p95": 0.142,
-      "min": 0.082,
-      "max": 0.148,
-      "mean": 0.108,
-      "stddev": 0.029,
-      "coefficient_of_variation": 0.2682
-    },
-    "audio_prepare": {
-      "n": 3,
-      "p50": 0.055,
-      "p95": 0.059,
-      "min": 0.047,
-      "max": 0.059,
-      "mean": 0.054,
-      "stddev": 0.005,
-      "coefficient_of_variation": 0.093
-    },
-    "beats": {
-      "n": 3,
-      "p50": 4.019,
-      "p95": 4.03,
-      "min": 4.013,
-      "max": 4.031,
-      "mean": 4.021,
-      "stddev": 0.007,
+      "max": 2.043,
+      "mean": 2.038,
+      "stddev": 0.004,
       "coefficient_of_variation": 0.0019
     },
+    "audio": {
+      "n": 4,
+      "p50": 0.095,
+      "p95": 0.14,
+      "min": 0.082,
+      "max": 0.148,
+      "mean": 0.105,
+      "stddev": 0.025,
+      "coefficient_of_variation": 0.2422
+    },
+    "audio_prepare": {
+      "n": 4,
+      "p50": 0.057,
+      "p95": 0.1,
+      "min": 0.047,
+      "max": 0.107,
+      "mean": 0.067,
+      "stddev": 0.023,
+      "coefficient_of_variation": 0.3507
+    },
+    "beats": {
+      "n": 4,
+      "p50": 4.018,
+      "p95": 4.029,
+      "min": 4.013,
+      "max": 4.031,
+      "mean": 4.02,
+      "stddev": 0.007,
+      "coefficient_of_variation": 0.0017
+    },
     "browser_upload": {
-      "n": 3,
-      "p50": 12.165,
-      "p95": 12.629,
+      "n": 4,
+      "p50": 12.423,
+      "p95": 14.39,
       "min": 11.422,
-      "max": 12.681,
-      "mean": 12.089,
-      "stddev": 0.517,
-      "coefficient_of_variation": 0.0427
+      "max": 14.692,
+      "mean": 12.74,
+      "stddev": 1.213,
+      "coefficient_of_variation": 0.0952
     },
     "finalize": {
-      "n": 3,
-      "p50": 0.037,
+      "n": 4,
+      "p50": 0.035,
       "p95": 0.04,
       "min": 0.031,
       "max": 0.04,
-      "mean": 0.036,
-      "stddev": 0.004,
-      "coefficient_of_variation": 0.1039
+      "mean": 0.035,
+      "stddev": 0.003,
+      "coefficient_of_variation": 0.099
     },
     "generation": {
-      "n": 3,
-      "p50": 80.325,
-      "p95": 82.1,
+      "n": 4,
+      "p50": 80.31,
+      "p95": 82.001,
       "min": 78.267,
       "max": 82.297,
       "mean": 80.296,
-      "stddev": 1.645,
-      "coefficient_of_variation": 0.0205
+      "stddev": 1.425,
+      "coefficient_of_variation": 0.0177
     },
     "pod": {
-      "n": 3,
+      "n": 4,
       "p50": 0.019,
-      "p95": 0.02,
+      "p95": 0.032,
       "min": 0.014,
-      "max": 0.02,
-      "mean": 0.018,
-      "stddev": 0.003,
-      "coefficient_of_variation": 0.1486
+      "max": 0.034,
+      "mean": 0.022,
+      "stddev": 0.007,
+      "coefficient_of_variation": 0.3416
     },
     "polish": {
-      "n": 3,
-      "p50": 4.015,
+      "n": 4,
+      "p50": 4.014,
       "p95": 4.021,
-      "min": 4.013,
+      "min": 4.011,
       "max": 4.022,
-      "mean": 4.017,
+      "mean": 4.015,
       "stddev": 0.004,
       "coefficient_of_variation": 0.001
     },
     "preprocess": {
-      "n": 3,
-      "p50": 224.927,
-      "p95": 230.506,
+      "n": 4,
+      "p50": 225.984,
+      "p95": 230.513,
       "min": 206.887,
       "max": 231.126,
-      "mean": 220.98,
-      "stddev": 10.282,
-      "coefficient_of_variation": 0.0465
+      "mean": 222.495,
+      "stddev": 9.283,
+      "coefficient_of_variation": 0.0417
     },
     "preview": {
-      "n": 3,
+      "n": 4,
       "p50": 0.007,
-      "p95": 0.011,
+      "p95": 0.01,
       "min": 0.006,
       "max": 0.011,
       "mean": 0.008,
       "stddev": 0.002,
-      "coefficient_of_variation": 0.27
+      "coefficient_of_variation": 0.2478
     },
     "queued": {
-      "n": 3,
+      "n": 4,
       "p50": 0.0,
       "p95": 0.0,
       "min": 0.0,
@@ -146,7 +160,7 @@
       "coefficient_of_variation": null
     },
     "ready": {
-      "n": 3,
+      "n": 4,
       "p50": 0.0,
       "p95": 0.0,
       "min": 0.0,
@@ -156,184 +170,184 @@
       "coefficient_of_variation": null
     },
     "remote:assets": {
-      "n": 3,
-      "p50": 0.041,
+      "n": 4,
+      "p50": 0.042,
       "p95": 0.044,
       "min": 0.04,
       "max": 0.044,
       "mean": 0.042,
       "stddev": 0.002,
-      "coefficient_of_variation": 0.0408
+      "coefficient_of_variation": 0.0376
     },
     "remote:audio_descriptor": {
-      "n": 3,
-      "p50": 0.716,
-      "p95": 0.723,
+      "n": 4,
+      "p50": 0.72,
+      "p95": 0.736,
       "min": 0.693,
-      "max": 0.724,
-      "mean": 0.711,
-      "stddev": 0.013,
-      "coefficient_of_variation": 0.0185
+      "max": 0.738,
+      "mean": 0.718,
+      "stddev": 0.016,
+      "coefficient_of_variation": 0.0227
     },
     "remote:beats": {
-      "n": 3,
-      "p50": 4.443,
-      "p95": 4.703,
+      "n": 4,
+      "p50": 4.479,
+      "p95": 4.699,
       "min": 4.428,
       "max": 4.732,
-      "mean": 4.534,
-      "stddev": 0.14,
-      "coefficient_of_variation": 0.0309
+      "mean": 4.529,
+      "stddev": 0.121,
+      "coefficient_of_variation": 0.0268
     },
     "remote:generation_edge": {
-      "n": 3,
-      "p50": 71.384,
-      "p95": 72.552,
+      "n": 4,
+      "p50": 71.522,
+      "p95": 72.529,
       "min": 68.289,
       "max": 72.682,
-      "mean": 70.785,
-      "stddev": 1.843,
-      "coefficient_of_variation": 0.026
+      "mean": 71.004,
+      "stddev": 1.64,
+      "coefficient_of_variation": 0.0231
     },
     "remote:generation_lodge": {
-      "n": 3,
-      "p50": 68.182,
-      "p95": 69.49,
-      "min": 67.622,
+      "n": 4,
+      "p50": 67.902,
+      "p95": 69.417,
+      "min": 66.797,
       "max": 69.635,
-      "mean": 68.48,
-      "stddev": 0.848,
-      "coefficient_of_variation": 0.0124
+      "mean": 68.059,
+      "stddev": 1.035,
+      "coefficient_of_variation": 0.0152
     },
     "remote:generation_total": {
-      "n": 3,
-      "p50": 81.397,
-      "p95": 82.022,
+      "n": 4,
+      "p50": 81.199,
+      "p95": 81.988,
       "min": 77.744,
       "max": 82.092,
-      "mean": 80.411,
-      "stddev": 1.907,
-      "coefficient_of_variation": 0.0237
+      "mean": 80.559,
+      "stddev": 1.671,
+      "coefficient_of_variation": 0.0207
     },
     "remote:pipeline": {
-      "n": 3,
-      "p50": 314.763,
-      "p95": 322.514,
+      "n": 4,
+      "p50": 316.727,
+      "p95": 322.672,
       "min": 300.536,
       "max": 323.375,
-      "mean": 312.891,
-      "stddev": 9.417,
-      "coefficient_of_variation": 0.0301
+      "mean": 314.341,
+      "stddev": 8.534,
+      "coefficient_of_variation": 0.0271
     },
     "remote:polish": {
-      "n": 3,
-      "p50": 3.732,
-      "p95": 3.813,
+      "n": 4,
+      "p50": 3.737,
+      "p95": 3.81,
       "min": 3.526,
       "max": 3.822,
-      "mean": 3.693,
-      "stddev": 0.124,
-      "coefficient_of_variation": 0.0335
+      "mean": 3.705,
+      "stddev": 0.109,
+      "coefficient_of_variation": 0.0295
     },
     "remote:preprocess_edge": {
-      "n": 3,
-      "p50": 226.21,
-      "p95": 230.861,
+      "n": 4,
+      "p50": 226.577,
+      "p95": 230.713,
       "min": 207.615,
       "max": 231.378,
-      "mean": 221.734,
-      "stddev": 10.204,
-      "coefficient_of_variation": 0.046
+      "mean": 223.037,
+      "stddev": 9.121,
+      "coefficient_of_variation": 0.0409
     },
     "remote:preprocess_lodge": {
-      "n": 3,
-      "p50": 6.664,
-      "p95": 6.832,
+      "n": 4,
+      "p50": 6.668,
+      "p95": 6.824,
       "min": 6.625,
       "max": 6.851,
-      "mean": 6.713,
-      "stddev": 0.099,
-      "coefficient_of_variation": 0.0147
+      "mean": 6.703,
+      "stddev": 0.087,
+      "coefficient_of_variation": 0.013
     },
     "remote:preview": {
-      "n": 3,
-      "p50": 0.019,
-      "p95": 0.024,
+      "n": 4,
+      "p50": 0.022,
+      "p95": 0.028,
       "min": 0.017,
-      "max": 0.025,
-      "mean": 0.02,
-      "stddev": 0.003,
-      "coefficient_of_variation": 0.1672
+      "max": 0.029,
+      "mean": 0.022,
+      "stddev": 0.005,
+      "coefficient_of_variation": 0.212
     },
     "remote:seed_bank": {
-      "n": 3,
-      "p50": 2.013,
-      "p95": 2.048,
-      "min": 1.994,
+      "n": 4,
+      "p50": 2.003,
+      "p95": 2.046,
+      "min": 1.966,
       "max": 2.052,
-      "mean": 2.02,
-      "stddev": 0.024,
-      "coefficient_of_variation": 0.012
+      "mean": 2.006,
+      "stddev": 0.031,
+      "coefficient_of_variation": 0.0156
     },
     "remote:staging": {
-      "n": 3,
-      "p50": 0.174,
-      "p95": 0.178,
+      "n": 4,
+      "p50": 0.176,
+      "p95": 0.198,
       "min": 0.162,
-      "max": 0.178,
-      "mean": 0.171,
-      "stddev": 0.007,
-      "coefficient_of_variation": 0.0397
+      "max": 0.202,
+      "mean": 0.179,
+      "stddev": 0.015,
+      "coefficient_of_variation": 0.0811
     },
     "remote:story_assembly": {
-      "n": 3,
-      "p50": 0.414,
+      "n": 4,
+      "p50": 0.413,
       "p95": 0.419,
       "min": 0.333,
       "max": 0.42,
-      "mean": 0.389,
-      "stddev": 0.04,
-      "coefficient_of_variation": 0.102
+      "mean": 0.395,
+      "stddev": 0.036,
+      "coefficient_of_variation": 0.0906
     },
     "remote:storyboard": {
-      "n": 3,
+      "n": 4,
       "p50": 0.017,
       "p95": 0.018,
       "min": 0.014,
       "max": 0.018,
-      "mean": 0.016,
-      "stddev": 0.002,
-      "coefficient_of_variation": 0.1041
+      "mean": 0.017,
+      "stddev": 0.001,
+      "coefficient_of_variation": 0.0909
     },
     "remote:structure_analysis": {
-      "n": 3,
-      "p50": 1.175,
-      "p95": 1.212,
+      "n": 4,
+      "p50": 1.176,
+      "p95": 1.21,
       "min": 1.123,
       "max": 1.216,
-      "mean": 1.171,
-      "stddev": 0.038,
-      "coefficient_of_variation": 0.0325
+      "mean": 1.173,
+      "stddev": 0.033,
+      "coefficient_of_variation": 0.0282
     },
     "render": {
-      "n": 3,
-      "p50": 466.944,
-      "p95": 494.687,
+      "n": 4,
+      "p50": 481.274,
+      "p95": 497.445,
       "min": 460.743,
       "max": 497.77,
-      "mean": 475.152,
-      "stddev": 16.192,
-      "coefficient_of_variation": 0.0341
+      "mean": 480.265,
+      "stddev": 16.585,
+      "coefficient_of_variation": 0.0345
     },
     "seed_bank": {
-      "n": 3,
-      "p50": 2.007,
+      "n": 4,
+      "p50": 2.008,
       "p95": 2.009,
       "min": 2.005,
       "max": 2.009,
       "mean": 2.007,
-      "stddev": 0.002,
-      "coefficient_of_variation": 0.0008
+      "stddev": 0.001,
+      "coefficient_of_variation": 0.0007
     },
     "staging": {
       "n": 1,
@@ -346,14 +360,14 @@
       "coefficient_of_variation": 0.0
     },
     "transfer": {
-      "n": 3,
+      "n": 4,
       "p50": 0.221,
-      "p95": 0.353,
+      "p95": 0.346,
       "min": 0.207,
       "max": 0.368,
-      "mean": 0.265,
-      "stddev": 0.073,
-      "coefficient_of_variation": 0.2745
+      "mean": 0.254,
+      "stddev": 0.066,
+      "coefficient_of_variation": 0.2593
     }
   },
   "sla": {
@@ -365,6 +379,7 @@
   "request_ids": [
     "c4bfe7f4-874d-43b3-95ae-717356ce4fe8",
     "2097e057-6078-4556-b7aa-1825d2e92ee4",
-    "b5785346-3ec5-4db1-965c-8400ee11e45b"
+    "b5785346-3ec5-4db1-965c-8400ee11e45b",
+    "6c494c42-d7f6-4e5a-92c4-1743578a903c"
   ]
 }
