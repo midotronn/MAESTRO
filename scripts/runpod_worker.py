@@ -51,6 +51,18 @@ def main() -> int:
     parser.add_argument("--render-frame-format", default="tga")
     parser.add_argument("--worker-tmp")
     parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=float(os.environ.get("AGENTLODGE_WORKER_POLL_INTERVAL", "0.1")),
+    )
+    parser.add_argument(
+        "--heartbeat-interval",
+        type=float,
+        default=float(
+            os.environ.get("AGENTLODGE_WORKER_HEARTBEAT_INTERVAL", "2.0")
+        ),
+    )
+    parser.add_argument(
         "--no-preload",
         action="store_true",
         help="Defer model loading until the first task.",
@@ -113,7 +125,12 @@ def main() -> int:
         task_dir=Path(args.task_dir),
         metadata={"shared_root": str(Path(args.shared_root).resolve())},
     )
-    worker = FileTaskWorker(spec, {args.capability: handler})
+    worker = FileTaskWorker(
+        spec,
+        {args.capability: handler},
+        poll_interval=args.poll_interval,
+        heartbeat_interval=args.heartbeat_interval,
+    )
 
     def stop(_signum, _frame):
         worker.stop()

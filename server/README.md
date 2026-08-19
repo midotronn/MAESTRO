@@ -113,6 +113,17 @@ python scripts/runpod_worker.py \
   --shared-root /workspace --worker-tmp /tmp/maestro-render
 ```
 
+On a provisioned pod, the guarded launcher selects the correct Python environment and rejects a
+container unless exactly one GPU is visible:
+
+```bash
+bash scripts/start_runpod_worker.sh render.frames render-0 \
+  /workspace/maestro-workers/render-0
+```
+
+The same launcher accepts `jukebox.extract`, `lodge.generate`, and `edge.generate`. Jukebox uses
+the isolated EDGE environment; the other roles use the MAESTRO environment.
+
 After workers are healthy, calibrate the exact pose sequence without changing quality:
 
 ```bash
