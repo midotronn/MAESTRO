@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import statistics
 from collections import defaultdict
 from pathlib import Path
 
@@ -77,17 +78,28 @@ def summarize_traces(traces: list[dict], *, warm_only: bool = True) -> dict:
             stage_values[stage].append(duration)
 
     def stats(values: list[float]) -> dict:
+        mean = statistics.fmean(values)
+        stddev = statistics.pstdev(values)
         return {
             "n": len(values),
             "p50": round(percentile(values, 0.50), 3),
             "p95": round(percentile(values, 0.95), 3),
             "min": round(min(values), 3),
             "max": round(max(values), 3),
+            "mean": round(mean, 3),
+            "stddev": round(stddev, 3),
+            "coefficient_of_variation": (
+                round(stddev / mean, 4) if mean else None
+            ),
         }
 
+    service_states: dict[str, int] = defaultdict(int)
+    for trace in accepted:
+        service_states[str(trace.get("service_state") or "unknown")] += 1
     return {
         "accepted_runs": len(accepted),
         "rejected_runs": rejected,
+        "service_states": dict(sorted(service_states.items())),
         "browser_total_seconds": stats(totals),
         "browser_upload_seconds": stats(uploads) if uploads else None,
         "stages": {

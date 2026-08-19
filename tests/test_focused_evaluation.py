@@ -99,7 +99,11 @@ def test_trace_summary_uses_browser_latency_and_stage_timings():
     report = summarize_traces(traces)
 
     assert report["accepted_runs"] == 2
+    assert report["service_states"] == {"warm": 2}
     assert report["browser_total_seconds"]["p50"] == 60.0
+    assert report["browser_total_seconds"]["mean"] == 60.0
+    assert report["browser_total_seconds"]["stddev"] == 10.0
+    assert report["browser_total_seconds"]["coefficient_of_variation"] == 0.1667
     assert report["stages"]["render"]["p50"] == 25.0
     assert report["stages"]["remote:generation_lodge"]["p50"] == 12.0
     assert report["sla"]["p50_pass"]
