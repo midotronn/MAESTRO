@@ -14,7 +14,7 @@ Two stages are kept separate so the decision logic is testable without the heavy
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -47,6 +47,14 @@ _W_ARC = 0.6     # penalty for missing the plan's target energy
 _W_BIAS = 0.5    # bonus for matching the plan's preferred generator
 _W_REUSE = 0.3   # bonus for reusing a motif the plan asked for
 _W_RECAP = 0.6   # decisive bonus for an enabled recapitulation (ABA) close
+
+# Reusing an entire long phrase inside a much shorter section used to create extreme playback
+# speeds (for example, 32 seconds compressed into 12 seconds). Storyboard ``retime`` is an output
+# duration / source duration ratio. Reused motifs may be slowed slightly, but never accelerated;
+# shorter sections crop a coherent excerpt instead of squeezing the complete phrase.
+MAX_REUSE_PLAYBACK_SPEED = 1.0
+MIN_REUSE_TIME_SCALE = 1.0 / MAX_REUSE_PLAYBACK_SPEED
+MAX_REUSE_TIME_SCALE = 1.25
 
 
 @dataclass
@@ -106,6 +114,89 @@ def _bias_bonus(source: str, plan: SectionPlan) -> float:
     if source.startswith("reuse") and plan.reuse_of is not None:
         bonus -= _W_REUSE
     return bonus
+
+
+def _fit_reuse_clip(source: np.ndarray, target_frames: int,
+                    requested_time_scale: float = 1.0) -> tuple[np.ndarray, dict]:
+    """Fit reusable material to a section without extreme temporal compression.
+
+    ``requested_time_scale`` is output duration divided by selected source duration. A value of
+    ``1.0`` preserves the source tempo, values below one speed it up, and values above one slow it
+    down. When the source phrase is longer than needed, a centered excerpt is selected before the
+    bounded retime so the section stays coherent instead of squeezing the entire phrase.
+    """
+    clip = np.ascontiguousarray(source, dtype=np.float32)
+    source_frames = int(clip.shape[0])
+    target = int(target_frames)
+    if source_frames < 2:
+        raise ValueError(f"reuse source must contain at least 2 frames, got {source_frames}")
+    if target < 2:
+        raise ValueError(f"reuse target must contain at least 2 frames, got {target}")
+
+    try:
+        requested = float(requested_time_scale)
+    except (TypeError, ValueError):
+        requested = 1.0
+    if not np.isfinite(requested) or requested <= 0.0:
+        requested = 1.0
+    bounded = float(np.clip(requested, MIN_REUSE_TIME_SCALE, MAX_REUSE_TIME_SCALE))
+
+    desired_source_frames = target / bounded
+    selected_frames = int(
+        np.floor(desired_source_frames)
+        if bounded <= 1.0
+        else np.ceil(desired_source_frames)
+    )
+    selected_frames = int(np.clip(selected_frames, 2, source_frames))
+    source_start = max(0, (source_frames - selected_frames) // 2)
+    source_end = source_start + selected_frames
+    selected = clip[source_start:source_end]
+    fitted = selected.copy() if selected_frames == target else retime(selected, target)
+    actual_time_scale = target / selected_frames
+
+    return fitted, {
+        "source_frames": source_frames,
+        "source_start": source_start,
+        "source_end": source_end,
+        "selected_frames": selected_frames,
+        "target_frames": target,
+        "requested_time_scale": round(requested, 4),
+        "bounded_time_scale": round(bounded, 4),
+        "actual_time_scale": round(actual_time_scale, 4),
+        "playback_speed": round(1.0 / actual_time_scale, 4),
+        "cropped": selected_frames < source_frames,
+        "capped": abs(bounded - requested) > 1e-6,
+        "source_limited": selected_frames == source_frames
+        and target / source_frames > MAX_REUSE_TIME_SCALE,
+    }
+
+
+def _remap_reuse_cues(cues: list[CommonMotionCue], fit: dict,
+                      *, mirrored: bool = False,
+                      retrograded: bool = False) -> list[CommonMotionCue]:
+    """Keep only cues inside a selected reuse excerpt and remap their relative positions."""
+    source_frames = int(fit["source_frames"])
+    source_start = int(fit["source_start"])
+    selected_frames = int(fit["selected_frames"])
+    source_end = source_start + selected_frames
+    remapped: list[CommonMotionCue] = []
+    for cue in cues:
+        source_position = float(cue.position) * max(1, source_frames - 1)
+        if source_position < source_start or source_position > source_end - 1:
+            continue
+        position = (source_position - source_start) / max(1, selected_frames - 1)
+        if retrograded:
+            position = 1.0 - position
+        direction = cue.direction
+        if mirrored and direction in {"left", "right"}:
+            direction = "right" if direction == "left" else "left"
+        remapped.append(replace(
+            cue,
+            position=float(np.clip(position, 0.0, 1.0)),
+            direction=direction,
+            mirror=not cue.mirror if mirrored else cue.mirror,
+        ))
+    return remapped
 
 
 def _motion_window(spec: MotionSpec, repeats: int, n_frames: int,
@@ -310,17 +401,30 @@ def select_sources(lodge_z: np.ndarray, edge_z: np.ndarray, structure: MusicStru
                                                target_intensity=sec.energy,
                                                vocabulary="", generator_bias="auto"))
         cands: dict[str, np.ndarray] = {"lodge": lodge_z[a:b], "edge": edge_z[a:b]}
+        reuse_fits: dict[str, dict] = {}
 
         if (motif_reuse and plan.reuse_of is not None
                 and plan.reuse_of in chosen_raw):
-            reuse_clip = retime(chosen_raw[plan.reuse_of], b - a)
-            if plan.variation.get("mirror"):
+            reuse_clip, reuse_fit = _fit_reuse_clip(
+                chosen_raw[plan.reuse_of],
+                b - a,
+                plan.variation.get("retime", 1.0),
+            )
+            mirrored = bool(plan.variation.get("mirror"))
+            retrograded = bool(plan.variation.get("retrograde"))
+            if mirrored:
                 reuse_clip = mirror(reuse_clip)
-            if plan.variation.get("retrograde"):
+            if retrograded:
                 reuse_clip = retrograde(reuse_clip)
             if energy_shaping and abs(float(plan.variation.get("amplitude", 1.0)) - 1.0) > 1e-3:
                 reuse_clip = amplitude_scale(reuse_clip, float(plan.variation["amplitude"]))
-            cands[f"reuse:{plan.reuse_of}"] = reuse_clip
+            reuse_key = f"reuse:{plan.reuse_of}"
+            cands[reuse_key] = reuse_clip
+            reuse_fits[reuse_key] = {
+                **reuse_fit,
+                "mirror": mirrored,
+                "retrograde": retrograded,
+            }
 
         # Recapitulation (ABA close): reuse the opening section at the last section, mirrored +
         # retrograded, even when the music doesn't strictly repeat. Given a decisive bonus below.
@@ -328,7 +432,17 @@ def select_sources(lodge_z: np.ndarray, edge_z: np.ndarray, structure: MusicStru
         if recapitulate and i == len(sections) - 1 and i > 0 and 0 in chosen_raw:
             recap_key = "reuse:0"
             if recap_key not in cands:
-                cands[recap_key] = retrograde(mirror(retime(chosen_raw[0], b - a)))
+                recap_clip, recap_fit = _fit_reuse_clip(
+                    chosen_raw[0],
+                    b - a,
+                    (b - a) / max(1, len(chosen_raw[0])),
+                )
+                cands[recap_key] = retrograde(mirror(recap_clip))
+                reuse_fits[recap_key] = {
+                    **recap_fit,
+                    "mirror": True,
+                    "retrograde": True,
+                }
 
         # energy match: normalize candidate energies to [0,1] within the section.
         energies = {k: _energy_mean(v) for k, v in cands.items()}
@@ -353,7 +467,12 @@ def select_sources(lodge_z: np.ndarray, edge_z: np.ndarray, structure: MusicStru
         cues_to_apply = list(plan.common_motions)
         if source.startswith("reuse:"):
             reused_idx = int(source.split(":", 1)[1])
-            inherited_cues = list(effective_cues.get(reused_idx, []))
+            inherited_cues = _remap_reuse_cues(
+                effective_cues.get(reused_idx, []),
+                reuse_fits[source],
+                mirrored=bool(reuse_fits[source].get("mirror")),
+                retrograded=bool(reuse_fits[source].get("retrograde")),
+            )
             inherited_common_motion_ids = list(dict.fromkeys(
                 cue.motion_id for cue in inherited_cues
             ))
@@ -423,6 +542,7 @@ def select_sources(lodge_z: np.ndarray, edge_z: np.ndarray, structure: MusicStru
             "common_motion_ids": common_motion_ids,
             "inherited_common_motion_ids": inherited_common_motion_ids,
             "recalled_common_motion_ids": recalled_common_motion_ids,
+            "reuse_fit": reuse_fits.get(source),
         })
     return decisions
 
@@ -483,7 +603,7 @@ def build_story_dance(lodge_motion: np.ndarray, edge_motion: np.ndarray,
                    "plan_bias", "matched_bias", "vocabulary", "energies", "chosen_cost",
                    "caption", "plan_alignment", "post_variation", "planned_common_motions",
                    "effective_common_motions", "common_motions", "common_motion_ids",
-                   "inherited_common_motion_ids", "recalled_common_motion_ids")
+                   "inherited_common_motion_ids", "recalled_common_motion_ids", "reuse_fit")
     section_scores = [{k: d[k] for k in _score_keys} for d in decisions]
     n_reuse = sum(1 for d in decisions if d["source"].startswith("reuse"))
     n_lodge = sum(1 for d in decisions if d["source"] == "lodge")

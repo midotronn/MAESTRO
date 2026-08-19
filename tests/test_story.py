@@ -60,6 +60,46 @@ def test_retime_changes_length_binary_contacts_and_is_identity_at_same_length():
     assert np.array_equal(T.retime(m, 40), m)
 
 
+def test_reuse_fit_preserves_tempo_by_selecting_a_centered_excerpt():
+    source = _valid_motion(96, seed=31)
+    fitted, fit = ST._fit_reuse_clip(source, 36, requested_time_scale=1.0)
+    assert fitted.shape == (36, 139)
+    assert fit["source_start"] == 30
+    assert fit["source_end"] == 66
+    assert fit["playback_speed"] == 1.0
+    assert fit["cropped"]
+    assert not fit["capped"]
+    assert np.array_equal(fitted, source[30:66])
+
+
+def test_reuse_fit_prevents_extreme_speedup():
+    source = _valid_motion(96, seed=32)
+    fitted, fit = ST._fit_reuse_clip(source, 36, requested_time_scale=0.375)
+    assert fitted.shape == (36, 139)
+    assert fit["selected_frames"] == 36
+    assert fit["playback_speed"] == 1.0
+    assert fit["capped"]
+    assert fit["playback_speed"] <= ST.MAX_REUSE_PLAYBACK_SPEED
+
+
+def test_reuse_cues_are_filtered_and_remapped_after_cropping():
+    cues = [
+        SB.CommonMotionCue("wave", position=0.1),
+        SB.CommonMotionCue("clap_single", position=0.6, direction="left"),
+        SB.CommonMotionCue("point_side", position=0.9),
+    ]
+    _, fit = ST._fit_reuse_clip(_valid_motion(100, seed=33), 40, 1.0)
+    remapped = ST._remap_reuse_cues(cues, fit)
+    assert [cue.motion_id for cue in remapped] == ["clap_single"]
+    assert abs(remapped[0].position - 0.75) < 0.02
+    reversed_cues = ST._remap_reuse_cues(
+        cues, fit, mirrored=True, retrograded=True
+    )
+    assert abs(reversed_cues[0].position - 0.25) < 0.02
+    assert reversed_cues[0].direction == "right"
+    assert reversed_cues[0].mirror
+
+
 def test_amplitude_scale_preserves_valid_rotations_and_clamps():
     m = _valid_motion(40, seed=4)
     a = T.amplitude_scale(m, 5.0)  # clamped to 1.4
@@ -149,3 +189,38 @@ def test_select_sources_generates_motif_candidate_when_planned():
     # sections 3 and 4 repeat sections 1 and 2 -> a reuse candidate must be scored
     assert any(k.startswith("reuse") for k in dec[3]["costs"])
     assert any(k.startswith("reuse") for k in dec[4]["costs"])
+
+
+def test_select_sources_reports_bounded_reuse_playback_speed():
+    sections = [
+        S.Section(0, 90, 0.0, 3.0, 0, "intro", 0.3),
+        S.Section(90, 120, 3.0, 4.0, 0, "chorus", 0.3, repeat_of=0),
+    ]
+    structure = S.MusicStructure(
+        sections=sections,
+        energy_curve=np.full(120, 0.3, dtype=np.float32),
+        recurrence=np.eye(2, dtype=np.float32),
+        climax_index=0,
+        tempo=120.0,
+        total_frames=120,
+    )
+    board = SB.Storyboard(
+        arc="repeat",
+        plans=[
+            SB.SectionPlan(0, "intro", 0.3, "grounded_minimal", "auto"),
+            SB.SectionPlan(
+                1,
+                "chorus",
+                0.3,
+                "grounded_minimal",
+                "auto",
+                reuse_of=0,
+                variation={"mirror": False, "retime": 0.25, "amplitude": 1.0},
+            ),
+        ],
+    )
+    motion = _valid_motion(120, scale=0.02, seed=34)
+    decisions = ST.select_sources(motion, motion.copy(), structure, board, motif_reuse=True)
+    assert decisions[1]["source"] == "reuse:0"
+    assert decisions[1]["reuse_fit"]["playback_speed"] <= ST.MAX_REUSE_PLAYBACK_SPEED
+    assert decisions[1]["reuse_fit"]["capped"]
