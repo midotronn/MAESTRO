@@ -47,6 +47,25 @@ def test_distributed_capabilities_support_staged_rollout(monkeypatch):
     assert not capability_enabled("render.frames")
 
 
+def test_runpod_launcher_forwards_full_render_quality_contract():
+    launcher = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "start_runpod_worker.sh"
+    ).read_text(encoding="utf-8")
+
+    for option, environment in (
+        ("--render-width", "AGENTLODGE_RENDER_FULL_W"),
+        ("--render-height", "AGENTLODGE_RENDER_FULL_H"),
+        ("--render-samples", "AGENTLODGE_RENDER_FULL_SAMPLES"),
+        ("--render-engine", "AGENTLODGE_RENDER_ENGINE"),
+        ("--render-denoise", "AGENTLODGE_RENDER_DENOISE"),
+        ("--render-frame-format", "AGENTLODGE_RENDER_FRAME_FORMAT"),
+    ):
+        assert option in launcher
+        assert environment in launcher
+
+
 def test_file_worker_executes_and_reuses_idempotent_result(tmp_path):
     from server.distributed.coordinator import FileTaskCoordinator
     from server.distributed.registry import WorkerRegistry, WorkerSpec
@@ -85,10 +104,200 @@ def test_file_worker_executes_and_reuses_idempotent_result(tmp_path):
     repeated_result = coordinator.wait(repeated, timeout=2)
     assert repeated_result.output == {"value": 7}
     assert calls == [7]
+    with pytest.raises(ValueError, match="different request"):
+        coordinator.submit(
+            "echo.task",
+            {"value": 8},
+            task_id=first.request.task_id,
+        )
 
     worker.stop()
     thread.join(timeout=2)
     assert not thread.is_alive()
+
+
+def test_separate_coordinators_deduplicate_one_task_across_workers(tmp_path):
+    from server.distributed.coordinator import FileTaskCoordinator
+    from server.distributed.registry import WorkerRegistry, WorkerSpec
+    from server.distributed.worker import FileTaskWorker
+
+    calls = []
+    call_lock = threading.Lock()
+    specs = [
+        WorkerSpec(
+            worker_id=f"worker-{index}",
+            capabilities=("echo.task",),
+            task_dir=tmp_path / f"worker-{index}",
+        )
+        for index in range(2)
+    ]
+    workers = []
+    threads = []
+    for spec in specs:
+        def echo(payload, worker_id=spec.worker_id):
+            with call_lock:
+                calls.append((worker_id, payload["value"]))
+            return {"value": payload["value"]}
+
+        worker = FileTaskWorker(
+            spec,
+            {"echo.task": echo},
+            poll_interval=0.01,
+            heartbeat_interval=0.05,
+        )
+        thread = threading.Thread(target=worker.run_forever, daemon=True)
+        thread.start()
+        workers.append(worker)
+        threads.append(thread)
+    for spec in specs:
+        _wait_for(spec.is_healthy)
+
+    registry = WorkerRegistry(specs)
+    coordinators = [
+        FileTaskCoordinator(registry, poll_interval=0.01)
+        for _ in range(2)
+    ]
+    barrier = threading.Barrier(3)
+    handles = []
+
+    def submit(coordinator):
+        barrier.wait()
+        handles.append(coordinator.submit("echo.task", {"value": 17}))
+
+    submitters = [
+        threading.Thread(target=submit, args=(coordinator,))
+        for coordinator in coordinators
+    ]
+    for thread in submitters:
+        thread.start()
+    barrier.wait()
+    for thread in submitters:
+        thread.join(timeout=2)
+
+    results = [
+        coordinator.wait(handle, timeout=3)
+        for coordinator, handle in zip(coordinators, handles)
+    ]
+    assert len(calls) == 1
+    assert {result.worker_id for result in results} == {calls[0][0]}
+    for worker in workers:
+        worker.stop()
+    for thread in threads:
+        thread.join(timeout=2)
+
+
+def test_shared_load_balancing_uses_all_healthy_workers(tmp_path):
+    from collections import Counter
+
+    from server.distributed.coordinator import FileTaskCoordinator
+    from server.distributed.registry import WorkerRegistry, WorkerSpec
+    from server.distributed.worker import FileTaskWorker
+
+    release = threading.Event()
+    specs = [
+        WorkerSpec(
+            worker_id=f"worker-{index}",
+            capabilities=("echo.task",),
+            task_dir=tmp_path / f"worker-{index}",
+        )
+        for index in range(2)
+    ]
+    workers = []
+    threads = []
+    for spec in specs:
+        def echo(payload):
+            release.wait(timeout=3)
+            return {"value": payload["value"]}
+
+        worker = FileTaskWorker(
+            spec,
+            {"echo.task": echo},
+            poll_interval=0.01,
+            heartbeat_interval=0.05,
+        )
+        thread = threading.Thread(target=worker.run_forever, daemon=True)
+        thread.start()
+        workers.append(worker)
+        threads.append(thread)
+    for spec in specs:
+        _wait_for(spec.is_healthy)
+
+    registry = WorkerRegistry(specs)
+    handles = [
+        FileTaskCoordinator(registry, poll_interval=0.01).submit(
+            "echo.task",
+            {"value": value},
+        )
+        for value in range(8)
+    ]
+    assignments = Counter(handle.worker.worker_id for handle in handles)
+    assert set(assignments) == {"worker-0", "worker-1"}
+    assert abs(assignments["worker-0"] - assignments["worker-1"]) <= 1
+
+    release.set()
+    FileTaskCoordinator(registry, poll_interval=0.01).wait_many(
+        handles,
+        timeout=5,
+    )
+    for worker in workers:
+        worker.stop()
+    for thread in threads:
+        thread.join(timeout=2)
+
+
+def test_worker_requeues_claim_when_result_write_exhausts_retries(
+    tmp_path,
+    monkeypatch,
+):
+    import server.distributed.worker as worker_module
+    from server.distributed.coordinator import FileTaskCoordinator
+    from server.distributed.registry import WorkerRegistry, WorkerSpec
+
+    calls = []
+    spec = WorkerSpec(
+        worker_id="worker-1",
+        capabilities=("echo.task",),
+        task_dir=tmp_path / "worker-1",
+    )
+
+    def echo(payload):
+        calls.append(payload["value"])
+        return {"value": payload["value"]}
+
+    worker = worker_module.FileTaskWorker(
+        spec,
+        {"echo.task": echo},
+        poll_interval=0.01,
+        heartbeat_interval=0.05,
+    )
+    thread = threading.Thread(target=worker.run_forever, daemon=True)
+    thread.start()
+    _wait_for(spec.is_healthy)
+
+    original_atomic_json = worker_module._atomic_json
+    failures = {"remaining": 5}
+
+    def flaky_atomic_json(path, payload):
+        if path.parent.name == "results" and failures["remaining"] > 0:
+            failures["remaining"] -= 1
+            raise OSError("transient shared-volume failure")
+        return original_atomic_json(path, payload)
+
+    monkeypatch.setattr(worker_module, "_atomic_json", flaky_atomic_json)
+    coordinator = FileTaskCoordinator(
+        WorkerRegistry([spec]),
+        poll_interval=0.01,
+    )
+    result = coordinator.wait(
+        coordinator.submit("echo.task", {"value": 23}),
+        timeout=5,
+    )
+
+    assert result.output == {"value": 23}
+    assert calls == [23]
+    assert thread.is_alive()
+    worker.stop()
+    thread.join(timeout=2)
 
 
 def test_worker_recovers_claimed_task_after_restart(tmp_path):
@@ -172,6 +381,76 @@ def test_coordinator_reassigns_task_from_stale_worker(tmp_path):
 
     assert result.worker_id == "healthy"
     assert result.output == {"value": 11}
+    worker.stop()
+    thread.join(timeout=2)
+
+
+def test_coordinator_does_not_duplicate_a_claimed_task_on_stale_worker(
+    tmp_path,
+):
+    from server.distributed.coordinator import (
+        FileTaskCoordinator,
+        TaskTimeoutError,
+    )
+    from server.distributed.registry import WorkerRegistry, WorkerSpec
+    from server.distributed.tasks import PROTOCOL_VERSION
+    from server.distributed.worker import FileTaskWorker
+
+    stale = WorkerSpec(
+        worker_id="stale",
+        capabilities=("echo.task",),
+        task_dir=tmp_path / "stale",
+    )
+    healthy = WorkerSpec(
+        worker_id="healthy",
+        capabilities=("echo.task",),
+        task_dir=tmp_path / "healthy",
+    )
+    stale.task_dir.mkdir()
+    stale.heartbeat_path.write_text(
+        json.dumps(
+            {
+                "protocol_version": PROTOCOL_VERSION,
+                "worker_id": stale.worker_id,
+                "capabilities": ["echo.task"],
+                "status": "ready",
+                "updated_at": time.time(),
+            }
+        )
+    )
+    calls = []
+    worker = FileTaskWorker(
+        healthy,
+        {"echo.task": lambda payload: calls.append(payload) or payload},
+        poll_interval=0.01,
+        heartbeat_interval=0.05,
+    )
+    thread = threading.Thread(target=worker.run_forever, daemon=True)
+    thread.start()
+    _wait_for(healthy.is_healthy)
+    coordinator = FileTaskCoordinator(
+        WorkerRegistry([stale, healthy]),
+        poll_interval=0.01,
+        heartbeat_max_age=1,
+    )
+    handle = coordinator.submit("echo.task", {"value": 29}, worker=stale)
+    request_path = (
+        stale.task_dir / "requests" / f"{handle.request.task_id}.json"
+    )
+    claimed_path = (
+        stale.task_dir / "claimed" / f"{handle.request.task_id}.json"
+    )
+    claimed_path.parent.mkdir(parents=True, exist_ok=True)
+    request_path.replace(claimed_path)
+    heartbeat = json.loads(stale.heartbeat_path.read_text())
+    heartbeat["updated_at"] = time.time() - 30
+    stale.heartbeat_path.write_text(json.dumps(heartbeat))
+
+    with pytest.raises(TaskTimeoutError):
+        coordinator.wait(handle, timeout=0.25)
+
+    assert claimed_path.is_file()
+    assert calls == []
     worker.stop()
     thread.join(timeout=2)
 
@@ -563,6 +842,7 @@ def test_full_render_dispatches_lossless_ranges_to_remote_workers(
     ]
     assert encoded["frame_count"] == 10
     assert (tmp_path / "media" / "edited.mp4").read_bytes() == b"video"
+    assert rendering._RJOBS["distributed"]["rendered_frames"] == 10
 
     for worker in workers:
         worker.stop()

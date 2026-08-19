@@ -75,7 +75,15 @@ if [ "$CAPABILITY" = "render.frames" ]; then
   export __EGL_VENDOR_LIBRARY_FILENAMES="${__EGL_VENDOR_LIBRARY_FILENAMES:-/usr/share/glvnd/egl_vendor.d/10_nvidia.json}"
   export AGENTLODGE_WORKER_TMP="${AGENTLODGE_WORKER_TMP:-/tmp/maestro-render-$WORKER_ID}"
   mkdir -p "$AGENTLODGE_WORKER_TMP"
-  EXTRA_ARGS+=(--worker-tmp "$AGENTLODGE_WORKER_TMP")
+  EXTRA_ARGS+=(
+    --worker-tmp "$AGENTLODGE_WORKER_TMP"
+    --render-width "${AGENTLODGE_RENDER_FULL_W:-1080}"
+    --render-height "${AGENTLODGE_RENDER_FULL_H:-1080}"
+    --render-samples "${AGENTLODGE_RENDER_FULL_SAMPLES:-96}"
+    --render-engine "${AGENTLODGE_RENDER_ENGINE:-eevee}"
+    --render-denoise "${AGENTLODGE_RENDER_DENOISE:-1}"
+    --render-frame-format "${AGENTLODGE_RENDER_FRAME_FORMAT:-tga}"
+  )
 fi
 
 cd "$MAESTRO_ROOT"

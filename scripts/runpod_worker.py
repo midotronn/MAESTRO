@@ -43,12 +43,36 @@ def main() -> int:
     parser.add_argument("--lodge-weights")
     parser.add_argument("--lodge-global-weights")
     parser.add_argument("--lodge-genre", default="Hiphop")
-    parser.add_argument("--render-width", type=int, default=1080)
-    parser.add_argument("--render-height", type=int, default=1080)
-    parser.add_argument("--render-samples", type=int, default=96)
-    parser.add_argument("--render-engine", default="eevee")
-    parser.add_argument("--render-denoise", type=int, default=1)
-    parser.add_argument("--render-frame-format", default="tga")
+    parser.add_argument(
+        "--render-width",
+        type=int,
+        default=int(os.environ.get("AGENTLODGE_RENDER_FULL_W", "1080")),
+    )
+    parser.add_argument(
+        "--render-height",
+        type=int,
+        default=int(os.environ.get("AGENTLODGE_RENDER_FULL_H", "1080")),
+    )
+    parser.add_argument(
+        "--render-samples",
+        type=int,
+        default=int(
+            os.environ.get("AGENTLODGE_RENDER_FULL_SAMPLES", "96")
+        ),
+    )
+    parser.add_argument(
+        "--render-engine",
+        default=os.environ.get("AGENTLODGE_RENDER_ENGINE", "eevee"),
+    )
+    parser.add_argument(
+        "--render-denoise",
+        type=int,
+        default=int(os.environ.get("AGENTLODGE_RENDER_DENOISE", "1")),
+    )
+    parser.add_argument(
+        "--render-frame-format",
+        default=os.environ.get("AGENTLODGE_RENDER_FRAME_FORMAT", "tga"),
+    )
     parser.add_argument("--worker-tmp")
     parser.add_argument(
         "--poll-interval",

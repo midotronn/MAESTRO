@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -58,16 +60,279 @@ class FileTaskCoordinator:
         self.registry = registry or WorkerRegistry.from_env()
         self.poll_interval = max(0.02, float(poll_interval))
         self.heartbeat_max_age = max(1.0, float(heartbeat_max_age))
-        self._round_robin: dict[str, int] = {}
+        configured_state = os.environ.get(
+            "AGENTLODGE_DISTRIBUTED_STATE",
+            "",
+        ).strip()
+        if configured_state:
+            self.state_dir = Path(configured_state).resolve()
+        else:
+            parents = {
+                worker.task_dir.resolve().parent
+                for worker in self.registry.workers
+            }
+            if not parents:
+                self.state_dir = Path(
+                    os.environ.get(
+                        "AGENTLODGE_SHARED_ROOT",
+                        Path.cwd(),
+                    )
+                ).resolve() / "maestro-workers" / "_coordinator"
+            elif len(parents) == 1:
+                self.state_dir = next(iter(parents)) / "_coordinator"
+            else:
+                common = Path(
+                    os.path.commonpath([str(path) for path in parents])
+                )
+                worker_paths = sorted(
+                    str(worker.task_dir.resolve())
+                    for worker in self.registry.workers
+                )
+                fingerprint = hashlib.sha256(
+                    "\n".join(worker_paths).encode("utf-8")
+                ).hexdigest()[:12]
+                self.state_dir = common / f".maestro-coordinator-{fingerprint}"
+        for name in ("locks", "tasks", "cancelled"):
+            (self.state_dir / name).mkdir(parents=True, exist_ok=True)
 
-    def _choose_worker(self, capability: str) -> WorkerSpec:
-        workers = self.registry.require(
-            capability,
-            max_age_seconds=self.heartbeat_max_age,
+    def _worker_load(self, worker: WorkerSpec) -> int:
+        return sum(
+            len(list((worker.task_dir / name).glob("*.json")))
+            for name in ("requests", "claimed")
         )
-        index = self._round_robin.get(capability, 0) % len(workers)
-        self._round_robin[capability] = index + 1
-        return workers[index]
+
+    def _choose_worker(
+        self,
+        capability: str,
+        task_id: str,
+        *,
+        exclude: set[str] | None = None,
+    ) -> WorkerSpec:
+        excluded = exclude or set()
+        workers = [
+            worker
+            for worker in self.registry.require(
+                capability,
+                max_age_seconds=self.heartbeat_max_age,
+            )
+            if worker.worker_id not in excluded
+        ]
+        if not workers:
+            raise RuntimeError(
+                f"no healthy replacement workers advertise {capability!r}"
+            )
+        return min(
+            workers,
+            key=lambda worker: (
+                self._worker_load(worker),
+                hashlib.sha256(
+                    f"{task_id}\n{worker.worker_id}".encode("utf-8")
+                ).hexdigest(),
+            ),
+        )
+
+    @contextmanager
+    def _task_lock(self, task_id: str):
+        lock_path = self.state_dir / "locks" / f"{task_id}.lock"
+        deadline = time.monotonic() + 10.0
+        descriptor = None
+        while descriptor is None:
+            try:
+                descriptor = os.open(
+                    lock_path,
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                )
+            except FileExistsError:
+                try:
+                    if time.time() - lock_path.stat().st_mtime > 60.0:
+                        lock_path.unlink(missing_ok=True)
+                        continue
+                except OSError:
+                    pass
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"timed out acquiring task lock for {task_id}"
+                    )
+                time.sleep(0.02)
+        try:
+            os.write(
+                descriptor,
+                f"{os.getpid()} {time.time()}\n".encode("ascii"),
+            )
+            os.close(descriptor)
+            descriptor = None
+            yield
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+            lock_path.unlink(missing_ok=True)
+
+    def _record_task(self, request: TaskRequest) -> None:
+        record_path = self.state_dir / "tasks" / f"{request.task_id}.json"
+        if record_path.exists():
+            try:
+                existing = TaskRequest.from_dict(
+                    json.loads(record_path.read_text(encoding="utf-8"))
+                )
+            except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"task record is invalid for {request.task_id}"
+                ) from exc
+            if (
+                existing.kind != request.kind
+                or existing.payload != request.payload
+            ):
+                raise ValueError(
+                    f"task id {request.task_id} already names a different request"
+                )
+            return
+        _atomic_json(record_path, request.to_dict())
+
+    def _existing_handle(self, request: TaskRequest) -> TaskHandle | None:
+        matches: list[TaskHandle] = []
+        for worker in self.registry.workers:
+            paths = (
+                worker.task_dir / "results" / f"{request.task_id}.json",
+                worker.task_dir / "claimed" / f"{request.task_id}.json",
+                worker.task_dir / "requests" / f"{request.task_id}.json",
+            )
+            for path in paths:
+                if not path.exists():
+                    continue
+                if path.parent.name == "results":
+                    try:
+                        result = TaskResult.from_dict(
+                            json.loads(path.read_text(encoding="utf-8"))
+                        )
+                    except (
+                        OSError,
+                        json.JSONDecodeError,
+                        TypeError,
+                        ValueError,
+                    ) as exc:
+                        raise RuntimeError(
+                            f"task result is invalid for {request.task_id}"
+                        ) from exc
+                    if (
+                        result.task_id != request.task_id
+                        or result.kind != request.kind
+                        or result.worker_id != worker.worker_id
+                    ):
+                        raise RuntimeError(
+                            f"task result provenance mismatch for {request.task_id}"
+                        )
+                else:
+                    try:
+                        queued = TaskRequest.from_dict(
+                            json.loads(path.read_text(encoding="utf-8"))
+                        )
+                    except (
+                        OSError,
+                        json.JSONDecodeError,
+                        TypeError,
+                        ValueError,
+                    ) as exc:
+                        raise RuntimeError(
+                            f"queued task is invalid for {request.task_id}"
+                        ) from exc
+                    if (
+                        queued.kind != request.kind
+                        or queued.payload != request.payload
+                    ):
+                        raise ValueError(
+                            f"task id {request.task_id} has conflicting payloads"
+                        )
+                matches.append(TaskHandle(request=request, worker=worker))
+                break
+        unique = {
+            handle.worker.worker_id: handle
+            for handle in matches
+        }
+        if len(unique) > 1:
+            raise RuntimeError(
+                f"task {request.task_id} exists on multiple workers: "
+                f"{', '.join(sorted(unique))}"
+            )
+        return next(iter(unique.values()), None)
+
+    def _queue_request(
+        self,
+        request: TaskRequest,
+        worker: WorkerSpec,
+    ) -> TaskHandle:
+        request_path = (
+            worker.task_dir / "requests" / f"{request.task_id}.json"
+        )
+        _atomic_json(request_path, request.to_dict())
+        return TaskHandle(request=request, worker=worker)
+
+    def _safe_reassign(self, handle: TaskHandle) -> TaskHandle | None:
+        task_id = handle.request.task_id
+        with self._task_lock(task_id):
+            result_path = handle.result_path
+            if result_path.exists():
+                return handle
+            claimed_path = (
+                handle.worker.task_dir / "claimed" / f"{task_id}.json"
+            )
+            if claimed_path.exists():
+                return None
+            existing = self._existing_handle(handle.request)
+            if existing is not None and existing.worker != handle.worker:
+                return existing
+            request_path = (
+                handle.worker.task_dir / "requests" / f"{task_id}.json"
+            )
+            cancelled_path = (
+                self.state_dir
+                / "cancelled"
+                / f"{task_id}.{uuid.uuid4().hex}.json"
+            )
+            moved = False
+            if request_path.exists():
+                try:
+                    os.replace(request_path, cancelled_path)
+                    moved = True
+                except FileNotFoundError:
+                    if claimed_path.exists():
+                        return None
+            alternatives = [
+                worker
+                for worker in self.registry.for_capability(
+                    handle.request.kind,
+                    require_healthy=True,
+                    max_age_seconds=self.heartbeat_max_age,
+                )
+                if worker.worker_id != handle.worker.worker_id
+            ]
+            if not alternatives:
+                if moved and cancelled_path.exists():
+                    os.replace(cancelled_path, request_path)
+                return None
+            try:
+                replacement = self._choose_worker(
+                    handle.request.kind,
+                    task_id,
+                    exclude={handle.worker.worker_id},
+                )
+                reassigned = self._queue_request(
+                    handle.request,
+                    replacement,
+                )
+            except Exception:
+                if moved and cancelled_path.exists():
+                    os.replace(cancelled_path, request_path)
+                raise
+            cancelled_path.unlink(missing_ok=True)
+            return reassigned
+
+    def _validate_worker(self, kind: str, selected: WorkerSpec) -> None:
+        if kind not in selected.capabilities:
+            raise ValueError(
+                f"worker {selected.worker_id} does not advertise {kind!r}"
+            )
+        if not selected.is_healthy(max_age_seconds=self.heartbeat_max_age):
+            raise RuntimeError(f"worker {selected.worker_id} is not healthy")
 
     def submit(
         self,
@@ -77,28 +342,18 @@ class FileTaskCoordinator:
         worker: WorkerSpec | None = None,
         task_id: str | None = None,
     ) -> TaskHandle:
-        selected = worker or self._choose_worker(kind)
-        if kind not in selected.capabilities:
-            raise ValueError(
-                f"worker {selected.worker_id} does not advertise {kind!r}"
-            )
-        if not selected.is_healthy(max_age_seconds=self.heartbeat_max_age):
-            raise RuntimeError(f"worker {selected.worker_id} is not healthy")
-
         request = TaskRequest.create(kind, payload, task_id=task_id)
-        handle = TaskHandle(request=request, worker=selected)
-        if handle.result_path.exists():
-            return handle
-
-        request_path = (
-            selected.task_dir / "requests" / f"{request.task_id}.json"
-        )
-        claimed_path = (
-            selected.task_dir / "claimed" / f"{request.task_id}.json"
-        )
-        if not request_path.exists() and not claimed_path.exists():
-            _atomic_json(request_path, request.to_dict())
-        return handle
+        with self._task_lock(request.task_id):
+            self._record_task(request)
+            existing = self._existing_handle(request)
+            if existing is not None:
+                return existing
+            selected = worker or self._choose_worker(
+                kind,
+                request.task_id,
+            )
+            self._validate_worker(kind, selected)
+            return self._queue_request(request, selected)
 
     def wait(
         self,
@@ -159,31 +414,10 @@ class FileTaskCoordinator:
                     continue
                 if reassignments[task_id] >= max(0, int(max_reassignments)):
                     continue
-                alternatives = [
-                    worker
-                    for worker in self.registry.for_capability(
-                        handle.request.kind,
-                        require_healthy=True,
-                        max_age_seconds=self.heartbeat_max_age,
-                    )
-                    if worker.worker_id != handle.worker.worker_id
-                ]
-                if not alternatives:
+                replacement = self._safe_reassign(handle)
+                if replacement is None:
                     continue
-                replacement = alternatives[
-                    reassignments[task_id] % len(alternatives)
-                ]
-                for old_path in (
-                    handle.worker.task_dir / "requests" / f"{task_id}.json",
-                    handle.worker.task_dir / "claimed" / f"{task_id}.json",
-                ):
-                    old_path.unlink(missing_ok=True)
-                pending[task_id] = self.submit(
-                    handle.request.kind,
-                    handle.request.payload,
-                    worker=replacement,
-                    task_id=handle.request.task_id,
-                )
+                pending[task_id] = replacement
                 reassignments[task_id] += 1
             if not pending:
                 break

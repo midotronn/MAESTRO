@@ -46,6 +46,31 @@ def import_logs(log_paths: list[Path], output_dir: Path) -> list[dict]:
     for log_path in log_paths:
         sid, trace = extract_trace(log_path)
         output_path = output_dir / f"{sid}.json"
+        if output_path.exists():
+            try:
+                existing = json.loads(output_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    f"{output_path}: existing trace is unreadable"
+                ) from exc
+            if existing.get("request_id") != trace.get("request_id"):
+                raise FileExistsError(
+                    f"{output_path}: sid {sid!r} already belongs to request "
+                    f"{existing.get('request_id')!r}"
+                )
+            imported.append(
+                {
+                    "sid": sid,
+                    "request_id": trace.get("request_id"),
+                    "browser_total_seconds": existing.get(
+                        "browser_total_seconds"
+                    ),
+                    "service_state": existing.get("service_state"),
+                    "output": str(output_path),
+                    "status": "existing",
+                }
+            )
+            continue
         output_path.write_text(
             json.dumps(trace, indent=2) + "\n",
             encoding="utf-8",
@@ -57,6 +82,7 @@ def import_logs(log_paths: list[Path], output_dir: Path) -> list[dict]:
                 "browser_total_seconds": trace["browser_total_seconds"],
                 "service_state": trace.get("service_state"),
                 "output": str(output_path),
+                "status": "imported",
             }
         )
     return imported

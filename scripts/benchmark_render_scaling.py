@@ -104,7 +104,7 @@ def benchmark_render_workers(
         handles.append(handle)
         assignments.append(
             {
-                "worker_id": worker.worker_id,
+                "assigned_worker_id": worker.worker_id,
                 "frame_start": start,
                 "frame_end": end,
                 "frames": end - start,
@@ -135,6 +135,7 @@ def benchmark_render_workers(
         per_worker.append(
             {
                 **assignment,
+                "worker_id": result.worker_id,
                 "duration_seconds": round(duration, 3),
                 "frames_per_second": round(assignment["frames"] / duration, 3),
                 "source_frames_sha256": output.get("source_frames_sha256"),

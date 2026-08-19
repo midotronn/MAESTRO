@@ -443,9 +443,13 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
                 time.sleep(1)
             for thread in threads:
                 thread.join()
-        rendered_frames = min(
-            total_frames,
-            _count_frame_files(frames_dir, frame_format),
+        rendered_frames = (
+            total_frames
+            if distributed
+            else min(
+                total_frames,
+                _count_frame_files(frames_dir, frame_format),
+            )
         )
         _set(
             sid,

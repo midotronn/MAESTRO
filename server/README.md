@@ -70,9 +70,13 @@ copy `bank_<sid>_*.npy` into `server/media/<sid>/bank/`.
   unset, distributed mode requires all roles reached by the request.
 - Start one capability worker per isolated GPU container with `scripts/runpod_worker.py`. Task
   requests and results live under each worker's configured `task_dir`; deterministic task IDs make
-  retries idempotent, and heartbeat/version checks prevent dispatch to stale workers. If distributed
-  mode is enabled but the required role is unavailable, the request fails explicitly rather than
-  silently falling back to a slower or quality-changing path.
+  retries idempotent, and heartbeat/version checks prevent dispatch to stale workers. Coordinators
+  share `AGENTLODGE_DISTRIBUTED_STATE` (by default the worker directories' common
+  `_coordinator` directory) to serialize submissions, reject conflicting task IDs, and choose the
+  least-loaded healthy worker. A stale task is reassigned only while it is still unclaimed; claimed
+  work is never duplicated automatically. If distributed mode is enabled but the required role is
+  unavailable, the request fails explicitly rather than silently falling back to a slower or
+  quality-changing path.
 - Distributed render workers accept only the configured quality contract, render disjoint global
   frame ranges to worker-local lossless TGA/PNG files, hash every assigned source frame, and package
   each range as an FFV1 Matroska shard before crossing the shared volume. The coordinator verifies

@@ -49,6 +49,7 @@ class FileTaskWorker:
         self._status = "starting"
         self._active_task = ""
         self._heartbeat_thread: threading.Thread | None = None
+        self._pending_results: dict[Path, TaskResult] = {}
         for name in ("requests", "claimed", "results"):
             (self.spec.task_dir / name).mkdir(parents=True, exist_ok=True)
         self._recover_claimed()
@@ -128,6 +129,10 @@ class FileTaskWorker:
         self.set_status("stopping")
 
     def _claim_next(self) -> Path | None:
+        for claimed_path in sorted(self._pending_results):
+            if claimed_path.exists():
+                return claimed_path
+            self._pending_results.pop(claimed_path, None)
         request_dir = self.spec.task_dir / "requests"
         claimed_dir = self.spec.task_dir / "claimed"
         for request_path in sorted(request_dir.glob("*.json")):
@@ -142,59 +147,77 @@ class FileTaskWorker:
         return None
 
     def _process(self, claimed_path: Path) -> None:
-        started_at = time.time()
-        request: TaskRequest | None = None
-        try:
-            request = TaskRequest.from_dict(
-                json.loads(claimed_path.read_text(encoding="utf-8"))
-            )
-            result_path = (
-                self.spec.task_dir / "results" / f"{request.task_id}.json"
-            )
-            if result_path.exists():
-                return
-            self.set_status("busy", request.task_id)
-            handler = self.handlers.get(request.kind)
-            if handler is None:
-                raise RuntimeError(
-                    f"worker {self.spec.worker_id} cannot execute {request.kind!r}"
+        result = self._pending_results.get(claimed_path)
+        if result is None:
+            started_at = time.time()
+            request: TaskRequest | None = None
+            try:
+                request = TaskRequest.from_dict(
+                    json.loads(claimed_path.read_text(encoding="utf-8"))
                 )
-            output = dict(handler(request.payload) or {})
-            result = TaskResult(
-                task_id=request.task_id,
-                kind=request.kind,
-                worker_id=self.spec.worker_id,
-                status="succeeded",
-                started_at=started_at,
-                finished_at=time.time(),
-                output=output,
-            )
-        except Exception as exc:  # noqa: BLE001 - failure must be returned to the coordinator
-            task_id = (
-                request.task_id
-                if request
-                else "invalid-"
-                + hashlib.sha256(claimed_path.name.encode("utf-8")).hexdigest()[:32]
-            )
-            kind = request.kind if request else "invalid.task"
-            result = TaskResult(
-                task_id=task_id,
-                kind=kind,
-                worker_id=self.spec.worker_id,
-                status="failed",
-                started_at=started_at,
-                finished_at=time.time(),
-                error=(
-                    f"{type(exc).__name__}: {exc}\n"
-                    f"{traceback.format_exc()[-4000:]}"
-                ),
-            )
-        finally:
-            self.set_status("ready")
-        _atomic_json(
-            self.spec.task_dir / "results" / f"{result.task_id}.json",
-            result.to_dict(),
+                result_path = (
+                    self.spec.task_dir / "results" / f"{request.task_id}.json"
+                )
+                if result_path.exists():
+                    self.set_status("ready")
+                    return
+                self.set_status("busy", request.task_id)
+                handler = self.handlers.get(request.kind)
+                if handler is None:
+                    raise RuntimeError(
+                        f"worker {self.spec.worker_id} cannot execute {request.kind!r}"
+                    )
+                output = dict(handler(request.payload) or {})
+                result = TaskResult(
+                    task_id=request.task_id,
+                    kind=request.kind,
+                    worker_id=self.spec.worker_id,
+                    status="succeeded",
+                    started_at=started_at,
+                    finished_at=time.time(),
+                    output=output,
+                )
+                result.validate()
+            except Exception as exc:  # noqa: BLE001 - returned to the coordinator
+                task_id = (
+                    request.task_id
+                    if request
+                    else "invalid-"
+                    + hashlib.sha256(
+                        claimed_path.name.encode("utf-8")
+                    ).hexdigest()[:32]
+                )
+                kind = request.kind if request else "invalid.task"
+                result = TaskResult(
+                    task_id=task_id,
+                    kind=kind,
+                    worker_id=self.spec.worker_id,
+                    status="failed",
+                    started_at=started_at,
+                    finished_at=time.time(),
+                    error=(
+                        f"{type(exc).__name__}: {exc}\n"
+                        f"{traceback.format_exc()[-4000:]}"
+                    ),
+                )
+            self._pending_results[claimed_path] = result
+        result_path = (
+            self.spec.task_dir / "results" / f"{result.task_id}.json"
         )
+        last_error: OSError | None = None
+        for attempt in range(5):
+            try:
+                _atomic_json(result_path, result.to_dict())
+                self._pending_results.pop(claimed_path, None)
+                self.set_status("ready")
+                return
+            except OSError as exc:
+                last_error = exc
+                time.sleep(min(1.0, 0.05 * (2**attempt)))
+        self.set_status("degraded", result.task_id)
+        raise OSError(
+            f"could not persist result for {result.task_id}"
+        ) from last_error
 
     def run_once(self) -> bool:
         claimed = self._claim_next()
@@ -202,9 +225,17 @@ class FileTaskWorker:
             return False
         try:
             self._process(claimed)
-        finally:
+        except Exception:
+            logger.exception(
+                "worker %s retained task %s after processing failure",
+                self.spec.worker_id,
+                claimed.stem,
+            )
+            self.set_status("degraded", claimed.stem)
+            return False
+        else:
             claimed.unlink(missing_ok=True)
-        return True
+            return True
 
     def run_forever(self) -> None:
         self.set_status("ready")
