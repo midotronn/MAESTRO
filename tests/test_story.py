@@ -76,8 +76,8 @@ def test_reuse_fit_prevents_extreme_speedup():
     source = _valid_motion(96, seed=32)
     fitted, fit = ST._fit_reuse_clip(source, 36, requested_time_scale=0.375)
     assert fitted.shape == (36, 139)
-    assert fit["selected_frames"] == 36
-    assert fit["playback_speed"] == 1.0
+    assert fit["selected_frames"] == 43
+    assert fit["playback_speed"] == 1.1944
     assert fit["capped"]
     assert fit["playback_speed"] <= ST.MAX_REUSE_PLAYBACK_SPEED
 

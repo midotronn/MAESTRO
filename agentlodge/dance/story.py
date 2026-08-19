@@ -50,9 +50,9 @@ _W_RECAP = 0.6   # decisive bonus for an enabled recapitulation (ABA) close
 
 # Reusing an entire long phrase inside a much shorter section used to create extreme playback
 # speeds (for example, 32 seconds compressed into 12 seconds). Storyboard ``retime`` is an output
-# duration / source duration ratio. Reused motifs may be slowed slightly, but never accelerated;
-# shorter sections crop a coherent excerpt instead of squeezing the complete phrase.
-MAX_REUSE_PLAYBACK_SPEED = 1.0
+# duration / source duration ratio. Reused motifs may receive a modest tempo lift, but shorter
+# sections crop a coherent excerpt rather than squeezing the complete phrase.
+MAX_REUSE_PLAYBACK_SPEED = 1.2
 MIN_REUSE_TIME_SCALE = 1.0 / MAX_REUSE_PLAYBACK_SPEED
 MAX_REUSE_TIME_SCALE = 1.25
 
