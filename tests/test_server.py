@@ -541,6 +541,118 @@ def test_upload_pipeline_uses_latest_structured_progress_event():
     }
 
 
+def test_upload_pipeline_parses_remote_stage_timings():
+    import server.processing as processing
+
+    report = processing._pipeline_timing_report(
+        "\n".join(
+            [
+                "MAESTRO_TIMING generation_lodge start 1000 k=1",
+                "MAESTRO_TIMING generation_edge start 1100 k=1",
+                "MAESTRO_TIMING generation_lodge end 4000 k=1",
+                "MAESTRO_TIMING generation_edge end 5100 k=1",
+                "MAESTRO_TIMING generation_lodge start 6000 retry",
+                "MAESTRO_TIMING generation_lodge end 8000 retry",
+            ]
+        )
+    )
+
+    assert report["stages"]["generation_lodge"] == {
+        "attempts": 2,
+        "duration_seconds": 5.0,
+        "first_started_at_ms": 1000,
+        "last_ended_at_ms": 8000,
+    }
+    assert report["stages"]["generation_edge"]["duration_seconds"] == 4.0
+
+
+def test_job_trace_persists_stages_and_browser_timing(tmp_path):
+    import server.processing as processing
+
+    processing._JOBS.clear()
+    trace_path = tmp_path / "trace.json"
+    processing._set(
+        "trace-song",
+        status="queued",
+        stage="queued",
+        started=100.0,
+        request_id="request-1",
+        source_bytes=123,
+        trace_path=str(trace_path),
+    )
+    processing._set(
+        "trace-song",
+        status="processing",
+        stage="generation",
+        progress=40,
+    )
+    processing._set(
+        "trace-song",
+        status="done",
+        stage="ready",
+        progress=100,
+        finished=105.0,
+    )
+    timing = processing.record_browser_timing(
+        "trace-song",
+        {
+            "request_id": "request-1",
+            "browser_started_at_ms": 1000,
+            "browser_completed_at_ms": 6000,
+            "browser_upload_seconds": 1.25,
+            "browser_total_seconds": 5.0,
+            "source_bytes": 123,
+        },
+    )
+
+    job = processing.get_job("trace-song")
+    persisted = json.loads(trace_path.read_text(encoding="utf-8"))
+    assert [stage["stage"] for stage in job["stage_timeline"]] == [
+        "queued",
+        "generation",
+        "ready",
+    ]
+    assert all(stage["duration_seconds"] is not None for stage in job["stage_timeline"])
+    assert timing["browser_total_seconds"] == 5.0
+    assert persisted["browser_total_seconds"] == 5.0
+    assert persisted["request_id"] == "request-1"
+
+
+def test_upload_passes_request_and_source_metadata_to_processing(client, monkeypatch):
+    import server.app as A
+
+    captured = {}
+
+    def fake_start(sid, wav, media_dir, display_name, **kwargs):
+        captured.update(
+            sid=sid,
+            wav=wav,
+            media_dir=media_dir,
+            display_name=display_name,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(A.processing, "start_processing", fake_start)
+    response = client.post(
+        "/api/upload",
+        files={"file": ("timed.wav", b"timed-audio", "audio/wav")},
+        data={
+            "request_id": "browser-request",
+            "client_started_at_ms": "1234.5",
+        },
+        headers={"X-MAESTRO-Request-ID": "browser-request"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["request_id"] == "browser-request"
+    assert payload["source_bytes"] == len(b"timed-audio")
+    assert captured["request_id"] == "browser-request"
+    assert captured["client_started_at_ms"] == 1234.5
+    assert captured["source_bytes"] == len(b"timed-audio")
+    assert len(captured["source_sha256"]) == 64
+
+
 def test_lists_songs_and_opens_session(client):
     songs = client.get("/api/songs").json()["songs"]
     assert any(s["sid"] == "sng" for s in songs)
@@ -720,6 +832,8 @@ def test_upload_critical_path_builds_only_seed_zero():
     assert 'AGENTLODGE_BANK_K=1 "$PY" "$BANK" "$SID"' in script
     assert 'echo "BANK_DEFERRED $K"' in script
     assert 'AGENTLODGE_SKIP_RENDER' in script
+    assert "MAESTRO_TIMING" in script
+    assert "generation_total" in script
 
 
 def test_packaged_song_generator_writes_expected_outputs(tmp_path, monkeypatch):
@@ -949,6 +1063,8 @@ def test_editor_review_actions_explain_the_user_flow():
     assert "activityUpdate" in js
     assert "XMLHttpRequest" in js
     assert "xhr.upload.onprogress" in js
+    assert "X-MAESTRO-Request-ID" in js
+    assert "/browser-timing" in js
     assert "waitForMediaReady" in js
     assert "action applied, quality warning" in js
 

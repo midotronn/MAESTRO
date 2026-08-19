@@ -1,0 +1,23 @@
+{
+  "baseline_record_id": "historical-rtx-pro-4500-b3d9d1b",
+  "target_frames": 5400,
+  "budgets_seconds": {
+    "preprocessing_and_generation": 20.0,
+    "rendering_and_encoding": 23.0
+  },
+  "historical_throughput": {
+    "render_frames_per_second": 11.36,
+    "scaled_preprocessing_and_generation_seconds": 364.3
+  },
+  "required_throughput": {
+    "render_frames_per_second": 234.783,
+    "render_gpu_equivalents_under_ideal_linear_scaling": 21,
+    "generation_throughput_equivalents_under_ideal_linear_scaling": 19
+  },
+  "warnings": [
+    "These are throughput equivalents, not a recommended topology.",
+    "Generation is not fully parallelizable, so its equivalent count is only a lower-bound diagnostic.",
+    "The historical render timing includes staging and comes from one run.",
+    "Replace this model with p50 and p95 trace data before provisioning GPUs."
+  ]
+}

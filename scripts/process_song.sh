@@ -14,11 +14,26 @@ K="${AGENTLODGE_BANK_K:-4}"
 AL="${AGENTLODGE_ROOT:-$WORKSPACE/AgentLODGE}"
 PY="${AL_PY:-$AL/.venv/bin/python}"
 SKIP_RENDER="${AGENTLODGE_SKIP_RENDER:-0}"
+OUT="$WORKSPACE/upload_${SID}"
+TIMING_FILE="${MAESTRO_TIMING_FILE:-$OUT/timings.tsv}"
 cd "$WORKSPACE"
 export PYTHONUNBUFFERED=1 WORKSPACE AGENTLODGE_ROOT="$AL"
-fail() { echo "PROCESS_${SID}_FAILED: $1" >&2; exit 1; }
+mkdir -p "$OUT" "$(dirname "$TIMING_FILE")"
+: > "$TIMING_FILE"
+now_ms() { date +%s%3N; }
+timing() {
+  local line="MAESTRO_TIMING $1 $2 $(now_ms) ${3:-}"
+  printf '%s\n' "$line"
+  printf '%s\n' "$line" >> "$TIMING_FILE"
+}
+fail() {
+  timing pipeline end "failed: $1"
+  echo "PROCESS_${SID}_FAILED: $1" >&2
+  exit 1
+}
 progress() { printf 'MAESTRO_PROGRESS %s %s %s\n' "$1" "$2" "$3"; }
 [ -x "$PY" ] || fail "Python environment not found: $PY"
+timing pipeline start "song=$SID"
 
 find_script() {  # look in $WORKSPACE then the repo scripts dir
   for p in "$WORKSPACE/$1" "$AL/scripts/$1"; do
@@ -28,6 +43,7 @@ find_script() {  # look in $WORKSPACE then the repo scripts dir
 }
 
 # Jukebox's 10GB prior must live on /workspace; /root is wiped on every pod restart.
+timing assets start
 progress assets 22 "Checking generation model assets"
 PRIOR_SIZE=10288727721
 PRIOR_STORE="${AGENTLODGE_JUKEBOX_PRIOR:-$WORKSPACE/.cache/jukemirlib/prior_level_2.pth.tar}"
@@ -50,6 +66,7 @@ if [ "$(stat -c %s "$PRIOR_STORE" 2>/dev/null || echo 0)" -ne "$PRIOR_SIZE" ]; t
     || fail "Jukebox prior download is incomplete"
 fi
 ln -sfn "$PRIOR_STORE" "$PRIOR_LINK"
+timing assets end
 
 PRE="$(find_script preprocess_song.py)" || fail "preprocess_song.py not found on the pod"
 GEN="$(find_script make_song_bestofk.py)" || fail "make_song_bestofk.py not found on the pod"
@@ -60,25 +77,50 @@ REND="$(find_script render_one_ybot.sh)" || fail "render_one_ybot.sh not found"
 progress preprocess 25 "Extracting LODGE and EDGE music features"
 echo "### [1/6] preprocess (LODGE feats + EDGE jukebox slices)"
 PREP_LOG_DIR="$WORKSPACE/gen${SID}_work"; mkdir -p "$PREP_LOG_DIR"
-"$PY" "$PRE" "$SID" --lodge-only > "$PREP_LOG_DIR/preprocess_lodge.log" 2>&1 &
+(
+  timing preprocess_lodge start
+  "$PY" "$PRE" "$SID" --lodge-only
+  rc=$?
+  timing preprocess_lodge end "rc=$rc"
+  exit "$rc"
+) > "$PREP_LOG_DIR/preprocess_lodge.log" 2>&1 &
 LODGE_PREP_PID=$!
-"$PY" "$PRE" "$SID" --edge-only > "$PREP_LOG_DIR/preprocess_edge.log" 2>&1 &
+(
+  timing preprocess_edge start
+  "$PY" "$PRE" "$SID" --edge-only
+  rc=$?
+  timing preprocess_edge end "rc=$rc"
+  exit "$rc"
+) > "$PREP_LOG_DIR/preprocess_edge.log" 2>&1 &
 EDGE_PREP_PID=$!
 LODGE_PREP_RC=0; wait "$LODGE_PREP_PID" || LODGE_PREP_RC=$?
 EDGE_PREP_RC=0; wait "$EDGE_PREP_PID" || EDGE_PREP_RC=$?
 cat "$PREP_LOG_DIR/preprocess_lodge.log" "$PREP_LOG_DIR/preprocess_edge.log"
 if [ "$LODGE_PREP_RC" -ne 0 ]; then
   echo "### parallel LODGE preprocessing failed; retrying alone"
-  "$PY" "$PRE" "$SID" --lodge-only || fail "LODGE preprocess failed"
+  timing preprocess_lodge_retry start
+  "$PY" "$PRE" "$SID" --lodge-only
+  retry_rc=$?
+  timing preprocess_lodge_retry end "rc=$retry_rc"
+  [ "$retry_rc" -eq 0 ] || fail "LODGE preprocess failed"
 fi
 if [ "$EDGE_PREP_RC" -ne 0 ]; then
   echo "### parallel EDGE preprocessing failed; retrying alone"
-  "$PY" "$PRE" "$SID" --edge-only || fail "EDGE preprocess failed"
+  timing preprocess_edge_retry start
+  "$PY" "$PRE" "$SID" --edge-only
+  retry_rc=$?
+  timing preprocess_edge_retry end "rc=$retry_rc"
+  [ "$retry_rc" -eq 0 ] || fail "EDGE preprocess failed"
 fi
 progress generation 40 "Generating LODGE and EDGE motion"
 echo "### [2/6] best-of-K generation + storyboard"
-"$PY" "$GEN" "$SID" || fail "generation failed"
+timing generation_total start
+"$PY" "$GEN" "$SID"
+GEN_RC=$?
+timing generation_total end "rc=$GEN_RC"
+[ "$GEN_RC" -eq 0 ] || fail "generation failed"
 progress polish 68 "Assembling and polishing the choreography"
+timing polish start
 if [ -n "${RECAP:-}" ]; then echo "### [2b] recap alignment"; "$PY" "$RECAP" "$SID" || true; fi
 echo "### [2c] resolve hand-through-body self-penetration"
 PEN="$(find_script resolve_penetration.py || true)"
@@ -86,13 +128,19 @@ if [ -n "${PEN:-}" ]; then
   "$PY" "$PEN" "fd_${SID}_STORY_bestofk.npy" "fd_${SID}_STORY_bestofk.npy" \
     --radius 0.12 --margin 0.03 --max-deg 30 || echo "  (penetration cleanup skipped)"
 fi
+timing polish end
 progress seed_bank 73 "Building the initial editing bank"
 echo "### [3/6] seed-0 editing bank"
-AGENTLODGE_BANK_K=1 "$PY" "$BANK" "$SID" || fail "seed-0 bank build failed"
+timing seed_bank start
+AGENTLODGE_BANK_K=1 "$PY" "$BANK" "$SID"
+BANK_RC=$?
+timing seed_bank end "rc=$BANK_RC"
+[ "$BANK_RC" -eq 0 ] || fail "seed-0 bank build failed"
 
 progress beats 76 "Tracking beats and musical accents"
 echo "### [4/6] beats"
-"$PY" - "$SID" <<'PY' || fail "beat tracking failed"
+timing beats start
+"$PY" - "$SID" <<'PY'
 import sys, numpy as np, librosa
 sid = sys.argv[1]
 y, sr = librosa.load(f"/workspace/LODGE/data/finedance/music_wav/{sid}.wav", sr=22050, mono=True)
@@ -112,16 +160,22 @@ np.save(f"/workspace/beats_{sid}.npy", np.asarray(beat_times, dtype=np.float32))
 np.save(f"/workspace/beat_strengths_{sid}.npy", strengths)
 print("beats", len(beat_frames), "strongest", float(strengths.max()) if strengths.size else 0.0)
 PY
+BEAT_RC=$?
+timing beats end "rc=$BEAT_RC"
+[ "$BEAT_RC" -eq 0 ] || fail "beat tracking failed"
 
 progress staging 79 "Staging generated dance assets"
 echo "### [5/6] stage initial outputs"
-OUT="$WORKSPACE/upload_${SID}"; mkdir -p "$OUT"
+timing staging start
+mkdir -p "$OUT"
 cp "fd_${SID}_STORY_bestofk.npy" "$OUT/base_motion.npy"
 cp "beats_${SID}.npy"            "$OUT/beats.npy"
 cp "beat_strengths_${SID}.npy"   "$OUT/beat_strengths.npy"
 cp bank_${SID}_*_seed0.npy       "$OUT/" 2>/dev/null || true
+timing staging end
 
 progress preview 80 "Preparing the initial preview"
+timing preview start
 if [ "$SKIP_RENDER" = "1" ]; then
   echo "### [6/6] preview render delegated to the hosted warm renderer"
 else
@@ -129,7 +183,9 @@ else
   bash "$REND" "fd_${SID}_STORY_bestofk.npy" "v_${SID}_preview.mp4" "$SID" || fail "render failed"
   cp "v_${SID}_preview.mp4" "$OUT/preview.mp4"
 fi
+timing preview end "delegated=$SKIP_RENDER"
 
 progress preview 82 "Generation pipeline complete"
 echo "BANK_DEFERRED $K"
+timing pipeline end "success"
 echo "PROCESS_${SID}_DONE"

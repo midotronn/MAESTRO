@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "selection_target": 2,
+  "mandatory": [
+    {
+      "id": "lodge",
+      "role": "component_baseline",
+      "status": "integrated"
+    },
+    {
+      "id": "edge",
+      "role": "component_baseline",
+      "status": "integrated"
+    }
+  ],
+  "external_candidates": [
+    {
+      "id": "bailando",
+      "family": "Bailando or Bailando++",
+      "status": "selected_for_technical_pilot",
+      "preferred_variant": "bailando_plus_plus",
+      "official_repository": "https://github.com/lisiyao21/Bailando",
+      "paper": "https://arxiv.org/abs/2203.13055",
+      "license": "NTU S-Lab License 1.0, non-commercial research use",
+      "code_available": true,
+      "weights_available": true,
+      "native_fps": 60,
+      "representation": "SMPL-24 positions and rotation output",
+      "conversion": [
+        "downsample 60 FPS to 30 FPS with a frozen policy",
+        "convert rotation matrices to axis-angle",
+        "map the body-joint subset into the MAESTRO representation",
+        "validate root scale, contacts, and Y-Bot retargeting"
+      ],
+      "gate": [
+        "official_code",
+        "accessible_weights",
+        "research_compatible_license",
+        "audio_input_compatibility",
+        "stable_pilot_inference",
+        "lossless_semantic_conversion"
+      ]
+    },
+    {
+      "id": "finedance",
+      "family": "FineDance generation baseline",
+      "status": "selected_for_technical_pilot",
+      "official_repository": "https://github.com/li-ronghui/FineDance",
+      "paper": "https://arxiv.org/abs/2212.03741",
+      "license": "not stated; publication use requires confirmation",
+      "code_available": true,
+      "weights_available": true,
+      "native_fps": 30,
+      "representation": "SMPL-H 319-dimensional motion",
+      "conversion": [
+        "remove hand-only joints for the body-only Y-Bot comparison",
+        "convert 6D rotations to the MAESTRO rotation representation",
+        "validate root scale, contacts, and Y-Bot retargeting"
+      ],
+      "known_setup_issue": "The published environment pins a CPU-only PyTorch package and must be corrected for GPU inference.",
+      "gate": [
+        "official_code",
+        "accessible_weights",
+        "research_compatible_license",
+        "audio_input_compatibility",
+        "stable_pilot_inference",
+        "lossless_semantic_conversion"
+      ]
+    },
+    {
+      "id": "beat_it",
+      "family": "Beat-It",
+      "status": "rejected_no_reproducible_artifacts",
+      "official_repository": "https://github.com/ZikaiHuangSCUT/Beat-It",
+      "paper": "https://arxiv.org/abs/2407.07554",
+      "license": "not stated",
+      "code_available": false,
+      "weights_available": false,
+      "rejection_reason": "The official repository contains no runnable inference code or pretrained weights.",
+      "gate": [
+        "official_code",
+        "accessible_weights",
+        "research_compatible_license",
+        "audio_input_compatibility",
+        "stable_pilot_inference",
+        "lossless_semantic_conversion"
+      ]
+    }
+  ],
+  "selection_rule": "Technically pilot Bailando++ and FineDance. Do not use FineDance in publication artifacts until its license is confirmed. Beat-It remains a related-work-only comparison unless runnable official artifacts are released."
+}

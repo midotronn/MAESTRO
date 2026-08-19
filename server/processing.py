@@ -48,6 +48,9 @@ _PIPELINE_PROGRESS_RE = re.compile(
 _PIPELINE_SUBPROGRESS_RE = re.compile(
     r"^MAESTRO_SUBPROGRESS\s+([a-z0-9_-]+)\s+(\d{1,3})\s*(.*)$"
 )
+_PIPELINE_TIMING_RE = re.compile(
+    r"^MAESTRO_TIMING\s+([a-z0-9_-]+)\s+(start|end)\s+(\d+)\s*(.*)$"
+)
 
 
 @dataclass
@@ -82,14 +85,50 @@ def slugify(name: str) -> str:
 
 
 # --------------------------------------------------------------------------- job state
+def _public_job(job: dict) -> dict:
+    return {
+        key: value
+        for key, value in job.items()
+        if not key.startswith("_") and key != "trace_path"
+    }
+
+
+def _close_active_stage(job: dict, ended_at: float) -> None:
+    timeline = job.setdefault("stage_timeline", [])
+    if not timeline or timeline[-1].get("ended_at") is not None:
+        return
+    timeline[-1]["ended_at"] = ended_at
+    timeline[-1]["duration_seconds"] = round(
+        max(0.0, ended_at - float(timeline[-1]["started_at"])),
+        3,
+    )
+
+
+def _persist_job(trace_path: str | None, job: dict) -> None:
+    if not trace_path:
+        return
+    try:
+        path = Path(trace_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = _public_job(job)
+        started = payload.get("started")
+        if started:
+            ended = payload.get("finished") or time.time()
+            payload["elapsed"] = round(max(0.0, float(ended) - float(started)), 3)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except (OSError, TypeError, ValueError):
+        pass
+
+
 def get_job(sid: str) -> dict:
     with _LOCK:
-        job = dict(
+        raw = dict(
             _JOBS.get(
                 sid,
                 {"status": "unknown", "message": "no such job", "progress": 0},
             )
         )
+    job = _public_job(raw)
     started = job.get("started")
     if started:
         ended = job.get("finished") or time.time()
@@ -102,8 +141,66 @@ def _set(sid: str, **kw) -> None:
     kw["updated"] = now
     if kw.get("status") in {"done", "error"}:
         kw.setdefault("finished", now)
+    snapshot = None
+    trace_path = None
     with _LOCK:
-        _JOBS.setdefault(sid, {}).update(kw)
+        job = _JOBS.setdefault(sid, {})
+        supplied_timeline = kw.pop("stage_timeline", None)
+        if supplied_timeline is not None:
+            job["stage_timeline"] = list(supplied_timeline)
+        stage = kw.get("stage")
+        if stage and stage != job.get("_active_stage"):
+            _close_active_stage(job, now)
+            job["_active_stage"] = stage
+            job.setdefault("stage_timeline", []).append(
+                {
+                    "stage": stage,
+                    "started_at": now,
+                    "ended_at": None,
+                    "duration_seconds": None,
+                }
+            )
+        job.update(kw)
+        if kw.get("status") in {"done", "error"}:
+            _close_active_stage(job, float(job["finished"]))
+            trace_path = job.get("trace_path")
+            snapshot = dict(job)
+    if snapshot is not None:
+        _persist_job(trace_path, snapshot)
+
+
+def record_browser_timing(sid: str, timing: dict) -> dict:
+    """Attach the browser-observed upload and total latency to a completed job trace."""
+    with _LOCK:
+        job = _JOBS.get(sid)
+        if job is None:
+            raise KeyError(sid)
+        request_id = str(timing.get("request_id") or "")
+        expected = str(job.get("request_id") or "")
+        if expected and request_id != expected:
+            raise ValueError("request_id does not match the upload job")
+        normalized = {
+            "request_id": request_id or expected,
+            "browser_started_at_ms": float(timing["browser_started_at_ms"]),
+            "browser_completed_at_ms": float(timing["browser_completed_at_ms"]),
+            "browser_upload_seconds": round(
+                max(0.0, float(timing["browser_upload_seconds"])),
+                3,
+            ),
+            "browser_total_seconds": round(
+                max(0.0, float(timing["browser_total_seconds"])),
+                3,
+            ),
+            "source_bytes": int(timing.get("source_bytes") or job.get("source_bytes") or 0),
+        }
+        job["browser_timing"] = normalized
+        job["browser_upload_seconds"] = normalized["browser_upload_seconds"]
+        job["browser_total_seconds"] = normalized["browser_total_seconds"]
+        job["updated"] = time.time()
+        trace_path = job.get("trace_path")
+        snapshot = dict(job)
+    _persist_job(trace_path, snapshot)
+    return normalized
 
 
 def _co_located(cfg: PodConfig) -> bool:
@@ -191,6 +288,70 @@ def _pipeline_event(log_tail: str) -> dict | None:
     return latest
 
 
+def _pipeline_timing_report(text: str) -> dict:
+    """Parse timing markers emitted by the remote shell and Python pipeline stages."""
+    events = []
+    active: dict[str, list[int]] = {}
+    stages: dict[str, dict] = {}
+    for raw_line in text.splitlines():
+        match = _PIPELINE_TIMING_RE.match(raw_line.strip())
+        if not match:
+            continue
+        stage, state, timestamp_ms, detail = match.groups()
+        timestamp = int(timestamp_ms)
+        events.append(
+            {
+                "stage": stage,
+                "state": state,
+                "timestamp_ms": timestamp,
+                "detail": detail.strip(),
+            }
+        )
+        if state == "start":
+            active.setdefault(stage, []).append(timestamp)
+            continue
+        starts = active.get(stage) or []
+        if not starts:
+            continue
+        started = starts.pop()
+        duration = max(0.0, (timestamp - started) / 1000.0)
+        summary = stages.setdefault(
+            stage,
+            {
+                "attempts": 0,
+                "duration_seconds": 0.0,
+                "first_started_at_ms": started,
+                "last_ended_at_ms": timestamp,
+            },
+        )
+        summary["attempts"] += 1
+        summary["duration_seconds"] = round(
+            float(summary["duration_seconds"]) + duration,
+            3,
+        )
+        summary["first_started_at_ms"] = min(
+            int(summary["first_started_at_ms"]),
+            started,
+        )
+        summary["last_ended_at_ms"] = max(
+            int(summary["last_ended_at_ms"]),
+            timestamp,
+        )
+    events.sort(key=lambda event: (event["timestamp_ms"], event["state"] != "start"))
+    return {"events": events, "stages": stages}
+
+
+def _read_pod_text(cfg: PodConfig, path: str, max_bytes: int = 200000) -> str:
+    if _co_located(cfg):
+        return _read_tail(Path(path), max_bytes=max_bytes)
+    result = _ssh(
+        cfg,
+        f"tail -c {int(max_bytes)} {shlex.quote(path)} 2>/dev/null || true",
+        timeout=30,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
 def _pipeline_state(
     cfg: PodConfig,
     *,
@@ -242,6 +403,7 @@ def _run_pipeline(
     done_path = f"{out}/process.done"
     failed_path = f"{out}/process.failed"
     log_path = f"{out}/process.log"
+    timing_path = f"{out}/timings.tsv"
     inner = (
         f"{command}; rc=$?; "
         f"if [ \"$rc\" -eq 0 ]; then touch {shlex.quote(done_path)}; "
@@ -256,6 +418,11 @@ def _run_pipeline(
     launch = _run_pod(cfg, launch_command, timeout=60)
     direct_output = (launch.stdout or "") + "\n" + (launch.stderr or "")
     if f"PROCESS_{sid}_DONE" in direct_output:
+        timing_report = _pipeline_timing_report(
+            _read_pod_text(cfg, timing_path)
+        )
+        if timing_report["events"]:
+            _set(sid, remote_pipeline_timings=timing_report)
         return launch
     if launch.returncode != 0 or "PROCESS_PID=" not in (launch.stdout or ""):
         return launch
@@ -313,6 +480,11 @@ def _run_pipeline(
             message=message,
         )
         if state == "done":
+            timing_report = _pipeline_timing_report(
+                _read_pod_text(cfg, timing_path)
+            )
+            if timing_report["events"]:
+                _set(sid, remote_pipeline_timings=timing_report)
             return subprocess.CompletedProcess(
                 launch.args,
                 0,
@@ -320,6 +492,11 @@ def _run_pipeline(
                 stderr="",
             )
         if state == "failed":
+            timing_report = _pipeline_timing_report(
+                _read_pod_text(cfg, timing_path)
+            )
+            if timing_report["events"]:
+                _set(sid, remote_pipeline_timings=timing_report)
             return subprocess.CompletedProcess(
                 launch.args,
                 1,
@@ -615,7 +792,41 @@ def _start_bank_sync(sid: str, cfg: PodConfig, out: str, bank_dir: Path) -> None
 
 
 # --------------------------------------------------------------------------- pipeline
-def start_processing(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> None:
+def start_processing(
+    sid: str,
+    wav_path: Path,
+    media_dir: Path,
+    display_name: str,
+    *,
+    request_id: str | None = None,
+    request_received_at: float | None = None,
+    upload_received_at: float | None = None,
+    audio_ready_at: float | None = None,
+    client_started_at_ms: float | None = None,
+    source_bytes: int = 0,
+    source_sha256: str = "",
+) -> None:
+    processing_started = time.time()
+    request_received = float(request_received_at or processing_started)
+    upload_received = max(
+        request_received,
+        float(upload_received_at or processing_started),
+    )
+    audio_ready = max(upload_received, float(audio_ready_at or processing_started))
+    initial_timeline = [
+        {
+            "stage": "browser_upload",
+            "started_at": request_received,
+            "ended_at": upload_received,
+            "duration_seconds": round(upload_received - request_received, 3),
+        },
+        {
+            "stage": "audio_prepare",
+            "started_at": upload_received,
+            "ended_at": audio_ready,
+            "duration_seconds": round(audio_ready - upload_received, 3),
+        },
+    ]
     _set(
         sid,
         status="queued",
@@ -624,7 +835,15 @@ def start_processing(sid: str, wav_path: Path, media_dir: Path, display_name: st
         message="queued",
         progress=5,
         name=display_name,
-        started=time.time(),
+        request_id=request_id or sid,
+        started=request_received,
+        processing_started=processing_started,
+        client_started_at_ms=client_started_at_ms,
+        source_bytes=max(0, int(source_bytes)),
+        source_sha256=str(source_sha256),
+        service_state=os.environ.get("AGENTLODGE_SERVICE_STATE", "unknown"),
+        stage_timeline=initial_timeline,
+        trace_path=str(media_dir / "performance_trace.json"),
         bank_status="pending",
         bank_progress=0,
         bank_message="",
@@ -733,6 +952,7 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
             f"WORKSPACE={shlex.quote(ws)} "
             f"AGENTLODGE_ROOT={shlex.quote(pod_repo)} "
             f"AL_PY={shlex.quote(pod_python)} "
+            f"MAESTRO_TIMING_FILE={shlex.quote(out + '/timings.tsv')} "
             f"AGENTLODGE_BANK_K={shlex.quote(str(cfg.bank_k))} "
             f"AGENTLODGE_SKIP_RENDER={'1' if hosted else '0'} "
             f"bash {shlex.quote(remote_scripts + '/process_song.sh')} {shlex.quote(sid)}"
@@ -842,6 +1062,9 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
                     sid,
                     progress=mapped,
                     stage_progress=round(100 * normalized),
+                    rendered_frames=int(render_job.get("rendered_frames") or 0),
+                    render_frames=int(render_job.get("frames") or len(motion)),
+                    render_workers=int(render_job.get("workers") or 0),
                     message=render_job.get("message")
                     or "rendering the full-quality preview",
                 )

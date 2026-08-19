@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "record_id": "historical-rtx-pro-4500-b3d9d1b",
+  "status": "historical_reference_not_sla_validation",
+  "source_commit": "b3d9d1b",
+  "source_checkpoint": "session checkpoint 002-building-maestro-research-deck.md",
+  "hardware": {
+    "gpu": "NVIDIA RTX PRO 4500 Blackwell",
+    "gpu_memory_gb": 32,
+    "render_daemons": 6
+  },
+  "quality": {
+    "width": 1080,
+    "height": 1080,
+    "engine": "eevee",
+    "samples": 96,
+    "render_every_frame": true
+  },
+  "workload": {
+    "input_duration_seconds": 176.1,
+    "output_duration_seconds": 170.7,
+    "output_frames": 5120
+  },
+  "timings_seconds": {
+    "preprocessing_and_generation": 345.4,
+    "full_quality_rendering_and_staging": 450.7,
+    "total_readiness": 796.6
+  },
+  "limitations": [
+    "This is one historical run, not a p50 or p95 estimate.",
+    "Rendering and staging were reported together.",
+    "Browser upload timing was not included.",
+    "The result must be replaced by traces from the frozen protocol before an SLA claim."
+  ]
+}

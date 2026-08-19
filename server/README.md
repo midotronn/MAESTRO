@@ -56,6 +56,10 @@ copy `bank_<sid>_*.npy` into `server/media/<sid>/bank/`.
   history actions, comparisons, renders, media buffering, and deferred-bank generation. Upload bytes
   are measured in the browser, pipeline stages come from structured pod markers, and warm Blender
   jobs report completed frame counts without changing render settings or output quality.
+- Uploaded-song jobs also persist `performance_trace.json` beside the media. The trace correlates a
+  browser-generated request ID with browser upload/total latency, server stage intervals, remote
+  LODGE/EDGE/Jukebox timings, render frames, and worker count. Summarize frozen warm runs with
+  `python scripts/analyze_pipeline_traces.py <trace...>`.
 - The LLM edit planner reads `OPENAI_API_KEY`, a private key file selected by `OAI_KEY_FILE`, or
   `~/.oai_key`. Without one of those sources it falls back to the offline keyword planner.
 - Sessions persist under `server/sessions/<sid>/` (checkpoint tree + motion snapshots), so history

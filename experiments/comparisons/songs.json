@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "songs": [
+    {
+      "id": "trs",
+      "title": "Bruno Mars, Treasure",
+      "source_registry": "docs/static/data/songs.json",
+      "long_form": true,
+      "publication_audio_status": "permission_or_replacement_required",
+      "notes": "Existing live-editor and full-song showcase case."
+    },
+    {
+      "id": "002",
+      "title": "FineDance 002",
+      "source_registry": "docs/static/data/songs.json",
+      "long_form": true,
+      "publication_audio_status": "verify_dataset_terms",
+      "notes": "Existing three-way comparison and metrics case."
+    },
+    {
+      "id": "037",
+      "title": "FineDance 037",
+      "source_registry": "docs/static/data/songs.json",
+      "long_form": true,
+      "publication_audio_status": "verify_dataset_terms",
+      "notes": "Existing three-way comparison and metrics case."
+    },
+    {
+      "id": "150",
+      "title": "FineDance 150",
+      "source_registry": "docs/static/data/songs.json",
+      "long_form": true,
+      "publication_audio_status": "verify_dataset_terms",
+      "notes": "Existing three-way comparison, metrics, and storyboard case."
+    },
+    {
+      "id": "195",
+      "title": "FineDance 195",
+      "source_registry": "docs/static/data/songs.json",
+      "long_form": true,
+      "publication_audio_status": "verify_dataset_terms",
+      "notes": "Existing three-way comparison and metrics case."
+    },
+    {
+      "id": "208",
+      "title": "FineDance 208",
+      "source_registry": "docs/static/data/songs.json",
+      "long_form": true,
+      "publication_audio_status": "verify_dataset_terms",
+      "notes": "Existing three-way comparison and metrics case."
+    }
+  ],
+  "standard_excerpt_derivation": {
+    "duration_seconds": 20,
+    "windows_per_song": 2,
+    "rules": [
+      "earliest_complete_non_intro_window",
+      "highest_rms_non_overlapping_window"
+    ],
+    "freeze_point": "Materialize exact frame ranges before running retained external baselines."
+  }
+}

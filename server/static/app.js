@@ -955,12 +955,26 @@ function wireTimeline() {
 
 // -------------------------------------------------------------- edit (WebSocket w/ live progress)
 // -------------------------------------------------------------- song upload (processed on the pod)
+function newRequestId() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `upload-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function uploadAudio(file) {
   return new Promise((resolve, reject) => {
+    const requestId = newRequestId();
+    const browserStartedAtMs = Date.now();
+    const browserStartedPerf = performance.now();
+    let uploadCompletedPerf = null;
     const xhr = new XMLHttpRequest();
     const fd = new FormData();
     fd.append("file", file);
+    fd.append("request_id", requestId);
+    fd.append("client_started_at_ms", String(browserStartedAtMs));
     xhr.open("POST", "/api/upload");
+    xhr.setRequestHeader("X-MAESTRO-Request-ID", requestId);
     xhr.responseType = "json";
     xhr.timeout = 5 * 60 * 1000;
     xhr.upload.onprogress = (event) => {
@@ -978,6 +992,7 @@ function uploadAudio(file) {
       $("progtext").textContent = `uploading audio: ${progress}%`;
     };
     xhr.upload.onload = () => {
+      uploadCompletedPerf = performance.now();
       activityUpdate("upload", {
         progress: null,
         detail: "Upload complete; preparing audio for generation",
@@ -987,7 +1002,20 @@ function uploadAudio(file) {
     };
     xhr.onload = () => {
       const body = xhr.response || {};
-      if (xhr.status >= 200 && xhr.status < 300) resolve(body);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve({
+          ...body,
+          browser_timing: {
+            request_id: body.request_id || requestId,
+            browser_started_at_ms: browserStartedAtMs,
+            browser_started_perf: browserStartedPerf,
+            browser_upload_seconds: (
+              (uploadCompletedPerf || performance.now()) - browserStartedPerf
+            ) / 1000,
+            source_bytes: file.size,
+          },
+        });
+      }
       else reject(new Error(body.detail || body.error || xhr.statusText || "upload failed"));
     };
     xhr.onerror = () => reject(new Error("network error while uploading"));
@@ -1033,7 +1061,7 @@ function wireUpload() {
       toast(job.error);
       return;
     }
-    pollJob(job.sid, f.name);
+    pollJob(job.sid, f.name, job.browser_timing);
   };
 }
 
@@ -1070,7 +1098,7 @@ async function watchBank(sid, name, initialJob) {
   }
 }
 
-async function pollJob(sid, name) {
+async function pollJob(sid, name, browserTiming = null) {
   const goal = $("goal"), pt = $("progtext"), fb = $("feedback");
   fb.textContent = ""; fb.className = "feedback";
   goal.innerHTML = `<b>Processing “${escapeHtml(name)}”</b> on the GPU pod`;
@@ -1096,6 +1124,28 @@ async function pollJob(sid, name) {
       detail: j.message || j.status,
     });
     if (j.status === "done") {
+      if (browserTiming) {
+        const completedAtMs = Date.now();
+        const totalSeconds = (
+          performance.now() - browserTiming.browser_started_perf
+        ) / 1000;
+        try {
+          await api(`/api/jobs/${sid}/browser-timing`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              request_id: browserTiming.request_id,
+              browser_started_at_ms: browserTiming.browser_started_at_ms,
+              browser_completed_at_ms: completedAtMs,
+              browser_upload_seconds: browserTiming.browser_upload_seconds,
+              browser_total_seconds: totalSeconds,
+              source_bytes: browserTiming.source_bytes,
+            }),
+          });
+        } catch (error) {
+          console.warn("Could not persist browser timing", error);
+        }
+      }
       setProgressBar("progbar", "agentProgWrap", 100);
       fb.textContent = "\u2714 Ready"; fb.className = "feedback ok";
       activityDone(activityId, `${name} is ready`);

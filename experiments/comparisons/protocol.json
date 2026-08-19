@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "protocol_id": "maestro-comparisons-v1",
+  "status": "frozen_for_pilot",
+  "change_policy": "Any change after pilot results are inspected requires a new protocol_id.",
+  "research_question": "How does unedited MAESTRO output compare with existing music-to-dance methods, and which gains come from structured composition and motif reuse?",
+  "methods": {
+    "mandatory": [
+      "lodge",
+      "edge",
+      "maestro"
+    ],
+    "external_target_count": 2,
+    "external_candidates_file": "baselines.json"
+  },
+  "song_sets": {
+    "registry_file": "songs.json",
+    "standard_duration": {
+      "target_count": 12,
+      "duration_seconds": 20,
+      "selection_rule": [
+        "For each registered long-form song, select the earliest complete non-intro 20-second window.",
+        "For each registered long-form song, select the highest-RMS non-overlapping 20-second window.",
+        "Resolve exact ties by choosing the earliest window."
+      ],
+      "purpose": [
+        "distributional motion quality",
+        "musical alignment",
+        "physical plausibility",
+        "diversity"
+      ]
+    },
+    "long_form": {
+      "target_count": 6,
+      "minimum_duration_seconds": 90,
+      "purpose": [
+        "whole-song coherence",
+        "section boundaries",
+        "energy arc",
+        "sectional contrast",
+        "motif recurrence",
+        "transition quality"
+      ]
+    }
+  },
+  "first_round": {
+    "primary_condition": {
+      "name": "fixed_first_draw",
+      "seed": 0,
+      "candidate_generations_per_method": 1,
+      "human_edits": 0,
+      "manual_seed_replacement": false,
+      "manual_clip_selection": false,
+      "post_hoc_motion_repair": false,
+      "playback_speed_changes": false,
+      "method_specific_trimming": false
+    },
+    "secondary_condition": {
+      "name": "fixed_four_candidate_budget",
+      "candidate_generations_per_method": 4,
+      "maestro_allocation": {
+        "lodge_candidates": 2,
+        "edge_candidates": 2
+      },
+      "selection_must_be_automatic": true,
+      "report_gpu_seconds": true
+    },
+    "failure_policy": "Retain failed runs and automatic retries in the manifest. Never replace a failed run manually."
+  },
+  "ablations": [
+    {
+      "id": "raw_lodge",
+      "description": "LODGE seed-0 output without MAESTRO orchestration."
+    },
+    {
+      "id": "raw_edge",
+      "description": "EDGE seed-0 output without MAESTRO orchestration."
+    },
+    {
+      "id": "selected_backbone",
+      "description": "Whole-song automatic backbone selection without section-level structured composition."
+    },
+    {
+      "id": "structured_no_reuse",
+      "description": "Section-level structured composition with motif reuse disabled."
+    },
+    {
+      "id": "full_maestro",
+      "description": "Section-level structured composition with motif reuse enabled."
+    }
+  ],
+  "metrics": {
+    "standard": [
+      "frechet_motion_distance",
+      "motion_diversity",
+      "beat_alignment_score",
+      "beat_coverage",
+      "physical_foot_contact",
+      "freeze_rate",
+      "short_loop_rate",
+      "invalid_pose_rate"
+    ],
+    "long_form": [
+      "boundary_alignment",
+      "energy_arc_correlation",
+      "sectional_contrast",
+      "motif_recurrence",
+      "section_repetition_correlation",
+      "transition_peak_jerk",
+      "transition_integrated_jerk",
+      "boundary_foot_stability"
+    ],
+    "composite_score_allowed": false,
+    "synthetic_controls": [
+      "identical_sections",
+      "unrelated_sections",
+      "time_shifted_sections",
+      "mirrored_sections",
+      "retrograded_sections",
+      "frozen_motion",
+      "high_frequency_jitter",
+      "misaligned_boundaries"
+    ]
+  },
+  "rendering": {
+    "rig": "ybot",
+    "fps": 30,
+    "width": 1080,
+    "height": 1080,
+    "engine": "eevee",
+    "samples": 96,
+    "render_every_frame": true,
+    "fixed_camera": true,
+    "same_lighting_for_all_methods": true,
+    "same_color_management_for_all_methods": true,
+    "same_encoder_for_all_methods": true,
+    "playback_speed": 1.0
+  },
+  "qualitative_selection": {
+    "required": [
+      "per_song_first_round",
+      "long_form_full_song",
+      "repeated_section_excerpt",
+      "metric_median",
+      "metric_worst_case",
+      "generation_or_conversion_failure",
+      "metric_disagreement"
+    ],
+    "best_only_selection_forbidden": true,
+    "all_assets_require_run_ids": true
+  },
+  "analysis": {
+    "paired_unit": "song",
+    "seeds_are_repeated_observations": true,
+    "required_outputs": [
+      "per_song_values",
+      "confidence_intervals",
+      "effect_sizes",
+      "failure_rates"
+    ],
+    "preferred_tests": [
+      "paired_bootstrap",
+      "paired_permutation"
+    ],
+    "multiple_comparison_correction": "holm"
+  }
+}

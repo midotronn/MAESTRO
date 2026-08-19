@@ -243,6 +243,8 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
             status="rendering",
             progress=24,
             frames=int(motion.shape[0]),
+            workers=worker_count,
+            rendered_frames=0,
             message=(
                 f"full-quality {'dance' if scope == 'full' else 'window'} render "
                 f"on {worker_count} worker{'s' if worker_count != 1 else ''} "
@@ -304,6 +306,7 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
                         24 + int(64 * rendered_frames / max(1, total_frames)),
                     ),
                     rendered_frames=rendered_frames,
+                    workers=worker_count,
                     message=(
                         f"rendered {rendered_frames}/{total_frames} full-quality "
                         f"frame{'s' if total_frames != 1 else ''} on "
@@ -324,6 +327,7 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
                 24 + int(64 * rendered_frames / max(1, total_frames)),
             ),
             rendered_frames=rendered_frames,
+            workers=worker_count,
             message=f"rendered {rendered_frames}/{total_frames} full-quality frames\u2026",
         )
         if len(results) != worker_count or not all(results.values()):

@@ -26,15 +26,26 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
 import secrets
 import shutil
+import time
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -59,6 +70,12 @@ FPS = 30
 
 app = FastAPI(title="MAESTRO Interactive Editor")
 _sessions: dict[str, EditSession] = {}
+
+
+@app.middleware("http")
+async def _capture_request_start(request: Request, call_next):
+    request.state.maestro_received_at = time.time()
+    return await call_next(request)
 
 
 class BasicAuthMiddleware:
@@ -336,6 +353,15 @@ class CompareBody(BaseModel):
     from_id: str | None = None   # which prior checkpoint to use as "before" (default: head's parent)
 
 
+class BrowserTimingBody(BaseModel):
+    request_id: str
+    browser_started_at_ms: float
+    browser_completed_at_ms: float
+    browser_upload_seconds: float
+    browser_total_seconds: float
+    source_bytes: int = 0
+
+
 # --------------------------------------------------------------------------- routes
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
@@ -384,20 +410,58 @@ def motions() -> dict:
 
 
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...)) -> dict:
+async def upload(
+    request: Request,
+    file: UploadFile = File(...),
+    request_id: str | None = Form(None),
+    client_started_at_ms: float | None = Form(None),
+) -> dict:
     """Accept an audio file, then process it into a dance on the GPU pod (background job)."""
+    upload_received_at = time.time()
     name = file.filename or "song"
     if not any(name.lower().endswith(e) for e in (".wav", ".mp3", ".m4a", ".flac", ".ogg")):
         raise HTTPException(400, "please upload an audio file (.wav/.mp3/.m4a/.flac/.ogg)")
     sid = processing.slugify(name)
+    trace_id = request_id or request.headers.get("x-maestro-request-id") or secrets.token_hex(12)
     d = (MEDIA / sid)
     d.mkdir(parents=True, exist_ok=True)
     src = d / ("source" + Path(name).suffix.lower())
+    digest = hashlib.sha256()
+    source_bytes = 0
     with open(src, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+        while True:
+            chunk = file.file.read(1024 * 1024)
+            if not chunk:
+                break
+            f.write(chunk)
+            digest.update(chunk)
+            source_bytes += len(chunk)
     wav = _ensure_wav(src)
-    processing.start_processing(sid, wav, d, Path(name).stem)
-    return {"sid": sid, "name": Path(name).stem, "status": "queued"}
+    audio_ready_at = time.time()
+    processing.start_processing(
+        sid,
+        wav,
+        d,
+        Path(name).stem,
+        request_id=trace_id,
+        request_received_at=getattr(
+            request.state,
+            "maestro_received_at",
+            upload_received_at,
+        ),
+        upload_received_at=upload_received_at,
+        audio_ready_at=audio_ready_at,
+        client_started_at_ms=client_started_at_ms,
+        source_bytes=source_bytes,
+        source_sha256=digest.hexdigest(),
+    )
+    return {
+        "sid": sid,
+        "name": Path(name).stem,
+        "status": "queued",
+        "request_id": trace_id,
+        "source_bytes": source_bytes,
+    }
 
 
 def _ensure_wav(src: Path) -> Path:
@@ -421,6 +485,18 @@ def _ensure_wav(src: Path) -> Path:
 @app.get("/api/jobs/{sid}")
 def job_status(sid: str) -> dict:
     return processing.get_job(sid)
+
+
+@app.post("/api/jobs/{sid}/browser-timing")
+def browser_timing(sid: str, body: BrowserTimingBody) -> dict:
+    try:
+        payload = body.model_dump() if hasattr(body, "model_dump") else body.dict()
+        timing = processing.record_browser_timing(sid, payload)
+    except KeyError:
+        raise HTTPException(404, "unknown upload job") from None
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True, "timing": timing}
 
 
 @app.post("/api/session/{sid}")

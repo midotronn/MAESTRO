@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -36,6 +38,22 @@ from agentlodge.pipeline import (  # noqa: E402
     _settings_to_dict,
     _use_parallel_execution,
 )
+
+_TIMING_LOCK = threading.Lock()
+
+
+def _emit_timing(stage: str, state: str, detail: str = "") -> None:
+    timestamp_ms = time.time_ns() // 1_000_000
+    line = f"MAESTRO_TIMING {stage} {state} {timestamp_ms} {detail}".rstrip()
+    print(line, flush=True)
+    timing_file = os.environ.get("MAESTRO_TIMING_FILE", "").strip()
+    if not timing_file:
+        return
+    with _TIMING_LOCK:
+        path = Path(timing_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
 
 
 def _settings() -> Settings:
@@ -91,31 +109,47 @@ def generate_song(sid: str) -> dict:
     ]
 
     def generate_lodge() -> dict:
-        return best_of_k_job(
-            lambda seed: _run_lodge_job(
-                lodge_features,
-                settings_dict,
-                str(work / "lodge" / (f"seed_{seed}" if seed is not None else "single")),
-                seed=seed,
-            ),
-            k,
-            metadata.beat_frames,
-            score_transform=_lodge_score_transform,
-        )
+        _emit_timing("generation_lodge", "start", f"k={k}")
+        try:
+            return best_of_k_job(
+                lambda seed: _run_lodge_job(
+                    lodge_features,
+                    settings_dict,
+                    str(
+                        work
+                        / "lodge"
+                        / (f"seed_{seed}" if seed is not None else "single")
+                    ),
+                    seed=seed,
+                ),
+                k,
+                metadata.beat_frames,
+                score_transform=_lodge_score_transform,
+            )
+        finally:
+            _emit_timing("generation_lodge", "end", f"k={k}")
 
     def generate_edge() -> dict:
-        return best_of_k_job(
-            lambda seed: _run_edge_job(
-                str(wav),
-                edge_slices,
-                settings_dict,
-                str(work / "edge" / (f"seed_{seed}" if seed is not None else "single")),
-                seed=seed,
-            ),
-            k,
-            metadata.beat_frames,
-            score_transform=_edge_score_transform,
-        )
+        _emit_timing("generation_edge", "start", f"k={k}")
+        try:
+            return best_of_k_job(
+                lambda seed: _run_edge_job(
+                    str(wav),
+                    edge_slices,
+                    settings_dict,
+                    str(
+                        work
+                        / "edge"
+                        / (f"seed_{seed}" if seed is not None else "single")
+                    ),
+                    seed=seed,
+                ),
+                k,
+                metadata.beat_frames,
+                score_transform=_edge_score_transform,
+            )
+        finally:
+            _emit_timing("generation_edge", "end", f"k={k}")
 
     if _use_parallel_execution():
         print(f"[{sid}] generating LODGE and EDGE in parallel", flush=True)
@@ -181,38 +215,54 @@ def generate_song(sid: str) -> dict:
         flush=True,
     )
     total_frames = min(lodge_motion.shape[0], edge_motion.shape[0])
-    structure = analyze_structure(
-        wav,
-        metadata,
-        total_frames,
-        min_section_seconds=8.0,
-    )
-    waveform, sample_rate = librosa.load(str(wav), sr=22050, mono=True)
-    descriptor = extract_audio_descriptor(waveform, sample_rate, metadata)
+    _emit_timing("structure_analysis", "start")
+    try:
+        structure = analyze_structure(
+            wav,
+            metadata,
+            total_frames,
+            min_section_seconds=8.0,
+        )
+    finally:
+        _emit_timing("structure_analysis", "end")
+    _emit_timing("audio_descriptor", "start")
+    try:
+        waveform, sample_rate = librosa.load(str(wav), sr=22050, mono=True)
+        descriptor = extract_audio_descriptor(waveform, sample_rate, metadata)
+    finally:
+        _emit_timing("audio_descriptor", "end")
     print(
         "MAESTRO_SUBPROGRESS generation 90 Authoring the choreography storyboard",
         flush=True,
     )
-    storyboard = author_storyboard(
-        structure,
-        metadata,
-        descriptor,
-        api_key=os.environ.get("OPENAI_API_KEY") or None,
-        motif_reuse=True,
-    )
+    _emit_timing("storyboard", "start")
+    try:
+        storyboard = author_storyboard(
+            structure,
+            metadata,
+            descriptor,
+            api_key=os.environ.get("OPENAI_API_KEY") or None,
+            motif_reuse=True,
+        )
+    finally:
+        _emit_timing("storyboard", "end")
     print(
         "MAESTRO_SUBPROGRESS generation 95 Assembling the final choreography",
         flush=True,
     )
-    assembled = build_story_dance(
-        lodge_motion,
-        edge_motion,
-        structure,
-        storyboard,
-        metadata,
-        blend_frames=15,
-        motif_reuse=True,
-    )
+    _emit_timing("story_assembly", "start")
+    try:
+        assembled = build_story_dance(
+            lodge_motion,
+            edge_motion,
+            structure,
+            storyboard,
+            metadata,
+            blend_frames=15,
+            motif_reuse=True,
+        )
+    finally:
+        _emit_timing("story_assembly", "end")
     motion = assembled.motion
     schedule = [
         [int(a), int(b), str(source), str(role)]

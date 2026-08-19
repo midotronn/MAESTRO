@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "protocol_id": "maestro-browser-to-final-v1",
+  "status": "frozen_for_instrumentation",
+  "timing_boundary": {
+    "start": "browser begins transmitting the upload",
+    "end": "browser first observes job status done and the final video is downloadable"
+  },
+  "service_state": "warm",
+  "cold_start_reported_separately": true,
+  "workload": {
+    "song_duration_seconds": 180,
+    "fps": 30,
+    "expected_frames": 5400,
+    "minimum_validation_songs": 5,
+    "minimum_validation_runs": 20
+  },
+  "quality_contract": {
+    "width": 1080,
+    "height": 1080,
+    "engine": "eevee",
+    "samples": 96,
+    "render_every_frame": true,
+    "denoise": 1,
+    "rig": "ybot",
+    "preserve_camera": true,
+    "preserve_lighting": true,
+    "preserve_color_management": true,
+    "preserve_h264_audio_pipeline": true,
+    "preview_substitution_allowed": false,
+    "temporal_compression_allowed": false
+  },
+  "sla_seconds": {
+    "p50": 60,
+    "p95": 90
+  },
+  "initial_stage_budget_seconds": {
+    "browser_upload_validation_placement": {
+      "p50": 4,
+      "p95": 7
+    },
+    "shared_audio_preprocessing": {
+      "p50": 8,
+      "p95": 13
+    },
+    "lodge_edge_generation_selection": {
+      "p50": 20,
+      "p95": 30
+    },
+    "structure_assembly_cleanup_beats": {
+      "p50": 3,
+      "p95": 5
+    },
+    "full_quality_render_encode": {
+      "p50": 23,
+      "p95": 32
+    },
+    "publication_status": {
+      "p50": 2,
+      "p95": 3
+    }
+  },
+  "required_trace_fields": [
+    "request_id",
+    "browser_upload_seconds",
+    "browser_total_seconds",
+    "source_bytes",
+    "source_sha256",
+    "server_stage_timeline",
+    "remote_pipeline_timings",
+    "rendered_frames",
+    "render_workers",
+    "gpu_endpoints",
+    "failures",
+    "retries",
+    "cold_or_warm"
+  ],
+  "quality_validation": [
+    "source_frame_hashes_match_reference",
+    "no_missing_or_duplicate_frames",
+    "resolution_matches",
+    "fps_matches",
+    "sample_count_matches",
+    "camera_and_rig_match",
+    "audio_and_encoder_settings_match"
+  ],
+  "spend_gate": "Do not provision or benchmark paid RunPod capacity without explicit user approval."
+}
