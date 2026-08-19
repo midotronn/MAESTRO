@@ -94,6 +94,7 @@ def generate_lodge_dance(
     *,
     genre: str | None = None,
     seed: int | None = None,
+    preload_only: bool = False,
 ) -> LodgeResult:
     """Run LODGE global + local diffusion on preprocessed librosa features.
 
@@ -171,6 +172,11 @@ def generate_lodge_dance(
 
         model_coarse, model_fine = _lodge_models(
             cfg, cfg_coarse, dataset, device, get_module, torch)
+        if preload_only:
+            return LodgeResult(
+                motion=np.zeros((0, 139), dtype=np.float32),
+                summary="LODGE coarse and fine models preloaded.",
+            )
 
         music_fea_full = lodge_features.astype(np.float32)
         local_num = music_fea_full.shape[0] // cfg.length2

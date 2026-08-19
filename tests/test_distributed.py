@@ -550,6 +550,53 @@ def test_jukebox_handler_rejects_paths_outside_shared_root(tmp_path):
         )
 
 
+def test_lodge_handler_preload_loads_models_before_ready(
+    tmp_path,
+    monkeypatch,
+):
+    import agentlodge.dance.lodge as lodge_module
+    from server.distributed.handlers import LodgeGenerateHandler
+
+    shared = tmp_path / "shared"
+    lodge_root = tmp_path / "LODGE"
+    lodge_weights = tmp_path / "local.ckpt"
+    global_weights = tmp_path / "global.ckpt"
+    shared.mkdir()
+    lodge_root.mkdir()
+    lodge_weights.write_bytes(b"weights")
+    global_weights.write_bytes(b"weights")
+    calls = []
+
+    def fake_generate(features, settings, work_dir, **kwargs):
+        calls.append(
+            {
+                "features": np.asarray(features),
+                "settings": settings,
+                "work_dir": Path(work_dir),
+                **kwargs,
+            }
+        )
+
+    monkeypatch.setattr(
+        lodge_module,
+        "generate_lodge_dance",
+        fake_generate,
+    )
+    handler = LodgeGenerateHandler(
+        shared_root=shared,
+        lodge_root=lodge_root,
+        lodge_weights=lodge_weights,
+        lodge_global_weights=global_weights,
+    )
+
+    handler.preload()
+
+    assert len(calls) == 1
+    assert calls[0]["features"].shape == (1, 35)
+    assert calls[0]["preload_only"] is True
+    assert calls[0]["settings"].lodge_code_path == lodge_root.resolve()
+
+
 def test_jukebox_partitioning_is_contiguous_and_complete():
     from scripts.jukebox_extract_all import _partition_contiguous
 

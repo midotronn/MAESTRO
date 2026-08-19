@@ -126,7 +126,8 @@ bash scripts/start_runpod_worker.sh render.frames render-0 \
 ```
 
 The same launcher accepts `jukebox.extract`, `lodge.generate`, and `edge.generate`. Jukebox uses
-the isolated EDGE environment; the other roles use the MAESTRO environment.
+the isolated EDGE environment; the other roles use the MAESTRO environment. Worker preload loads
+the Jukebox, LODGE, and EDGE model weights before the heartbeat changes to `ready`.
 
 After workers are healthy, calibrate the exact pose sequence without changing quality:
 

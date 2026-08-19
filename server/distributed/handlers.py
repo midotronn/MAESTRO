@@ -230,6 +230,23 @@ class LodgeGenerateHandler:
         self.lodge_global_weights = Path(lodge_global_weights).resolve()
         self.genre = genre
 
+    def _settings(self):
+        from agentlodge.config import Settings
+
+        return Settings.from_dict(
+            {
+                "lodge_code_path": str(self.lodge_root),
+                "lodge_weights_path": str(self.lodge_weights),
+                "lodge_global_weights_path": str(
+                    self.lodge_global_weights
+                ),
+                "edge_code_path": str(self.lodge_root),
+                "edge_weights_path": str(self.lodge_weights),
+                "lodge_genre": self.genre,
+                "max_edge_slices": None,
+            }
+        )
+
     def preload(self) -> None:
         for path in (
             self.lodge_root,
@@ -238,9 +255,16 @@ class LodgeGenerateHandler:
         ):
             if not path.exists():
                 raise FileNotFoundError(path)
+        from agentlodge.dance.lodge import generate_lodge_dance
+
+        generate_lodge_dance(
+            np.zeros((1, 35), dtype=np.float32),
+            self._settings(),
+            Path(tempfile.gettempdir()) / "maestro-lodge-preload",
+            preload_only=True,
+        )
 
     def __call__(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
-        from agentlodge.config import Settings
         from agentlodge.dance.lodge import generate_lodge_dance
 
         features_path = _shared_path(
@@ -257,21 +281,10 @@ class LodgeGenerateHandler:
         work_dir = _shared_path(payload.get("work_dir"), self.shared_root)
         seed_value = payload.get("seed")
         seed = None if seed_value is None else int(seed_value)
-        settings = Settings.from_dict(
-            {
-                "lodge_code_path": str(self.lodge_root),
-                "lodge_weights_path": str(self.lodge_weights),
-                "lodge_global_weights_path": str(self.lodge_global_weights),
-                "edge_code_path": str(self.lodge_root),
-                "edge_weights_path": str(self.lodge_weights),
-                "lodge_genre": self.genre,
-                "max_edge_slices": None,
-            }
-        )
         features = np.load(features_path).astype(np.float32)
         result = generate_lodge_dance(
             features,
-            settings,
+            self._settings(),
             work_dir,
             seed=seed,
         )

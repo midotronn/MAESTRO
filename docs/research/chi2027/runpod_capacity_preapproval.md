@@ -64,7 +64,8 @@ by capability, rejects stale heartbeats, uses deterministic task IDs for retries
 single-pod path as the default. Implemented roles are:
 
 - `jukebox.extract`: partitions ordered audio slices across persistent Jukebox workers;
-- `lodge.generate`: runs full-song LODGE with model caches retained in-process;
+- `lodge.generate`: loads both LODGE checkpoints before advertising ready, then retains them
+  in-process for full-song requests;
 - `edge.generate`: runs full-song EDGE with the checkpoint retained in-process;
 - `render.frames`: renders a contiguous global frame range at the fixed quality contract to local
   images, hashes the source frames, and transfers one lossless FFV1 shard.
