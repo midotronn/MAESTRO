@@ -46,6 +46,17 @@ Reproduce these calculations with:
 python scripts/model_pipeline_capacity.py
 ```
 
+Once controlled traces are available, use the distribution-aware model instead:
+
+```bash
+python scripts/model_trace_capacity.py \
+  experiments/performance/runs/*.json \
+  --output experiments/performance/measured_capacity_report.json
+```
+
+It sizes the p50 render budget from median throughput and the p95 render budget from low-tail
+throughput, while reporting the measured acceleration still required for Jukebox, LODGE, and EDGE.
+
 ## Required architecture changes before fleet sizing
 
 The feature-flagged filesystem worker protocol is now implemented. It registers versioned workers

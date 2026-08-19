@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "accepted_runs": 2,
+  "service_states": [
+    "warm_assets_cold_models"
+  ],
+  "target": {
+    "frames": 5400,
+    "p50_total_seconds": 60,
+    "p95_total_seconds": 90,
+    "stage_budgets_seconds": {
+      "preprocessing": {
+        "p50": 8.0,
+        "p95": 13.0
+      },
+      "generation": {
+        "p50": 20.0,
+        "p95": 30.0
+      },
+      "render": {
+        "p50": 23.0,
+        "p95": 32.0
+      }
+    }
+  },
+  "browser_total_seconds": {
+    "n": 2,
+    "p50": 801.676,
+    "p95": 811.78,
+    "min": 790.448,
+    "max": 812.903,
+    "mean": 801.676,
+    "stddev": 11.228
+  },
+  "render": {
+    "measured_frames_per_second": {
+      "n": 2,
+      "p50": 10.699,
+      "p95": 11.071,
+      "min": 10.286,
+      "max": 11.112,
+      "mean": 10.699,
+      "stddev": 0.413
+    },
+    "p05_frames_per_second": 10.327,
+    "required_frames_per_second": {
+      "p50_budget": 234.783,
+      "p95_budget": 168.75
+    },
+    "ideal_gpu_equivalents": {
+      "p50_budget_at_p50_rate": 22,
+      "p95_budget_at_p05_rate": 17,
+      "minimum_satisfying_both": 22
+    }
+  },
+  "roles": {
+    "jukebox_preprocessing": {
+      "measured_seconds": {
+        "n": 2,
+        "p50": 216.913,
+        "p95": 225.28,
+        "min": 207.615,
+        "max": 226.21,
+        "mean": 216.913,
+        "stddev": 9.297
+      },
+      "required_speedup": {
+        "p50_budget": 27.11,
+        "p95_budget": 17.33
+      },
+      "parallelism": "Independent audio slices can be distributed."
+    },
+    "lodge_generation": {
+      "measured_seconds": {
+        "n": 2,
+        "p50": 68.629,
+        "p95": 69.534,
+        "min": 67.622,
+        "max": 69.635,
+        "mean": 68.629,
+        "stddev": 1.007
+      },
+      "required_speedup": {
+        "p50_budget": 3.43,
+        "p95_budget": 2.32
+      },
+      "parallelism": "A single fixed-seed generation remains serial; role isolation removes contention but target-GPU latency must be calibrated."
+    },
+    "edge_generation": {
+      "measured_seconds": {
+        "n": 2,
+        "p50": 70.486,
+        "p95": 72.462,
+        "min": 68.289,
+        "max": 72.682,
+        "mean": 70.486,
+        "stddev": 2.197
+      },
+      "required_speedup": {
+        "p50_budget": 3.52,
+        "p95_budget": 2.42
+      },
+      "parallelism": "A single fixed-seed generation remains serial; role isolation removes contention but target-GPU latency must be calibrated."
+    }
+  },
+  "runs": [
+    {
+      "request_id": "c4bfe7f4-874d-43b3-95ae-717356ce4fe8",
+      "benchmark_sid": null,
+      "service_state": "warm_assets_cold_models",
+      "browser_total_seconds": 790.448,
+      "frames": 5120,
+      "render_seconds": 460.743,
+      "render_frames_per_second": 11.112,
+      "preprocess_edge_seconds": 226.21,
+      "generation_lodge_seconds": 67.622,
+      "generation_edge_seconds": 68.289
+    },
+    {
+      "request_id": "2097e057-6078-4556-b7aa-1825d2e92ee4",
+      "benchmark_sid": "trs_63075",
+      "service_state": "warm_assets_cold_models",
+      "browser_total_seconds": 812.903,
+      "frames": 5120,
+      "render_seconds": 497.77,
+      "render_frames_per_second": 10.286,
+      "preprocess_edge_seconds": 207.615,
+      "generation_lodge_seconds": 69.635,
+      "generation_edge_seconds": 72.682
+    }
+  ],
+  "warnings": [
+    "Render counts are ideal equivalents before measured scaling, coordination, and encoding overhead.",
+    "The current render stage includes final encoding and is therefore a conservative frame-rate estimate.",
+    "Do not provision from this report until target-GPU one-, two-, and four-worker calibration is complete."
+  ]
+}
