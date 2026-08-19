@@ -17,10 +17,12 @@ import shutil
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import numpy as np
 
+from server.distributed.runtime import capability_enabled
 from server.processing import REPO, _scp_from, _scp_to, _ssh, pod_config
 
 logger = logging.getLogger(__name__)
@@ -129,6 +131,10 @@ def _quality_render_settings(scope: str) -> tuple[int, int, int, str, int]:
     return width, height, samples, engine, denoise
 
 
+def _distributed_enabled() -> bool:
+    return capability_enabled("render.frames")
+
+
 def _render_ranges(frame_count: int, worker_count: int) -> list[tuple[int, int]]:
     """Split every source frame into contiguous, non-overlapping render ranges."""
     if frame_count < 1:
@@ -174,7 +180,8 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
     """Render full-quality frames through the resident Blender process when hosted on the pod."""
     from server import fk
     from server import warm_render as wr
-    if not wr.on_pod():
+    distributed = _distributed_enabled() and scope == "full"
+    if not distributed and not wr.on_pod():
         return False
     width, height, samples, engine, denoise = _quality_render_settings(scope)
     frame_format = (
@@ -208,7 +215,16 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
     output_video = media_dir / "edited.mp4"
     if cached_video.is_file() and cached_video.stat().st_size > 0:
         shutil.copyfile(cached_video, output_video)
-        _set(sid, status="rendering", progress=96, message="reusing the exact cached render\u2026")
+        _set(
+            sid,
+            status="rendering",
+            progress=96,
+            frames=int(motion.shape[0]),
+            rendered_frames=int(motion.shape[0]),
+            workers=0,
+            worker_ids=[],
+            message="reusing the exact cached render\u2026",
+        )
         return True
 
     requested_workers = (
@@ -216,25 +232,66 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
         if scope == "full"
         else 1
     )
-    wr.ensure_pool(
-        width=width,
-        height=height,
-        samples=samples,
-        wait_ready=60,
-    )
-    daemon_ids = wr.ready_daemons()[:requested_workers]
-    worker_count = min(len(daemon_ids), int(motion.shape[0]))
-    daemon_ids = daemon_ids[:worker_count]
+    coordinator = None
+    render_workers = []
+    daemon_ids = []
+    if distributed:
+        from server.distributed import FileTaskCoordinator, WorkerRegistry
+
+        registry = WorkerRegistry.from_env()
+        render_workers = registry.require(
+            "render.frames",
+            max_age_seconds=float(
+                os.environ.get("AGENTLODGE_WORKER_HEARTBEAT_MAX_AGE", "30")
+            ),
+        )[:requested_workers]
+        coordinator = FileTaskCoordinator(
+            registry,
+            heartbeat_max_age=float(
+                os.environ.get("AGENTLODGE_WORKER_HEARTBEAT_MAX_AGE", "30")
+            ),
+        )
+        worker_count = min(len(render_workers), int(motion.shape[0]))
+        render_workers = render_workers[:worker_count]
+        worker_ids = [worker.worker_id for worker in render_workers]
+    else:
+        wr.ensure_pool(
+            width=width,
+            height=height,
+            samples=samples,
+            wait_ready=60,
+        )
+        daemon_ids = wr.ready_daemons()[:requested_workers]
+        worker_count = min(len(daemon_ids), int(motion.shape[0]))
+        daemon_ids = daemon_ids[:worker_count]
+        worker_ids = [f"blender-daemon-{daemon}" for daemon in daemon_ids]
     if worker_count < 1:
         return False
 
     duration = motion.shape[0] / 30.0
-    temp_parent = Path(os.environ.get("AGENTLODGE_RENDER_TMP", tempfile.gettempdir()))
+    if distributed:
+        shared_temp = (
+            os.environ.get("AGENTLODGE_DISTRIBUTED_TMP", "").strip()
+            or os.environ.get("AGENTLODGE_SHARED_ROOT", "").strip()
+        )
+        if not shared_temp:
+            raise RuntimeError(
+                "distributed rendering requires AGENTLODGE_SHARED_ROOT "
+                "or AGENTLODGE_DISTRIBUTED_TMP"
+            )
+        temp_parent = Path(shared_temp)
+    else:
+        temp_parent = Path(
+            os.environ.get("AGENTLODGE_RENDER_TMP", tempfile.gettempdir())
+        )
     temp_parent.mkdir(parents=True, exist_ok=True)
     render_root = Path(tempfile.mkdtemp(prefix=f"maestro-{sid}-", dir=temp_parent))
     poses_path = render_root / "poses.npz"
     frames_dir = render_root / "frames"
     frames_dir.mkdir()
+    shards_dir = render_root / "shards"
+    if distributed:
+        shards_dir.mkdir()
     try:
         fk.save_poses_npz(motion, poses_path)
         ranges = _render_ranges(int(motion.shape[0]), worker_count)
@@ -244,6 +301,7 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
             progress=24,
             frames=int(motion.shape[0]),
             workers=worker_count,
+            worker_ids=worker_ids,
             rendered_frames=0,
             message=(
                 f"full-quality {'dance' if scope == 'full' else 'window'} render "
@@ -253,6 +311,38 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
         )
         results: dict[int, bool] = {}
         result_lock = threading.Lock()
+        distributed_progress = []
+        distributed_results = []
+
+        def _record_progress() -> None:
+            if distributed:
+                rendered_frames = min(
+                    total_frames,
+                    sum(
+                        end - start
+                        for handle, start, end in distributed_progress
+                        if handle.result_path.is_file()
+                    ),
+                )
+            else:
+                rendered_frames = min(
+                    total_frames,
+                    _count_frame_files(frames_dir, frame_format),
+                )
+            _set(
+                sid,
+                progress=min(
+                    88,
+                    24 + int(64 * rendered_frames / max(1, total_frames)),
+                ),
+                rendered_frames=rendered_frames,
+                workers=worker_count,
+                message=(
+                    f"rendered {rendered_frames}/{total_frames} full-quality "
+                    f"frame{'s' if total_frames != 1 else ''} on "
+                    f"{worker_count} worker{'s' if worker_count != 1 else ''}\u2026"
+                ),
+            )
 
         def _render_range(index: int, daemon: int, start: int, end: int) -> None:
             shard_duration = (end - start) / 30.0
@@ -281,41 +371,78 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
             with result_lock:
                 results[index] = ok
 
-        threads = [
-            threading.Thread(
-                target=_render_range,
-                args=(index, daemon, start, end),
-            )
-            for index, (daemon, (start, end)) in enumerate(zip(daemon_ids, ranges))
-        ]
-        for thread in threads:
-            thread.start()
         total_frames = int(motion.shape[0])
-        last_count = -1
-        while any(thread.is_alive() for thread in threads):
-            rendered_frames = min(
-                total_frames,
-                _count_frame_files(frames_dir, frame_format),
-            )
-            if rendered_frames != last_count:
-                last_count = rendered_frames
-                _set(
-                    sid,
-                    progress=min(
-                        88,
-                        24 + int(64 * rendered_frames / max(1, total_frames)),
-                    ),
-                    rendered_frames=rendered_frames,
-                    workers=worker_count,
-                    message=(
-                        f"rendered {rendered_frames}/{total_frames} full-quality "
-                        f"frame{'s' if total_frames != 1 else ''} on "
-                        f"{worker_count} worker{'s' if worker_count != 1 else ''}\u2026"
-                    ),
+        if distributed:
+            handles = []
+            assert coordinator is not None
+            for worker, (start, end) in zip(render_workers, ranges):
+                shard_duration = (end - start) / 30.0
+                handles.append(
+                    coordinator.submit(
+                        "render.frames",
+                        {
+                            "poses": str(poses_path.resolve()),
+                            "shard_output": str(
+                                (
+                                    shards_dir
+                                    / f"shard_{start:06d}_{end:06d}.mkv"
+                                ).resolve()
+                            ),
+                            "frame_start": start,
+                            "frame_end": end,
+                            "width": width,
+                            "height": height,
+                            "samples": samples,
+                            "engine": engine,
+                            "denoise": denoise,
+                            "frame_format": frame_format,
+                            "fps": 30,
+                            "timeout": max(900.0, shard_duration * 45),
+                        },
+                        worker=worker,
+                    )
                 )
-            time.sleep(1)
-        for thread in threads:
-            thread.join()
+                distributed_progress.append((handles[-1], start, end))
+            try:
+                distributed_results = coordinator.wait_many(
+                    handles,
+                    timeout=max(
+                        900.0,
+                        max((end - start) / 30.0 for start, end in ranges) * 45,
+                    ),
+                    on_poll=_record_progress,
+                )
+                results = {index: True for index in range(worker_count)}
+            except Exception as exc:  # noqa: BLE001 - render failure is reported below
+                raise RuntimeError(f"distributed render failed: {exc}") from exc
+        else:
+            threads = [
+                threading.Thread(
+                    target=_render_range,
+                    args=(index, daemon, start, end),
+                )
+                for index, (daemon, (start, end)) in enumerate(
+                    zip(daemon_ids, ranges)
+                )
+            ]
+            for thread in threads:
+                thread.start()
+            last_count = -1
+            while any(thread.is_alive() for thread in threads):
+                rendered_frames = (
+                    total_frames
+                    if distributed
+                    else min(
+                        total_frames,
+                        _count_frame_files(frames_dir, frame_format),
+                    )
+                )
+                if rendered_frames != last_count:
+                    last_count = rendered_frames
+                    _record_progress()
+                time.sleep(1)
+            for thread in threads:
+                thread.join()
         rendered_frames = min(
             total_frames,
             _count_frame_files(frames_dir, frame_format),
@@ -331,20 +458,70 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
             message=f"rendered {rendered_frames}/{total_frames} full-quality frames\u2026",
         )
         if len(results) != worker_count or not all(results.values()):
+            if distributed:
+                raise RuntimeError("one or more distributed render shards failed")
             return False
-        sequence = _frame_sequence(str(frames_dir))
-        if sequence is None or sequence[1] != 0 or sequence[2] != motion.shape[0]:
-            logger.warning(
-                "sharded render produced an incomplete frame sequence: %s",
-                sequence,
+        shard_paths = []
+        source_frame_hashes = []
+        shard_hashes = []
+        if distributed:
+            for result, (start, end) in zip(distributed_results, ranges):
+                output = result.output
+                if (
+                    int(output.get("frame_start", -1)) != start
+                    or int(output.get("frame_end", -1)) != end
+                    or int(output.get("frames", -1)) != end - start
+                    or output.get("transport") != "ffv1"
+                ):
+                    raise RuntimeError(
+                        f"distributed render returned invalid range metadata: {output}"
+                    )
+                shard_path = Path(str(output.get("shard_output") or ""))
+                if not shard_path.is_file() or shard_path.stat().st_size == 0:
+                    raise RuntimeError(
+                        f"distributed render shard is missing: {shard_path}"
+                    )
+                source_hash = str(output.get("source_frames_sha256") or "")
+                shard_hash = str(output.get("shard_sha256") or "")
+                if len(source_hash) != 64 or len(shard_hash) != 64:
+                    raise RuntimeError(
+                        f"distributed render shard hashes are invalid: {output}"
+                    )
+                shard_paths.append(shard_path)
+                source_frame_hashes.append(source_hash)
+                shard_hashes.append(shard_hash)
+            _set(
+                sid,
+                render_shards=[str(path) for path in shard_paths],
+                render_source_frame_hashes=source_frame_hashes,
+                render_shard_sha256=shard_hashes,
             )
-            return False
+        else:
+            sequence = _frame_sequence(str(frames_dir))
+            if sequence is None or sequence[1] != 0 or sequence[2] != motion.shape[0]:
+                logger.warning(
+                    "sharded render produced an incomplete frame sequence: %s",
+                    sequence,
+                )
+                return False
         _set(sid, progress=90, message="encoding the full-quality frames\u2026")
-        if not _ffmpeg_frames(
-            str(frames_dir),
-            cached_video,
-            audio_wav=audio_wav if scope == "full" else None,
-        ):
+        encoded = (
+            _ffmpeg_shards(
+                shard_paths,
+                cached_video,
+                frame_count=total_frames,
+                audio_wav=audio_wav if scope == "full" else None,
+            )
+            if distributed
+            else _ffmpeg_frames(
+                str(frames_dir),
+                cached_video,
+                audio_wav=audio_wav if scope == "full" else None,
+            )
+        )
+        if not encoded:
+            if distributed:
+                raise RuntimeError("distributed render encoding failed")
             return False
         shutil.copyfile(cached_video, output_video)
         return True
@@ -367,7 +544,14 @@ def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
         _set(sid, status="error", progress=0, message="nothing to render (empty window).")
         return
     try:
-        if _render_warm_local(sid, motion, media_dir, scope, audio_wav=audio_wav):
+        accelerated = _render_warm_local(
+            sid,
+            motion,
+            media_dir,
+            scope,
+            audio_wav=audio_wav,
+        )
+        if accelerated:
             _set(
                 sid,
                 status="done",
@@ -377,7 +561,23 @@ def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
                 elapsed=round(time.time() - _RJOBS[sid].get("started", time.time())),
             )
             return
+        if _distributed_enabled() and scope == "full":
+            _set(
+                sid,
+                status="error",
+                progress=0,
+                message="distributed render failed validation",
+            )
+            return
     except Exception as exc:  # noqa: BLE001 - retain the proven cold-render fallback
+        if _distributed_enabled() and scope == "full":
+            _set(
+                sid,
+                status="error",
+                progress=0,
+                message=f"distributed render failed: {exc}",
+            )
+            return
         logger.warning("accelerated local render failed (%s); using the cold path", exc)
     try:
         _set(sid, status="rendering", progress=8, message="checking the GPU pod\u2026")
@@ -683,6 +883,117 @@ def _ffmpeg_frames(frames_dir: str, out_mp4: Path, fps: int = 30,
     except (OSError, subprocess.TimeoutExpired):
         return False
     finally:
+        if have_audio:
+            silent.unlink(missing_ok=True)
+
+
+def _ffmpeg_shards(
+    shards: list[Path],
+    out_mp4: Path,
+    *,
+    frame_count: int,
+    fps: int = 30,
+    audio_wav: str | None = None,
+) -> bool:
+    """Decode ordered lossless FFV1 shards into the established final H.264/audio pipeline."""
+    import subprocess
+
+    if not shards or frame_count < 1 or any(
+        not shard.is_file() or shard.stat().st_size == 0
+        for shard in shards
+    ):
+        return False
+    have_audio = bool(audio_wav and Path(audio_wav).is_file())
+    silent = (
+        out_mp4.with_name(f".{out_mp4.stem}.silent{out_mp4.suffix}")
+        if have_audio
+        else out_mp4
+    )
+    concat_file = out_mp4.with_name(
+        f".{out_mp4.stem}.{uuid.uuid4().hex}.concat.txt"
+    )
+    out_mp4.parent.mkdir(parents=True, exist_ok=True)
+    out_mp4.unlink(missing_ok=True)
+    silent.unlink(missing_ok=True)
+    lines = []
+    for shard in shards:
+        escaped = str(shard.resolve()).replace("\\", "/").replace("'", "'\\''")
+        lines.append(f"file '{escaped}'")
+    concat_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    timeout = max(180, int(frame_count * 0.2 + 60))
+    try:
+        encoded = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_file),
+                "-frames:v",
+                str(frame_count),
+                "-vf",
+                "format=rgb24",
+                "-r",
+                str(fps),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(silent),
+            ],
+            capture_output=True,
+            timeout=timeout,
+        )
+        if (
+            encoded.returncode != 0
+            or not silent.is_file()
+            or silent.stat().st_size == 0
+        ):
+            return False
+        if not have_audio:
+            return True
+        muxed = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                str(silent),
+                "-i",
+                str(audio_wav),
+                "-shortest",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-movflags",
+                "+faststart",
+                str(out_mp4),
+            ],
+            capture_output=True,
+            timeout=timeout,
+        )
+        return (
+            muxed.returncode == 0
+            and out_mp4.is_file()
+            and out_mp4.stat().st_size > 0
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    finally:
+        concat_file.unlink(missing_ok=True)
         if have_audio:
             silent.unlink(missing_ok=True)
 

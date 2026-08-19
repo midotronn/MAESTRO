@@ -946,9 +946,25 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
             )
         )
         out = f"{ws}/upload_{sid}"
+        distributed_env = " ".join(
+            f"{name}={shlex.quote(value)}"
+            for name in (
+                "AGENTLODGE_DISTRIBUTED",
+                "AGENTLODGE_DISTRIBUTED_CAPABILITIES",
+                "AGENTLODGE_WORKER_REGISTRY",
+                "AGENTLODGE_WORKERS_JSON",
+                "AGENTLODGE_SHARED_ROOT",
+                "AGENTLODGE_DISTRIBUTED_TMP",
+                "AGENTLODGE_WORKER_HEARTBEAT_MAX_AGE",
+                "AGENTLODGE_JUKEBOX_TIMEOUT",
+                "AGENTLODGE_GENERATION_TIMEOUT",
+            )
+            if (value := os.environ.get(name, "").strip())
+        )
         pipeline_command = (
             f"cd {shlex.quote(pod_repo)} && "
             f"sed -i 's/\\r$//' {pipeline_scripts} && "
+            f"{distributed_env + ' ' if distributed_env else ''}"
             f"WORKSPACE={shlex.quote(ws)} "
             f"AGENTLODGE_ROOT={shlex.quote(pod_repo)} "
             f"AL_PY={shlex.quote(pod_python)} "
@@ -1065,10 +1081,25 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
                     rendered_frames=int(render_job.get("rendered_frames") or 0),
                     render_frames=int(render_job.get("frames") or len(motion)),
                     render_workers=int(render_job.get("workers") or 0),
+                    gpu_endpoints=list(render_job.get("worker_ids") or []),
                     message=render_job.get("message")
                     or "rendering the full-quality preview",
                 )
                 render_thread.join(timeout=1)
+            render_job = rendering.get_render_job(sid)
+            _set(
+                sid,
+                rendered_frames=int(render_job.get("rendered_frames") or 0),
+                render_frames=int(render_job.get("frames") or len(motion)),
+                render_workers=int(render_job.get("workers") or 0),
+                gpu_endpoints=list(render_job.get("worker_ids") or []),
+                render_source_frame_hashes=list(
+                    render_job.get("render_source_frame_hashes") or []
+                ),
+                render_shard_sha256=list(
+                    render_job.get("render_shard_sha256") or []
+                ),
+            )
             if not render_result.get("ok"):
                 _set(
                     sid,

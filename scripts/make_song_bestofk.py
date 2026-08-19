@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -38,6 +40,7 @@ from agentlodge.pipeline import (  # noqa: E402
     _settings_to_dict,
     _use_parallel_execution,
 )
+from server.distributed.runtime import capability_enabled  # noqa: E402
 
 _TIMING_LOCK = threading.Lock()
 
@@ -84,6 +87,66 @@ def _successful_motion(result: dict, label: str) -> np.ndarray:
     return np.asarray(motion, dtype=np.float32)
 
 
+def _file_fingerprint(path: Path) -> dict[str, object]:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {
+        "bytes": path.stat().st_size,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _distributed_generation_job(
+    backbone: str,
+    features_path: Path,
+    output_path: Path,
+    work_dir: Path,
+    *,
+    seed: int | None,
+) -> dict:
+    capability = f"{backbone}.generate"
+    try:
+        from server.distributed import FileTaskCoordinator, WorkerRegistry
+
+        registry = WorkerRegistry.from_env()
+        coordinator = FileTaskCoordinator(
+            registry,
+            heartbeat_max_age=float(
+                os.environ.get("AGENTLODGE_WORKER_HEARTBEAT_MAX_AGE", "30")
+            ),
+        )
+        handle = coordinator.submit(
+            capability,
+            {
+                "features": str(features_path.resolve()),
+                "output": str(output_path.resolve()),
+                "work_dir": str(work_dir.resolve()),
+                "seed": seed,
+                "source": _file_fingerprint(features_path),
+            },
+        )
+        result = coordinator.wait(
+            handle,
+            timeout=float(
+                os.environ.get("AGENTLODGE_GENERATION_TIMEOUT", "1200")
+            ),
+        )
+        return {
+            "motion": np.load(output_path).astype(np.float32),
+            "summary": str(result.output.get("summary") or ""),
+            "error": None,
+            "worker_id": result.worker_id,
+        }
+    except Exception as exc:  # noqa: BLE001 - match the existing job result contract
+        return {
+            "motion": None,
+            "summary": "",
+            "error": f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}",
+        }
+
+
 def generate_song(sid: str) -> dict:
     wav = WORKSPACE / f"LODGE/data/finedance/music_wav/{sid}.wav"
     lodge_features_path = WORKSPACE / f"lodge_fd_{sid}_feats.npy"
@@ -110,46 +173,90 @@ def generate_song(sid: str) -> dict:
 
     def generate_lodge() -> dict:
         _emit_timing("generation_lodge", "start", f"k={k}")
+        result = None
         try:
-            return best_of_k_job(
-                lambda seed: _run_lodge_job(
-                    lodge_features,
-                    settings_dict,
-                    str(
+            result = best_of_k_job(
+                lambda seed: (
+                    _distributed_generation_job(
+                        "lodge",
+                        lodge_features_path,
                         work
                         / "lodge"
                         / (f"seed_{seed}" if seed is not None else "single")
-                    ),
-                    seed=seed,
+                        / "lodge_motion.npy",
+                        work
+                        / "lodge"
+                        / (f"seed_{seed}" if seed is not None else "single"),
+                        seed=seed,
+                    )
+                    if capability_enabled("lodge.generate")
+                    else _run_lodge_job(
+                        lodge_features,
+                        settings_dict,
+                        str(
+                            work
+                            / "lodge"
+                            / (f"seed_{seed}" if seed is not None else "single")
+                        ),
+                        seed=seed,
+                    )
                 ),
                 k,
                 metadata.beat_frames,
                 score_transform=_lodge_score_transform,
             )
+            return result
         finally:
-            _emit_timing("generation_lodge", "end", f"k={k}")
+            worker = (
+                f" worker={result.get('worker_id')}"
+                if result and result.get("worker_id")
+                else ""
+            )
+            _emit_timing("generation_lodge", "end", f"k={k}{worker}")
 
     def generate_edge() -> dict:
         _emit_timing("generation_edge", "start", f"k={k}")
+        result = None
         try:
-            return best_of_k_job(
-                lambda seed: _run_edge_job(
-                    str(wav),
-                    edge_slices,
-                    settings_dict,
-                    str(
+            result = best_of_k_job(
+                lambda seed: (
+                    _distributed_generation_job(
+                        "edge",
+                        edge_slices_path,
                         work
                         / "edge"
                         / (f"seed_{seed}" if seed is not None else "single")
-                    ),
-                    seed=seed,
+                        / "edge_motion.npy",
+                        work
+                        / "edge"
+                        / (f"seed_{seed}" if seed is not None else "single"),
+                        seed=seed,
+                    )
+                    if capability_enabled("edge.generate")
+                    else _run_edge_job(
+                        str(wav),
+                        edge_slices,
+                        settings_dict,
+                        str(
+                            work
+                            / "edge"
+                            / (f"seed_{seed}" if seed is not None else "single")
+                        ),
+                        seed=seed,
+                    )
                 ),
                 k,
                 metadata.beat_frames,
                 score_transform=_edge_score_transform,
             )
+            return result
         finally:
-            _emit_timing("generation_edge", "end", f"k={k}")
+            worker = (
+                f" worker={result.get('worker_id')}"
+                if result and result.get("worker_id")
+                else ""
+            )
+            _emit_timing("generation_edge", "end", f"k={k}{worker}")
 
     if _use_parallel_execution():
         print(f"[{sid}] generating LODGE and EDGE in parallel", flush=True)
@@ -282,6 +389,10 @@ def generate_song(sid: str) -> dict:
         "frames": int(motion.shape[0]),
         "lodge_summary": lodge_result.get("summary", ""),
         "edge_summary": edge_result.get("summary", ""),
+        "generation_workers": {
+            "lodge": lodge_result.get("worker_id"),
+            "edge": edge_result.get("worker_id"),
+        },
         "reasoning": assembled.reasoning,
         "schedule": schedule,
         "storyboard": storyboard.to_dict(),

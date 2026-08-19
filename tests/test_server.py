@@ -687,6 +687,16 @@ def test_uploaded_song_pipeline_uses_configured_pod_python(tmp_path, monkeypatch
         "AGENTLODGE_POD_PYTHON",
         "/workspace/AgentLODGE/.venv/bin/python",
     )
+    monkeypatch.setenv("AGENTLODGE_DISTRIBUTED", "1")
+    monkeypatch.setenv(
+        "AGENTLODGE_DISTRIBUTED_CAPABILITIES",
+        "jukebox.extract,lodge.generate,edge.generate",
+    )
+    monkeypatch.setenv(
+        "AGENTLODGE_WORKER_REGISTRY",
+        "/workspace/maestro-workers/registry.json",
+    )
+    monkeypatch.setenv("AGENTLODGE_SHARED_ROOT", "/workspace")
     monkeypatch.setattr(P, "pod_config", lambda: cfg)
     monkeypatch.setattr(P, "_co_located", lambda _cfg: False)
 
@@ -715,6 +725,16 @@ def test_uploaded_song_pipeline_uses_configured_pod_python(tmp_path, monkeypatch
 
     process_command = next(c for c in commands if "scripts/process_song.sh" in c)
     assert "AL_PY=/workspace/AgentLODGE/.venv/bin/python" in process_command
+    assert "AGENTLODGE_DISTRIBUTED=1" in process_command
+    assert (
+        "AGENTLODGE_DISTRIBUTED_CAPABILITIES="
+        "jukebox.extract,lodge.generate,edge.generate"
+    ) in process_command
+    assert (
+        "AGENTLODGE_WORKER_REGISTRY="
+        "/workspace/maestro-workers/registry.json"
+    ) in process_command
+    assert "AGENTLODGE_SHARED_ROOT=/workspace" in process_command
     assert P.get_job("test_song")["status"] == "done"
 
 
@@ -786,6 +806,7 @@ def test_uploaded_song_pipeline_scripts_are_packaged():
         "make_song_bestofk.py",
         "build_window_bank.py",
         "process_song.sh",
+        "runpod_worker.py",
     }
     assert required <= {path.name for path in (root / "scripts").iterdir()}
     process_script = (root / "scripts" / "process_song.sh").read_text(encoding="utf-8")

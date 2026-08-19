@@ -1,0 +1,426 @@
+{
+  "stage_timeline": [
+    {
+      "stage": "browser_upload",
+      "started_at": 1787161875.1380503,
+      "ended_at": 1787161887.3034358,
+      "duration_seconds": 12.165
+    },
+    {
+      "stage": "audio_prepare",
+      "started_at": 1787161887.3034358,
+      "ended_at": 1787161887.3626974,
+      "duration_seconds": 0.059
+    },
+    {
+      "stage": "queued",
+      "started_at": 1787161887.3627548,
+      "ended_at": 1787161887.3631885,
+      "duration_seconds": 0.0
+    },
+    {
+      "stage": "pod",
+      "started_at": 1787161887.3631885,
+      "ended_at": 1787161887.3823195,
+      "duration_seconds": 0.019
+    },
+    {
+      "stage": "audio",
+      "started_at": 1787161887.3823195,
+      "ended_at": 1787161887.464722,
+      "duration_seconds": 0.082
+    },
+    {
+      "stage": "assets",
+      "started_at": 1787161887.464722,
+      "ended_at": 1787161889.5061162,
+      "duration_seconds": 2.041
+    },
+    {
+      "stage": "preprocess",
+      "started_at": 1787161889.5061162,
+      "ended_at": 1787162114.4333878,
+      "duration_seconds": 224.927
+    },
+    {
+      "stage": "generation",
+      "started_at": 1787162114.4333878,
+      "ended_at": 1787162192.7007196,
+      "duration_seconds": 78.267
+    },
+    {
+      "stage": "polish",
+      "started_at": 1787162192.7007196,
+      "ended_at": 1787162196.716206,
+      "duration_seconds": 4.015
+    },
+    {
+      "stage": "seed_bank",
+      "started_at": 1787162196.716206,
+      "ended_at": 1787162198.7247505,
+      "duration_seconds": 2.009
+    },
+    {
+      "stage": "beats",
+      "started_at": 1787162198.7247505,
+      "ended_at": 1787162202.7560604,
+      "duration_seconds": 4.031
+    },
+    {
+      "stage": "preview",
+      "started_at": 1787162202.7560604,
+      "ended_at": 1787162202.762658,
+      "duration_seconds": 0.007
+    },
+    {
+      "stage": "transfer",
+      "started_at": 1787162202.762658,
+      "ended_at": 1787162202.9696302,
+      "duration_seconds": 0.207
+    },
+    {
+      "stage": "render",
+      "started_at": 1787162202.9696302,
+      "ended_at": 1787162663.7124178,
+      "duration_seconds": 460.743
+    },
+    {
+      "stage": "finalize",
+      "started_at": 1787162663.7124178,
+      "ended_at": 1787162663.7489853,
+      "duration_seconds": 0.037
+    },
+    {
+      "stage": "ready",
+      "started_at": 1787162663.7489853,
+      "ended_at": 1787162663.7489853,
+      "duration_seconds": 0.0
+    }
+  ],
+  "status": "done",
+  "stage": "ready",
+  "stage_progress": 100,
+  "message": "ready",
+  "progress": 100,
+  "name": "trs",
+  "request_id": "c4bfe7f4-874d-43b3-95ae-717356ce4fe8",
+  "started": 1787161875.1380503,
+  "processing_started": 1787161887.3627226,
+  "client_started_at_ms": 1787161874486.0,
+  "source_bytes": 7759950,
+  "source_sha256": "88ee71cf82b68ecac828b3e74ccdee479104c2f7c2ee1c099f79a6785d459c83",
+  "service_state": "warm_assets_cold_models",
+  "bank_status": "building",
+  "bank_progress": 0,
+  "bank_message": "generating additional editing alternatives",
+  "updated": 1787162665.3441243,
+  "remote_pipeline_timings": {
+    "events": [
+      {
+        "stage": "pipeline",
+        "state": "start",
+        "timestamp_ms": 1787161887643,
+        "detail": "song=trs_61887"
+      },
+      {
+        "stage": "assets",
+        "state": "start",
+        "timestamp_ms": 1787161887670,
+        "detail": ""
+      },
+      {
+        "stage": "assets",
+        "state": "end",
+        "timestamp_ms": 1787161887714,
+        "detail": ""
+      },
+      {
+        "stage": "preprocess_lodge",
+        "state": "start",
+        "timestamp_ms": 1787161887753,
+        "detail": ""
+      },
+      {
+        "stage": "preprocess_edge",
+        "state": "start",
+        "timestamp_ms": 1787161887754,
+        "detail": ""
+      },
+      {
+        "stage": "preprocess_lodge",
+        "state": "end",
+        "timestamp_ms": 1787161894378,
+        "detail": "rc=0"
+      },
+      {
+        "stage": "preprocess_edge",
+        "state": "end",
+        "timestamp_ms": 1787162113964,
+        "detail": "rc=0"
+      },
+      {
+        "stage": "generation_total",
+        "state": "start",
+        "timestamp_ms": 1787162114005,
+        "detail": ""
+      },
+      {
+        "stage": "generation_lodge",
+        "state": "start",
+        "timestamp_ms": 1787162120230,
+        "detail": "k=1"
+      },
+      {
+        "stage": "generation_edge",
+        "state": "start",
+        "timestamp_ms": 1787162120230,
+        "detail": "k=1"
+      },
+      {
+        "stage": "generation_lodge",
+        "state": "end",
+        "timestamp_ms": 1787162187852,
+        "detail": "k=1"
+      },
+      {
+        "stage": "generation_edge",
+        "state": "end",
+        "timestamp_ms": 1787162188519,
+        "detail": "k=1"
+      },
+      {
+        "stage": "structure_analysis",
+        "state": "start",
+        "timestamp_ms": 1787162188671,
+        "detail": ""
+      },
+      {
+        "stage": "structure_analysis",
+        "state": "end",
+        "timestamp_ms": 1787162189887,
+        "detail": ""
+      },
+      {
+        "stage": "audio_descriptor",
+        "state": "start",
+        "timestamp_ms": 1787162190032,
+        "detail": ""
+      },
+      {
+        "stage": "audio_descriptor",
+        "state": "end",
+        "timestamp_ms": 1787162190756,
+        "detail": ""
+      },
+      {
+        "stage": "storyboard",
+        "state": "start",
+        "timestamp_ms": 1787162190765,
+        "detail": ""
+      },
+      {
+        "stage": "storyboard",
+        "state": "end",
+        "timestamp_ms": 1787162190783,
+        "detail": ""
+      },
+      {
+        "stage": "story_assembly",
+        "state": "start",
+        "timestamp_ms": 1787162190790,
+        "detail": ""
+      },
+      {
+        "stage": "story_assembly",
+        "state": "end",
+        "timestamp_ms": 1787162191123,
+        "detail": ""
+      },
+      {
+        "stage": "generation_total",
+        "state": "end",
+        "timestamp_ms": 1787162191749,
+        "detail": "rc=0"
+      },
+      {
+        "stage": "polish",
+        "state": "start",
+        "timestamp_ms": 1787162191768,
+        "detail": ""
+      },
+      {
+        "stage": "polish",
+        "state": "end",
+        "timestamp_ms": 1787162195590,
+        "detail": ""
+      },
+      {
+        "stage": "seed_bank",
+        "state": "start",
+        "timestamp_ms": 1787162195614,
+        "detail": ""
+      },
+      {
+        "stage": "seed_bank",
+        "state": "end",
+        "timestamp_ms": 1787162197666,
+        "detail": "rc=0"
+      },
+      {
+        "stage": "beats",
+        "state": "start",
+        "timestamp_ms": 1787162197708,
+        "detail": ""
+      },
+      {
+        "stage": "beats",
+        "state": "end",
+        "timestamp_ms": 1787162202151,
+        "detail": "rc=0"
+      },
+      {
+        "stage": "staging",
+        "state": "start",
+        "timestamp_ms": 1787162202169,
+        "detail": ""
+      },
+      {
+        "stage": "staging",
+        "state": "end",
+        "timestamp_ms": 1787162202343,
+        "detail": ""
+      },
+      {
+        "stage": "preview",
+        "state": "start",
+        "timestamp_ms": 1787162202362,
+        "detail": ""
+      },
+      {
+        "stage": "preview",
+        "state": "end",
+        "timestamp_ms": 1787162202381,
+        "detail": "delegated=1"
+      },
+      {
+        "stage": "pipeline",
+        "state": "end",
+        "timestamp_ms": 1787162202406,
+        "detail": "success"
+      }
+    ],
+    "stages": {
+      "assets": {
+        "attempts": 1,
+        "duration_seconds": 0.044,
+        "first_started_at_ms": 1787161887670,
+        "last_ended_at_ms": 1787161887714
+      },
+      "preprocess_lodge": {
+        "attempts": 1,
+        "duration_seconds": 6.625,
+        "first_started_at_ms": 1787161887753,
+        "last_ended_at_ms": 1787161894378
+      },
+      "preprocess_edge": {
+        "attempts": 1,
+        "duration_seconds": 226.21,
+        "first_started_at_ms": 1787161887754,
+        "last_ended_at_ms": 1787162113964
+      },
+      "generation_lodge": {
+        "attempts": 1,
+        "duration_seconds": 67.622,
+        "first_started_at_ms": 1787162120230,
+        "last_ended_at_ms": 1787162187852
+      },
+      "generation_edge": {
+        "attempts": 1,
+        "duration_seconds": 68.289,
+        "first_started_at_ms": 1787162120230,
+        "last_ended_at_ms": 1787162188519
+      },
+      "structure_analysis": {
+        "attempts": 1,
+        "duration_seconds": 1.216,
+        "first_started_at_ms": 1787162188671,
+        "last_ended_at_ms": 1787162189887
+      },
+      "audio_descriptor": {
+        "attempts": 1,
+        "duration_seconds": 0.724,
+        "first_started_at_ms": 1787162190032,
+        "last_ended_at_ms": 1787162190756
+      },
+      "storyboard": {
+        "attempts": 1,
+        "duration_seconds": 0.018,
+        "first_started_at_ms": 1787162190765,
+        "last_ended_at_ms": 1787162190783
+      },
+      "story_assembly": {
+        "attempts": 1,
+        "duration_seconds": 0.333,
+        "first_started_at_ms": 1787162190790,
+        "last_ended_at_ms": 1787162191123
+      },
+      "generation_total": {
+        "attempts": 1,
+        "duration_seconds": 77.744,
+        "first_started_at_ms": 1787162114005,
+        "last_ended_at_ms": 1787162191749
+      },
+      "polish": {
+        "attempts": 1,
+        "duration_seconds": 3.822,
+        "first_started_at_ms": 1787162191768,
+        "last_ended_at_ms": 1787162195590
+      },
+      "seed_bank": {
+        "attempts": 1,
+        "duration_seconds": 2.052,
+        "first_started_at_ms": 1787162195614,
+        "last_ended_at_ms": 1787162197666
+      },
+      "beats": {
+        "attempts": 1,
+        "duration_seconds": 4.443,
+        "first_started_at_ms": 1787162197708,
+        "last_ended_at_ms": 1787162202151
+      },
+      "staging": {
+        "attempts": 1,
+        "duration_seconds": 0.174,
+        "first_started_at_ms": 1787162202169,
+        "last_ended_at_ms": 1787162202343
+      },
+      "preview": {
+        "attempts": 1,
+        "duration_seconds": 0.019,
+        "first_started_at_ms": 1787162202362,
+        "last_ended_at_ms": 1787162202381
+      },
+      "pipeline": {
+        "attempts": 1,
+        "duration_seconds": 314.763,
+        "first_started_at_ms": 1787161887643,
+        "last_ended_at_ms": 1787162202406
+      }
+    }
+  },
+  "rendered_frames": 5120,
+  "render_frames": 5120,
+  "render_workers": 6,
+  "finished": 1787162663.7489853,
+  "browser_timing": {
+    "request_id": "c4bfe7f4-874d-43b3-95ae-717356ce4fe8",
+    "browser_started_at_ms": 1787161874486.0,
+    "browser_completed_at_ms": 1787162664934.0,
+    "browser_upload_seconds": 10.168,
+    "browser_total_seconds": 790.448,
+    "source_bytes": 7759950
+  },
+  "browser_upload_seconds": 10.168,
+  "browser_total_seconds": 790.448,
+  "elapsed": 788.611
+}

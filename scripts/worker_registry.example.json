@@ -1,0 +1,49 @@
+{
+  "workers": [
+    {
+      "id": "jukebox-0",
+      "capabilities": [
+        "jukebox.extract"
+      ],
+      "task_dir": "/workspace/maestro-workers/jukebox-0",
+      "max_concurrency": 1,
+      "metadata": {
+        "gpu": "one isolated NVIDIA GPU"
+      }
+    },
+    {
+      "id": "lodge-0",
+      "capabilities": [
+        "lodge.generate"
+      ],
+      "task_dir": "/workspace/maestro-workers/lodge-0",
+      "max_concurrency": 1,
+      "metadata": {
+        "gpu": "one isolated NVIDIA GPU"
+      }
+    },
+    {
+      "id": "edge-0",
+      "capabilities": [
+        "edge.generate"
+      ],
+      "task_dir": "/workspace/maestro-workers/edge-0",
+      "max_concurrency": 1,
+      "metadata": {
+        "gpu": "one isolated NVIDIA GPU"
+      }
+    },
+    {
+      "id": "render-0",
+      "capabilities": [
+        "render.frames"
+      ],
+      "task_dir": "/workspace/maestro-workers/render-0",
+      "max_concurrency": 1,
+      "metadata": {
+        "gpu": "one isolated NVIDIA GPU",
+        "quality": "1080x1080 EEVEE 96 samples"
+      }
+    }
+  ]
+}

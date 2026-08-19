@@ -9,25 +9,33 @@
   camera, color management, H.264, and audio.
 - Warm workers. Cold image, model, and scene startup is reported separately.
 
-## What the existing measurement implies
+## What the current successful baseline implies
 
-The last recorded full run used one RTX PRO 4500 Blackwell with six resident Blender daemons:
+The first successful browser-to-final trace used one RTX PRO 4500 Blackwell with six resident
+Blender daemons:
 
 - 5,120 frames;
-- preprocessing and generation: 345.4 seconds;
-- full-quality rendering and staging: 450.7 seconds;
-- total readiness: 796.6 seconds.
+- browser upload: 10.168 seconds;
+- EDGE/Jukebox preprocessing: 226.210 seconds;
+- combined LODGE/EDGE generation: 77.744 seconds;
+- full-quality render and encode: 460.743 seconds;
+- browser upload to downloadable video: 790.448 seconds.
 
-This was one historical run, not an SLA distribution. It did not include browser upload timing and
-combined rendering with staging.
+This is one completed baseline, not yet an SLA distribution. The frozen trace is
+`experiments/performance/runs/trs_61887.json`; four additional unchanged-pod runs are required
+before reporting baseline p50/p95.
 
-At 5,120 / 450.7, the historical aggregate render rate is approximately **11.36 frames/second**.
+At 5,120 / 460.743, the measured aggregate render rate is approximately
+**11.11 frames/second**.
 The 23-second render budget for 5,400 frames requires approximately **234.78 frames/second**. Under
-unrealistic perfect linear scaling, this is **21 historical GPU equivalents for rendering alone**.
+unrealistic perfect linear scaling, this is **22 measured GPU equivalents for rendering alone**.
+A planning fleet of 24 equivalent render workers provides only limited coordination and p95
+headroom and remains provisional until target-GPU calibration.
 
-Scaling the historical preprocessing/generation time to 5,400 frames gives approximately 364
-seconds. The 20-second generation budget represents **19 throughput equivalents**, but generation
-is not fully parallelizable. This number is a diagnostic, not a worker count.
+Preprocessing plus generation currently consumes approximately 303 seconds. Jukebox's independent
+five-second slices dominate preprocessing, while LODGE and EDGE each take about 68 seconds while
+contending on the same GPU. These stages require resident, role-isolated workers rather than a
+single aggregate throughput multiplier.
 
 Therefore, a generic four-GPU proposal is not credible for the one-minute target unless the target
 GPU and revised pipeline are several times faster than the measured RTX PRO 4500 path.
@@ -39,6 +47,26 @@ python scripts/model_pipeline_capacity.py
 ```
 
 ## Required architecture changes before fleet sizing
+
+The feature-flagged filesystem worker protocol is now implemented. It registers versioned workers
+by capability, rejects stale heartbeats, uses deterministic task IDs for retries, and keeps the
+single-pod path as the default. Implemented roles are:
+
+- `jukebox.extract`: partitions ordered audio slices across persistent Jukebox workers;
+- `lodge.generate`: runs full-song LODGE with model caches retained in-process;
+- `edge.generate`: runs full-song EDGE with the checkpoint retained in-process;
+- `render.frames`: renders a contiguous global frame range at the fixed quality contract to local
+  images, hashes the source frames, and transfers one lossless FFV1 shard.
+
+The protocol requires a shared mounted root and is configured with
+`AGENTLODGE_WORKER_REGISTRY`, `AGENTLODGE_SHARED_ROOT`, and
+`AGENTLODGE_DISTRIBUTED=1`. Local/fake worker tests validate capability routing,
+idempotent result reuse, stale-worker rejection, path confinement, exact render settings, and
+complete non-overlapping frame ranges. A two-shard synthetic RGB validation decoded all frames in
+order with an exact aggregate pixel hash match; its immutable report is
+`experiments/performance/lossless_transport_validation.json`. An exact-scene source-frame hash
+comparison remains required on the calibration worker before paid fleet scaling. Paid target-GPU
+calibration is still gated on approval.
 
 ### Generation
 

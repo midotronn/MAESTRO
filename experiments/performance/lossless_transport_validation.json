@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "transport": "ffv1_matroska",
+  "validated_at": "2026-08-19",
+  "ffmpeg_version": "7.1",
+  "fixture": {
+    "frames": 6,
+    "width": 48,
+    "height": 32,
+    "pixel_format": "rgb24",
+    "fps": 30,
+    "generator": "NumPy PCG64 seeds 0 through 5"
+  },
+  "shards": [
+    {
+      "frame_start": 0,
+      "frame_end": 3,
+      "bytes": 21098
+    },
+    {
+      "frame_start": 3,
+      "frame_end": 6,
+      "bytes": 21057
+    }
+  ],
+  "encoding": {
+    "codec": "ffv1",
+    "level": 3,
+    "coder": 1,
+    "context": 1,
+    "gop": 1,
+    "slice_crc": true
+  },
+  "validation": {
+    "source_frames": 6,
+    "decoded_frames": 6,
+    "source_rgb_sha256": "e1fee9cfda6e7e0adbb74a1e3ae0562f87464a9375861aee926766c224360390",
+    "decoded_rgb_sha256": "e1fee9cfda6e7e0adbb74a1e3ae0562f87464a9375861aee926766c224360390",
+    "pixel_exact": true,
+    "ordered_concat": true
+  }
+}

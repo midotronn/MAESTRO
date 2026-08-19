@@ -60,7 +60,55 @@ copy `bank_<sid>_*.npy` into `server/media/<sid>/bank/`.
   browser-generated request ID with browser upload/total latency, server stage intervals, remote
   LODGE/EDGE/Jukebox timings, render frames, and worker count. Summarize frozen warm runs with
   `python scripts/analyze_pipeline_traces.py <trace...>`.
+- The optional distributed path uses a shared-volume, idempotent task protocol. It is disabled by
+  default. Set `AGENTLODGE_DISTRIBUTED=1`, point `AGENTLODGE_WORKER_REGISTRY` at a JSON registry
+  based on `scripts/worker_registry.example.json`, and set `AGENTLODGE_SHARED_ROOT` to the common
+  mount. Healthy workers advertise one or more explicit capabilities:
+  `jukebox.extract`, `lodge.generate`, `edge.generate`, or `render.frames`.
+- `AGENTLODGE_DISTRIBUTED_CAPABILITIES` can restrict a calibration to selected roles without
+  changing the other stages, for example `jukebox.extract,lodge.generate,edge.generate`. When it is
+  unset, distributed mode requires all roles reached by the request.
+- Start one capability worker per isolated GPU container with `scripts/runpod_worker.py`. Task
+  requests and results live under each worker's configured `task_dir`; deterministic task IDs make
+  retries idempotent, and heartbeat/version checks prevent dispatch to stale workers. If distributed
+  mode is enabled but the required role is unavailable, the request fails explicitly rather than
+  silently falling back to a slower or quality-changing path.
+- Distributed render workers accept only the configured quality contract, render disjoint global
+  frame ranges to worker-local lossless TGA/PNG files, hash every assigned source frame, and package
+  each range as an FFV1 Matroska shard before crossing the shared volume. The coordinator verifies
+  range metadata and hashes, decodes the ordered lossless shards, and runs the established H.264/audio
+  encode once. Render containers must expose exactly one GPU and select NVIDIA EGL explicitly.
 - The LLM edit planner reads `OPENAI_API_KEY`, a private key file selected by `OAI_KEY_FILE`, or
   `~/.oai_key`. Without one of those sources it falls back to the offline keyword planner.
 - Sessions persist under `server/sessions/<sid>/` (checkpoint tree + motion snapshots), so history
   survives a restart.
+
+Example worker commands on containers sharing `/workspace`:
+
+```bash
+python scripts/runpod_worker.py \
+  --worker-id jukebox-0 --capability jukebox.extract \
+  --task-dir /workspace/maestro-workers/jukebox-0 \
+  --shared-root /workspace --edge-root /workspace/EDGE
+
+python scripts/runpod_worker.py \
+  --worker-id lodge-0 --capability lodge.generate \
+  --task-dir /workspace/maestro-workers/lodge-0 \
+  --shared-root /workspace \
+  --lodge-root /workspace/LODGE \
+  --lodge-weights /workspace/LODGE/exp/Local_Module/FineDance_FineTuneV2_Local/checkpoints/epoch=299.ckpt \
+  --lodge-global-weights /workspace/LODGE/exp/Global_Module/FineDance_Global/checkpoints/epoch=2999.ckpt
+
+python scripts/runpod_worker.py \
+  --worker-id edge-0 --capability edge.generate \
+  --task-dir /workspace/maestro-workers/edge-0 \
+  --shared-root /workspace --edge-root /workspace/EDGE \
+  --edge-checkpoint /workspace/EDGE/checkpoint.pt
+
+AGENTLODGE_WARM_POOL=1 \
+__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+python scripts/runpod_worker.py \
+  --worker-id render-0 --capability render.frames \
+  --task-dir /workspace/maestro-workers/render-0 \
+  --shared-root /workspace --worker-tmp /tmp/maestro-render
+```
