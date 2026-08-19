@@ -112,3 +112,14 @@ python scripts/runpod_worker.py \
   --task-dir /workspace/maestro-workers/render-0 \
   --shared-root /workspace --worker-tmp /tmp/maestro-render
 ```
+
+After workers are healthy, calibrate the exact pose sequence without changing quality:
+
+```bash
+python scripts/benchmark_render_scaling.py \
+  --poses /workspace/calibration/poses.npz \
+  --output-dir /workspace/calibration/results
+```
+
+The report records per-worker duration, aggregate and median frame throughput, source/shard hashes,
+and the idealized worker count for the frozen 5,400-frame/23-second render budget.
