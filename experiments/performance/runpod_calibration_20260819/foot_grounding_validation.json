@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "pod_id": "hgzfi2k7qnpumg",
+  "gpu_count": 4,
+  "gpu_model": "NVIDIA RTX PRO 4500 Blackwell",
+  "frames": 5400,
+  "duration_seconds": 180.0,
+  "resolution": [
+    1080,
+    1080
+  ],
+  "fps": 30,
+  "full_mesh_baseline": {
+    "sid": "sla_song01_run01_1_72440",
+    "total_seconds": 80.87229090835899,
+    "blender_export_seconds": 53.387901589274406,
+    "filament_worker_wait_seconds": 24.87511877901852,
+    "animated_glb_sha256": "8081e5a754e1b0551b366e2f7f7c9c216200dab31c8ec4c3c99c44a92b15ef62",
+    "video_sha256": "16382e55e4b6b59a1515e9362595e00c01342d69415daa359846c21e53542bd6"
+  },
+  "foot_mesh_hot": {
+    "total_seconds": 41.03158636391163,
+    "wall_clock_seconds": 41.792962149716914,
+    "warm_pool_attestation_seconds": 3.2935587847605348,
+    "blender_export_seconds": 13.806584601290524,
+    "grounding_seconds": 11.268,
+    "filament_worker_wait_seconds": 21.752505821175873,
+    "animated_glb_sha256": "8081e5a754e1b0551b366e2f7f7c9c216200dab31c8ec4c3c99c44a92b15ef62",
+    "video_sha256": "4102a2f52c00c9f4007079e6d800a4789feb12d0130107185afc6e308f07eb18",
+    "exact_frames": 5400,
+    "exact_duration_seconds": 180.0
+  },
+  "improvement": {
+    "total_seconds_saved": 39.84070454444736,
+    "total_percent": 49.26372691679173,
+    "export_seconds_saved": 39.58131698798388,
+    "export_percent": 74.13911356264234
+  },
+  "glb_equivalence": [
+    {
+      "sid": "sla_song01_run01_1_55954",
+      "foot_export_seconds": 13.652870104648173,
+      "full_glb_sha256": "5cabe4769cfd93e8603446439c39c6defebe959bdb38b69d2a55654b7f370eb0",
+      "foot_glb_sha256": "5cabe4769cfd93e8603446439c39c6defebe959bdb38b69d2a55654b7f370eb0",
+      "byte_identical": true
+    },
+    {
+      "sid": "sla_song01_run01_1_72440",
+      "foot_export_seconds": 14.01743894442916,
+      "full_glb_sha256": "8081e5a754e1b0551b366e2f7f7c9c216200dab31c8ec4c3c99c44a92b15ef62",
+      "foot_glb_sha256": "8081e5a754e1b0551b366e2f7f7c9c216200dab31c8ec4c3c99c44a92b15ef62",
+      "byte_identical": true
+    }
+  ],
+  "decoded_video_comparison": {
+    "ssim_all": 0.999775,
+    "psnr_average_db": 61.088168,
+    "note": "The GLB is byte-identical. Residual decoded-video differences are from PCSS/NVENC rendering, not grounding geometry."
+  },
+  "decision": {
+    "four_gpu_default": true,
+    "environment_override": "AGENTLODGE_FILAMENT_FOOT_GROUNDING=0",
+    "sampled_fast_grounding_default": false
+  }
+}

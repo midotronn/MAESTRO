@@ -108,7 +108,9 @@ copy `bank_<sid>_*.npy` into `server/media/<sid>/bank/`.
   `AGENTLODGE_FILAMENT_GPU_INDICES`, uses NVENC, validates exact frame coverage, and fails closed.
   Run `scripts/setup_filament_pod.sh` first. This does not change the default EEVEE quality contract;
   Filament still requires explicit visual approval. Disable its render cache during timing with
-  `AGENTLODGE_FILAMENT_DISABLE_CACHE=1`.
+  `AGENTLODGE_FILAMENT_DISABLE_CACHE=1`. The four-GPU launcher defaults to all-frame foot-mesh
+  grounding after exact GLB equivalence on two 5,400-frame motions; override with
+  `AGENTLODGE_FILAMENT_FOOT_GROUNDING=0`. The sampled fast-grounding mode remains off.
 
 Example worker commands on containers sharing `/workspace`:
 

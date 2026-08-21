@@ -646,6 +646,9 @@ def test_setup_and_launcher_wire_selector_without_global_preload():
     bootstrap = (
         ROOT / "scripts" / "runpod_bootstrap.sh"
     ).read_text(encoding="utf-8")
+    four_gpu_server = (
+        ROOT / "scripts" / "start_four_gpu_server.sh"
+    ).read_text(encoding="utf-8")
     pod_helper = (ROOT / "scripts" / "pod.ps1").read_text(encoding="utf-8")
 
     assert "render_worker_env.sh" in launcher
@@ -655,6 +658,8 @@ def test_setup_and_launcher_wire_selector_without_global_preload():
     assert "build_egl_selector.sh" in setup_gen
     assert "setup_gen_pod.sh" in bootstrap
     assert "setup_four_gpu_pod.sh" in bootstrap
+    assert 'AGENTLODGE_FILAMENT_FAST_GROUNDING:-0' in four_gpu_server
+    assert 'AGENTLODGE_FILAMENT_FOOT_GROUNDING:-1' in four_gpu_server
     assert "egl_cuda_device_selector.c" in pod_helper
 
 

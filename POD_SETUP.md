@@ -53,8 +53,10 @@ volume it clones the requested ref, then:
 
 The retained quality contract is 1080x1080, 30 FPS, 96 samples, EEVEE scene export, every frame,
 denoising enabled, TGA source frames, lossless FFV1 shards, and one final H.264/audio mux. The
-experimental bounded and foot-mesh grounding accelerations remain disabled unless explicitly
-enabled; fresh setup uses full contact-aware grounding.
+four-GPU launcher enables all-contact-frame foot-mesh grounding after two distinct 5,400-frame
+motions produced byte-identical animated GLBs versus the full-mesh path. Set
+`AGENTLODGE_FILAMENT_FOOT_GROUNDING=0` to restore full-mesh scanning. The bounded/sampled fast mode
+remains disabled because it changes the output.
 
 To recheck a running pod without reinstalling anything:
 
