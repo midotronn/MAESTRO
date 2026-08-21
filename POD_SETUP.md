@@ -58,6 +58,10 @@ motions produced byte-identical animated GLBs versus the full-mesh path. Set
 `AGENTLODGE_FILAMENT_FOOT_GROUNDING=0` to restore full-mesh scanning. The bounded/sampled fast mode
 remains disabled because it changes the output.
 
+Two exact browser-to-final validation runs with the all-frame foot-mesh path completed in 85.231s
+and 88.302s, versus the prior 142.549s hot result. This provisionally clears the 90s p95 ceiling but
+still misses the 60s p50 target; a multi-song 20-run study remains required for the final SLA claim.
+
 To recheck a running pod without reinstalling anything:
 
 ```powershell

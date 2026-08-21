@@ -57,6 +57,45 @@
     "psnr_average_db": 61.088168,
     "note": "The GLB is byte-identical. Residual decoded-video differences are from PCSS/NVENC rendering, not grounding geometry."
   },
+  "browser_validation": {
+    "protocol_id": "maestro-browser-to-final-v1",
+    "runs": [
+      {
+        "sid": "sla_song01_run01_1_86665",
+        "browser_total_seconds": 85.231,
+        "browser_upload_seconds": 1.703,
+        "preprocess_seconds": 26.237,
+        "generation_seconds": 12.101,
+        "render_seconds": 39.495,
+        "render_backend_seconds": 38.94227397348732,
+        "exact_frames": 5400,
+        "exact_duration_seconds": 180.0,
+        "editing_bank_ready": true
+      },
+      {
+        "sid": "sla_song01_run01_1_86820",
+        "browser_total_seconds": 88.302,
+        "browser_upload_seconds": 0.643,
+        "preprocess_seconds": 28.286,
+        "generation_seconds": 16.138,
+        "render_seconds": 39.104,
+        "render_backend_seconds": 38.17904563434422,
+        "exact_frames": 5400,
+        "exact_duration_seconds": 180.0,
+        "editing_bank_ready": true
+      }
+    ],
+    "provisional_p50_seconds": 86.7665,
+    "provisional_p95_seconds": 88.14845,
+    "p50_target_seconds": 60.0,
+    "p95_target_seconds": 90.0,
+    "p50_pass": false,
+    "p95_pass": true,
+    "previous_hot_seconds": 142.549,
+    "median_seconds_saved": 55.7825,
+    "median_percent_improvement": 39.13215806494609,
+    "statistical_note": "Two one-song runs prove the directional gain but do not replace the planned multi-song 20-run SLA study."
+  },
   "decision": {
     "four_gpu_default": true,
     "environment_override": "AGENTLODGE_FILAMENT_FOOT_GROUNDING=0",
