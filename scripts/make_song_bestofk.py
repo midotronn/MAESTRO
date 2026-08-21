@@ -46,6 +46,7 @@ from agentlodge.pipeline import (  # noqa: E402
 from server.distributed.runtime import capability_enabled  # noqa: E402
 
 _TIMING_LOCK = threading.Lock()
+EARLY_LODGE_CONTRACT_VERSION = "lodge-early-generation-v1"
 
 
 def _emit_timing(stage: str, state: str, detail: str = "") -> None:
@@ -98,6 +99,57 @@ def _file_fingerprint(path: Path) -> dict[str, object]:
     return {
         "bytes": path.stat().st_size,
         "sha256": digest.hexdigest(),
+    }
+
+
+def _load_early_lodge_result(
+    sid: str,
+    features_path: Path,
+) -> dict | None:
+    marker = WORKSPACE / f"lodge_early_{sid}.json"
+    pending = WORKSPACE / f"lodge_early_{sid}.pending"
+    output_path = WORKSPACE / f"lodge_early_{sid}.npy"
+    deadline = time.monotonic() + max(
+        0.0,
+        float(os.environ.get("AGENTLODGE_EARLY_LODGE_WAIT_SECONDS", "120")),
+    )
+    while pending.is_file() and not marker.is_file() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not marker.is_file():
+        return None
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        if payload.get("contract_version") != EARLY_LODGE_CONTRACT_VERSION:
+            raise ValueError("unsupported early LODGE contract")
+        if payload.get("sid") != sid or payload.get("seed") is not None:
+            raise ValueError("early LODGE identity mismatch")
+        if payload.get("source") != _file_fingerprint(features_path):
+            raise ValueError("early LODGE source fingerprint mismatch")
+        if not output_path.is_file():
+            raise FileNotFoundError(output_path)
+        if payload.get("output") != _file_fingerprint(output_path):
+            raise ValueError("early LODGE output fingerprint mismatch")
+        motion = np.load(output_path).astype(np.float32)
+        if [int(dimension) for dimension in motion.shape] != payload.get("shape"):
+            raise ValueError("early LODGE shape mismatch")
+        if motion.ndim != 2 or motion.shape[0] < 1 or not np.isfinite(motion).all():
+            raise ValueError("early LODGE motion is invalid")
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        json.JSONDecodeError,
+    ) as exc:
+        print(f"[{sid}] ignoring invalid early LODGE result: {exc}", flush=True)
+        marker.unlink(missing_ok=True)
+        return None
+    print(f"[{sid}] reusing early resident LODGE generation", flush=True)
+    return {
+        "motion": motion,
+        "summary": str(payload.get("summary") or ""),
+        "error": None,
+        "worker_id": payload.get("worker_id"),
     }
 
 
@@ -253,36 +305,46 @@ def generate_song(sid: str) -> dict:
         _emit_timing("generation_lodge", "start", f"k={k}")
         result = None
         try:
-            result = best_of_k_job(
-                lambda seed: (
-                    _distributed_generation_job(
-                        "lodge",
-                        lodge_features_path,
-                        work
-                        / "lodge"
-                        / (f"seed_{seed}" if seed is not None else "single")
-                        / "lodge_motion.npy",
-                        work
-                        / "lodge"
-                        / (f"seed_{seed}" if seed is not None else "single"),
-                        seed=seed,
-                    )
-                    if capability_enabled("lodge.generate")
-                    else _run_lodge_job(
-                        lodge_features,
-                        settings_dict,
-                        str(
+            if k <= 1:
+                result = _load_early_lodge_result(
+                    sid,
+                    lodge_features_path,
+                )
+            if result is None:
+                result = best_of_k_job(
+                    lambda seed: (
+                        _distributed_generation_job(
+                            "lodge",
+                            lodge_features_path,
                             work
                             / "lodge"
                             / (f"seed_{seed}" if seed is not None else "single")
-                        ),
-                        seed=seed,
-                    )
-                ),
-                k,
-                metadata.beat_frames,
-                score_transform=_lodge_score_transform,
-            )
+                            / "lodge_motion.npy",
+                            work
+                            / "lodge"
+                            / (f"seed_{seed}" if seed is not None else "single"),
+                            seed=seed,
+                        )
+                        if capability_enabled("lodge.generate")
+                        else _run_lodge_job(
+                            lodge_features,
+                            settings_dict,
+                            str(
+                                work
+                                / "lodge"
+                                / (
+                                    f"seed_{seed}"
+                                    if seed is not None
+                                    else "single"
+                                )
+                            ),
+                            seed=seed,
+                        )
+                    ),
+                    k,
+                    metadata.beat_frames,
+                    score_transform=_lodge_score_transform,
+                )
             return result
         finally:
             worker = (

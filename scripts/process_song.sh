@@ -81,10 +81,19 @@ if [ "${AGENTLODGE_DISTRIBUTED:-0}" = "1" ]; then
   esac
 fi
 DISPATCH_BEATS=""
+DISPATCH_EARLY_LODGE=""
 if [ "${AGENTLODGE_DISTRIBUTED:-0}" = "1" ]; then
   case ",${AGENTLODGE_DISTRIBUTED_CAPABILITIES:-}," in
     *,audio.beats,*)
       DISPATCH_BEATS="$(find_script dispatch_beat_tracking.py || true)"
+      ;;
+  esac
+  case ",${AGENTLODGE_DISTRIBUTED_CAPABILITIES:-}," in
+    *,lodge.generate,*)
+      if [ "${AGENTLODGE_EARLY_LODGE_GENERATION:-0}" = "1" ] &&
+         [ "${AGENTLODGE_BEST_OF_K:-1}" = "1" ]; then
+        DISPATCH_EARLY_LODGE="$(find_script dispatch_backbone_generation.py || true)"
+      fi
       ;;
   esac
 fi
@@ -99,6 +108,8 @@ rm -f \
   "bank_${SID}_edge_seed0.npy" \
   "beats_${SID}.npy" \
   "beat_strengths_${SID}.npy" \
+  "lodge_early_${SID}.json" \
+  "lodge_early_${SID}.pending" \
   "$AUDIO_TIMING" \
   "$OUT/bank_${SID}_lodge_seed0.npy" \
   "$OUT/bank_${SID}_edge_seed0.npy" \
@@ -137,6 +148,24 @@ if [ -n "$DISPATCH_BEATS" ]; then
   BEAT_PREP_PID=$!
 fi
 LODGE_PREP_RC=0; wait "$LODGE_PREP_PID" || LODGE_PREP_RC=$?
+EARLY_LODGE_PID=""
+EARLY_LODGE_LOG="$PREP_LOG_DIR/generation_lodge_early.log"
+start_early_lodge() {
+  if [ -z "$DISPATCH_EARLY_LODGE" ]; then
+    return
+  fi
+  (
+    timing generation_lodge_early start
+    "$PY" "$DISPATCH_EARLY_LODGE" "$SID" lodge
+    rc=$?
+    timing generation_lodge_early end "rc=$rc"
+    exit "$rc"
+  ) > "$EARLY_LODGE_LOG" 2>&1 &
+  EARLY_LODGE_PID=$!
+}
+if [ "$LODGE_PREP_RC" -eq 0 ]; then
+  start_early_lodge
+fi
 EDGE_PREP_RC=0; wait "$EDGE_PREP_PID" || EDGE_PREP_RC=$?
 BEAT_PREP_RC=0
 if [ -n "$BEAT_PREP_PID" ]; then
@@ -153,6 +182,7 @@ if [ "$LODGE_PREP_RC" -ne 0 ]; then
   retry_rc=$?
   timing preprocess_lodge_retry end "rc=$retry_rc"
   [ "$retry_rc" -eq 0 ] || fail "LODGE preprocess failed"
+  start_early_lodge
 fi
 if [ "$EDGE_PREP_RC" -ne 0 ]; then
   echo "### parallel EDGE preprocessing failed; retrying alone"
@@ -166,12 +196,31 @@ if [ "$BEAT_PREP_RC" -ne 0 ]; then
   echo "### resident beat analysis failed; generation will use the exact local fallback"
   rm -f "beats_${SID}.npy" "beat_strengths_${SID}.npy" "$AUDIO_TIMING"
 fi
+if [ -n "$EARLY_LODGE_PID" ] && ! kill -0 "$EARLY_LODGE_PID" 2>/dev/null; then
+  EARLY_LODGE_RC=0
+  wait "$EARLY_LODGE_PID" || EARLY_LODGE_RC=$?
+  cat "$EARLY_LODGE_LOG"
+  EARLY_LODGE_PID=""
+  if [ "$EARLY_LODGE_RC" -ne 0 ]; then
+    echo "### early LODGE generation failed; using normal generation"
+    rm -f "lodge_early_${SID}.json" "lodge_early_${SID}.pending"
+  fi
+fi
 progress generation 40 "Generating LODGE and EDGE motion"
 echo "### [2/6] best-of-K generation + storyboard"
 timing generation_total start
 "$PY" "$GEN" "$SID"
 GEN_RC=$?
 timing generation_total end "rc=$GEN_RC"
+if [ -n "$EARLY_LODGE_PID" ]; then
+  EARLY_LODGE_RC=0
+  wait "$EARLY_LODGE_PID" || EARLY_LODGE_RC=$?
+  cat "$EARLY_LODGE_LOG"
+  if [ "$EARLY_LODGE_RC" -ne 0 ]; then
+    echo "### early LODGE generation failed; normal generation completed"
+    rm -f "lodge_early_${SID}.json" "lodge_early_${SID}.pending"
+  fi
+fi
 [ "$GEN_RC" -eq 0 ] || fail "generation failed"
 progress polish 68 "Assembling and polishing the choreography"
 timing polish start

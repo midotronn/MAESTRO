@@ -832,6 +832,8 @@ def test_uploaded_song_pipeline_uses_configured_pod_python(tmp_path, monkeypatch
         "/workspace/maestro-workers/registry.json",
     )
     monkeypatch.setenv("AGENTLODGE_SHARED_ROOT", "/workspace")
+    monkeypatch.setenv("AGENTLODGE_EARLY_LODGE_GENERATION", "1")
+    monkeypatch.setenv("AGENTLODGE_EARLY_LODGE_WAIT_SECONDS", "120")
     monkeypatch.setattr(P, "pod_config", lambda: cfg)
     monkeypatch.setattr(P, "_co_located", lambda _cfg: False)
 
@@ -870,6 +872,8 @@ def test_uploaded_song_pipeline_uses_configured_pod_python(tmp_path, monkeypatch
         "/workspace/maestro-workers/registry.json"
     ) in process_command
     assert "AGENTLODGE_SHARED_ROOT=/workspace" in process_command
+    assert "AGENTLODGE_EARLY_LODGE_GENERATION=1" in process_command
+    assert "AGENTLODGE_EARLY_LODGE_WAIT_SECONDS=120" in process_command
     assert P.get_job("test_song")["status"] == "done"
 
 
@@ -939,6 +943,7 @@ def test_uploaded_song_pipeline_scripts_are_packaged():
     required = {
         "preprocess_song.py",
         "make_song_bestofk.py",
+        "dispatch_backbone_generation.py",
         "dispatch_bank_generation.py",
         "build_window_bank.py",
         "process_song.sh",
@@ -949,7 +954,10 @@ def test_uploaded_song_pipeline_scripts_are_packaged():
     generation_script = (root / "scripts" / "make_song_bestofk.py").read_text(
         encoding="utf-8"
     )
-    assert 'progress preprocess 25 "Extracting LODGE and EDGE music features"' in process_script
+    assert (
+        'progress preprocess 25 "Extracting music features and beat timing"'
+        in process_script
+    )
     assert 'progress generation 40 "Generating LODGE and EDGE motion"' in process_script
     assert "MAESTRO_SUBPROGRESS generation" in generation_script
 

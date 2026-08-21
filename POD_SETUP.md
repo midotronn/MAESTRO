@@ -67,6 +67,13 @@ The four-GPU worker launcher also keeps temporary EDGE WAV slices and per-slice 
 resulting features were bit-identical to the network-volume path and reduced hot EDGE preprocessing
 from 28.286s to 18.340s; the corresponding exact browser-to-final run completed in 76.265s.
 
+An opt-in staged path can start single-candidate LODGE generation as soon as LODGE audio features
+are ready, while EDGE/Jukebox preprocessing continues. Reuse requires matching SHA-256
+fingerprints for both the source features and generated motion; stale, incomplete, or failed early
+results automatically fall back to the normal generation path. Set
+`AGENTLODGE_EARLY_LODGE_GENERATION=1` to benchmark this overlap. It remains disabled by default
+until an exact live-pod comparison proves that GPU contention does not slow the full browser path.
+
 To recheck a running pod without reinstalling anything:
 
 ```powershell

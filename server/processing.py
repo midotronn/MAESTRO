@@ -930,6 +930,7 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
             for script_name in (
                 "preprocess_song.py",
                 "make_song_bestofk.py",
+                "dispatch_backbone_generation.py",
                 "dispatch_song_generation.py",
                 "dispatch_bank_generation.py",
                 "build_window_bank.py",
@@ -963,6 +964,7 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
             for name in (
                 "preprocess_song.py",
                 "make_song_bestofk.py",
+                "dispatch_backbone_generation.py",
                 "dispatch_song_generation.py",
                 "dispatch_bank_generation.py",
                 "build_window_bank.py",
@@ -983,6 +985,8 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
                 "AGENTLODGE_WORKER_HEARTBEAT_MAX_AGE",
                 "AGENTLODGE_JUKEBOX_TIMEOUT",
                 "AGENTLODGE_GENERATION_TIMEOUT",
+                "AGENTLODGE_EARLY_LODGE_GENERATION",
+                "AGENTLODGE_EARLY_LODGE_WAIT_SECONDS",
             )
             if (value := os.environ.get(name, "").strip())
         )

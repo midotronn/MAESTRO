@@ -464,6 +464,116 @@ def test_dispatch_song_generation_requests_resident_cleanup(
     assert payload["penetration_cleanup"] is True
 
 
+def test_dispatch_backbone_generation_publishes_fingerprinted_marker(
+    tmp_path,
+    monkeypatch,
+):
+    import scripts.dispatch_backbone_generation as dispatch
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sid = "song_123"
+    features = workspace / f"lodge_fd_{sid}_feats.npy"
+    np.save(features, np.arange(12, dtype=np.float32).reshape(3, 4))
+    observed = {}
+
+    class FakeRegistry:
+        @classmethod
+        def from_env(cls):
+            return cls()
+
+        def require(self, capability, *, max_age_seconds):
+            observed["require"] = (capability, max_age_seconds)
+            return ["worker-1"]
+
+    class FakeCoordinator:
+        def __init__(self, registry, *, heartbeat_max_age):
+            observed["coordinator"] = (registry, heartbeat_max_age)
+
+        def submit(self, kind, payload, *, worker):
+            observed["submit"] = (kind, payload, worker)
+            output = Path(payload["output"])
+            output.parent.mkdir(parents=True, exist_ok=True)
+            np.save(output, np.full((8, 139), 3.0, dtype=np.float32))
+            return "handle"
+
+        def wait(self, handle, *, timeout):
+            observed["wait"] = (handle, timeout)
+            return SimpleNamespace(
+                output={"summary": "warm LODGE"},
+                worker_id="worker-1",
+            )
+
+    monkeypatch.setattr(dispatch, "WorkerRegistry", FakeRegistry)
+    monkeypatch.setattr(dispatch, "FileTaskCoordinator", FakeCoordinator)
+    monkeypatch.setenv("WORKSPACE", str(workspace))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["dispatch_backbone_generation.py", sid, "lodge"],
+    )
+
+    assert dispatch.main() == 0
+
+    kind, payload, worker = observed["submit"]
+    assert kind == "lodge.generate"
+    assert worker == "worker-1"
+    assert payload["seed"] is None
+    marker = json.loads(
+        (workspace / f"lodge_early_{sid}.json").read_text(encoding="utf-8")
+    )
+    assert marker["contract_version"] == dispatch.EARLY_LODGE_CONTRACT_VERSION
+    assert marker["source"] == dispatch._fingerprint(features)
+    assert marker["output"] == dispatch._fingerprint(Path(payload["output"]))
+    assert marker["shape"] == [8, 139]
+    assert not (workspace / f"lodge_early_{sid}.pending").exists()
+
+
+def test_early_lodge_reuse_requires_exact_source_and_output(
+    tmp_path,
+    monkeypatch,
+):
+    import scripts.make_song_bestofk as generator
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sid = "song_123"
+    features = workspace / f"lodge_fd_{sid}_feats.npy"
+    output = workspace / f"lodge_early_{sid}.npy"
+    np.save(features, np.arange(12, dtype=np.float32).reshape(3, 4))
+    expected = np.full((8, 139), 3.0, dtype=np.float32)
+    np.save(output, expected)
+    marker = workspace / f"lodge_early_{sid}.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "contract_version": generator.EARLY_LODGE_CONTRACT_VERSION,
+                "sid": sid,
+                "seed": None,
+                "source": generator._file_fingerprint(features),
+                "output": generator._file_fingerprint(output),
+                "shape": [8, 139],
+                "summary": "warm LODGE",
+                "worker_id": "lodge-0",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(generator, "WORKSPACE", workspace)
+
+    reused = generator._load_early_lodge_result(sid, features)
+
+    assert reused is not None
+    assert reused["summary"] == "warm LODGE"
+    assert reused["worker_id"] == "lodge-0"
+    np.testing.assert_array_equal(reused["motion"], expected)
+
+    np.save(features, np.zeros((3, 4), dtype=np.float32))
+    assert generator._load_early_lodge_result(sid, features) is None
+    assert not marker.exists()
+    assert output.exists()
+
+
 def _bash_executable() -> str:
     candidates = [
         shutil.which("bash"),
@@ -482,13 +592,16 @@ def _bash_executable() -> str:
         "resident_cleanup",
         "expect_artifact_fallback",
         "cleanup_failure",
+        "best_of_k",
+        "expect_early_lodge",
     ),
     [
-        ("all", True, False, False),
-        ("partial", False, True, False),
-        ("none", False, True, False),
-        ("stale", False, True, False),
-        ("all", False, False, True),
+        ("all", True, False, False, "1", True),
+        ("partial", False, True, False, "1", True),
+        ("none", False, True, False, "1", True),
+        ("stale", False, True, False, "1", True),
+        ("all", False, False, True, "1", True),
+        ("all", True, False, False, "2", False),
     ],
 )
 def test_process_song_skips_complete_warm_artifacts_and_falls_back_otherwise(
@@ -497,6 +610,8 @@ def test_process_song_skips_complete_warm_artifacts_and_falls_back_otherwise(
     resident_cleanup,
     expect_artifact_fallback,
     cleanup_failure,
+    best_of_k,
+    expect_early_lodge,
 ):
     root = Path(__file__).resolve().parents[1]
     workspace = tmp_path / "workspace"
@@ -524,6 +639,12 @@ if [ "$name" = "resolve_penetration.py" ]; then
 fi
 case "$name" in
   preprocess_song.py)
+    ;;
+  dispatch_backbone_generation.py)
+    sid="$1"
+    printf 'early motion' > "$WORKSPACE/lodge_early_${sid}.npy"
+    printf '{"contract_version":"lodge-early-generation-v1"}\n' \
+      > "$WORKSPACE/lodge_early_${sid}.json"
     ;;
   make_song_bestofk.py)
     sid="$1"
@@ -565,6 +686,7 @@ esac
     for name in (
         "preprocess_song.py",
         "make_song_bestofk.py",
+        "dispatch_backbone_generation.py",
         "build_window_bank.py",
         "resolve_penetration.py",
         "render_one_ybot.sh",
@@ -598,6 +720,10 @@ esac
             "FAKE_ARTIFACT_MODE": artifact_mode,
             "FAKE_RESIDENT_CLEANUP": "1" if resident_cleanup else "0",
             "FAKE_RESOLVE_FAILURE": "1" if cleanup_failure else "0",
+            "AGENTLODGE_DISTRIBUTED": "1",
+            "AGENTLODGE_DISTRIBUTED_CAPABILITIES": "lodge.generate",
+            "AGENTLODGE_EARLY_LODGE_GENERATION": "1",
+            "AGENTLODGE_BEST_OF_K": best_of_k,
             "BASH_ENV": str(bash_env),
         }
     )
@@ -630,6 +756,9 @@ esac
     assert result.returncode == 0, result.stdout + result.stderr
     calls = call_log.read_text(encoding="utf-8").splitlines()
     assert calls.count("preprocess_song.py") == 2
+    assert calls.count("dispatch_backbone_generation.py") == (
+        1 if expect_early_lodge else 0
+    )
     assert calls.count("make_song_bestofk.py") == 1
     assert ("build_window_bank.py" in calls) is expect_artifact_fallback
     assert ("-" in calls) is expect_artifact_fallback
