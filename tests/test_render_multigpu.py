@@ -653,7 +653,8 @@ def test_setup_and_launcher_wire_selector_without_global_preload():
     assert "export LD_PRELOAD" not in launcher
     assert "build_egl_selector.sh" in setup
     assert "build_egl_selector.sh" in setup_gen
-    assert "build_egl_selector.sh" in bootstrap
+    assert "setup_gen_pod.sh" in bootstrap
+    assert "setup_four_gpu_pod.sh" in bootstrap
     assert "egl_cuda_device_selector.c" in pod_helper
 
 
