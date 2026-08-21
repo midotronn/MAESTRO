@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "pod_id": "hgzfi2k7qnpumg",
+  "gpu_count": 4,
+  "gpu_model": "NVIDIA RTX PRO 4500 Blackwell",
+  "audio_seconds": 180.0,
+  "slice_count": 71,
+  "feature_shape": [
+    71,
+    150,
+    4800
+  ],
+  "feature_dtype": "float32",
+  "exactness": {
+    "baseline_sid": "sla_song01_run01_1_72440",
+    "optimized_sid": "sla_song01_run01_1_87889",
+    "array_equal": true,
+    "maximum_absolute_difference": 0.0
+  },
+  "baseline_hot": {
+    "sid": "sla_song01_run01_1_86820",
+    "edge_preprocess_seconds": 28.286,
+    "browser_total_seconds": 88.302
+  },
+  "optimized_hot": {
+    "sid": "sla_song01_run01_1_88097",
+    "edge_preprocess_seconds": 18.34,
+    "browser_preprocess_stage_seconds": 18.165,
+    "generation_seconds": 14.15,
+    "render_seconds": 39.623,
+    "browser_total_seconds": 76.265,
+    "exact_frames": 5400,
+    "exact_duration_seconds": 180.0,
+    "editing_bank_ready": true
+  },
+  "improvement": {
+    "edge_preprocess_seconds_saved": 9.946,
+    "edge_preprocess_percent": 35.16227108817082,
+    "browser_seconds_saved": 12.037,
+    "browser_percent": 13.631627822699372
+  },
+  "implementation": {
+    "scratch_environment": "AGENTLODGE_JUKEBOX_SHARED_SCRATCH",
+    "four_gpu_default": "/tmp/maestro-jukebox-shared",
+    "network_volume_behavior": "Only the final combined EDGE feature array is published to /workspace.",
+    "cleanup_verified": true
+  },
+  "cold_run_note": "The first run after restarting every resident worker spent 49.347s recompiling structure analysis. The hot repeat is the comparable latency result."
+}

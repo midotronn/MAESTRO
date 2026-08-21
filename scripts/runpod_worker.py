@@ -197,9 +197,13 @@ def main() -> int:
     if args.capability == "jukebox.extract":
         if not args.edge_root:
             parser.error("--edge-root is required for jukebox.extract")
+        jukebox_scratch = os.environ.get(
+            "AGENTLODGE_JUKEBOX_SHARED_SCRATCH", ""
+        ).strip()
         handler = JukeboxExtractHandler(
             edge_root=Path(args.edge_root),
             shared_root=shared_root,
+            scratch_root=Path(jukebox_scratch) if jukebox_scratch else None,
         )
     elif args.capability == "audio.lodge":
         if not args.lodge_root:
@@ -212,10 +216,14 @@ def main() -> int:
     elif args.capability == "audio.edge":
         if not args.edge_root:
             parser.error("--edge-root is required for audio.edge")
+        jukebox_scratch = os.environ.get(
+            "AGENTLODGE_JUKEBOX_SHARED_SCRATCH", ""
+        ).strip()
         handler = AudioPreprocessHandler(
             mode="edge",
             shared_root=shared_root,
             edge_root=Path(args.edge_root),
+            scratch_root=Path(jukebox_scratch) if jukebox_scratch else None,
         )
     elif args.capability == "audio.beats":
         handler = BeatArtifactHandler(shared_root=shared_root)

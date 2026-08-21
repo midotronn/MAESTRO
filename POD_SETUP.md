@@ -62,6 +62,11 @@ Two exact browser-to-final validation runs with the all-frame foot-mesh path com
 and 88.302s, versus the prior 142.549s hot result. This provisionally clears the 90s p95 ceiling but
 still misses the 60s p50 target; a multi-song 20-run study remains required for the final SLA claim.
 
+The four-GPU worker launcher also keeps temporary EDGE WAV slices and per-slice Jukebox arrays under
+`/tmp/maestro-jukebox-shared`, publishing only the final combined array to `/workspace`. The
+resulting features were bit-identical to the network-volume path and reduced hot EDGE preprocessing
+from 28.286s to 18.340s; the corresponding exact browser-to-final run completed in 76.265s.
+
 To recheck a running pod without reinstalling anything:
 
 ```powershell

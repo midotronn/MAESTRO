@@ -57,12 +57,16 @@ class JukeboxExtractHandler:
         *,
         edge_root: Path,
         shared_root: Path,
+        scratch_root: Path | None = None,
         extractor: Callable[[str], tuple[Any, Any]] | None = None,
         preload_audio_seconds: float | None = None,
         force_empty_cache: bool | None = None,
     ):
         self.edge_root = Path(edge_root).resolve()
         self.shared_root = Path(shared_root).resolve()
+        self.scratch_root = (
+            Path(scratch_root).resolve() if scratch_root is not None else None
+        )
         self._extractor = extractor
         self._custom_extractor = extractor is not None
         self._jukebox_lib = None
@@ -86,6 +90,25 @@ class JukeboxExtractHandler:
             "yes",
             "on",
         }
+
+    def _task_path(
+        self,
+        value: Any,
+        *,
+        must_exist: bool = False,
+        suffix: str | None = None,
+    ) -> Path:
+        path = Path(str(value)).resolve()
+        roots = [self.shared_root]
+        if self.scratch_root is not None:
+            roots.append(self.scratch_root)
+        if not any(path.is_relative_to(root) for root in roots):
+            raise ValueError(f"path is outside the allowed roots: {path}")
+        if suffix and path.suffix.lower() != suffix.lower():
+            raise ValueError(f"expected a {suffix} path, got {path}")
+        if must_exist and not path.is_file():
+            raise FileNotFoundError(path)
+        return path
 
     def _load_extractor(self) -> Callable[[str], tuple[Any, Any]]:
         if self._extractor is not None:
@@ -180,15 +203,13 @@ class JukeboxExtractHandler:
         for item in items:
             if not isinstance(item, Mapping):
                 raise ValueError("jukebox item must be an object")
-            wav_path = _shared_path(
+            wav_path = self._task_path(
                 item.get("wav"),
-                self.shared_root,
                 must_exist=True,
                 suffix=".wav",
             )
-            output_path = _shared_path(
+            output_path = self._task_path(
                 item.get("output"),
-                self.shared_root,
                 suffix=".npy",
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -260,6 +281,7 @@ class AudioPreprocessHandler:
         shared_root: Path,
         lodge_root: Path | None = None,
         edge_root: Path | None = None,
+        scratch_root: Path | None = None,
     ):
         if mode not in {"lodge", "edge"}:
             raise ValueError(f"unsupported audio preprocessing mode: {mode}")
@@ -270,6 +292,9 @@ class AudioPreprocessHandler:
         )
         self.edge_root = (
             Path(edge_root).resolve() if edge_root is not None else None
+        )
+        self.scratch_root = (
+            Path(scratch_root).resolve() if scratch_root is not None else None
         )
 
     def preload(self) -> None:
@@ -346,14 +371,29 @@ class AudioPreprocessHandler:
                 payload.get("work_dir"),
                 self.shared_root,
             )
-            value = np.asarray(
-                extract_edge_slices(
-                    wav_path,
-                    self.edge_root,
-                    work_dir,
-                ),
-                dtype=np.float32,
-            )
+            if self.scratch_root is None:
+                value = np.asarray(
+                    extract_edge_slices(
+                        wav_path,
+                        self.edge_root,
+                        work_dir,
+                    ),
+                    dtype=np.float32,
+                )
+            else:
+                self.scratch_root.mkdir(parents=True, exist_ok=True)
+                with tempfile.TemporaryDirectory(
+                    prefix=f"maestro-edge-{output_path.stem}-",
+                    dir=self.scratch_root,
+                ) as temporary:
+                    value = np.asarray(
+                        extract_edge_slices(
+                            wav_path,
+                            self.edge_root,
+                            Path(temporary),
+                        ),
+                        dtype=np.float32,
+                    )
         value = np.asarray(value, dtype=np.float32)
         _atomic_save_array(output_path, value)
         return {

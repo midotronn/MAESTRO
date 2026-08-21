@@ -854,7 +854,7 @@ def test_jukebox_handler_rejects_paths_outside_shared_root(tmp_path):
         extractor=lambda _path: (np.zeros((1, 1), dtype=np.float32), ""),
     )
 
-    with pytest.raises(ValueError, match="outside the shared root"):
+    with pytest.raises(ValueError, match="outside the allowed roots"):
         handler(
             {
                 "items": [
@@ -865,6 +865,34 @@ def test_jukebox_handler_rejects_paths_outside_shared_root(tmp_path):
                 ]
             }
         )
+
+
+def test_jukebox_handler_accepts_configured_local_scratch(tmp_path):
+    from server.distributed.handlers import JukeboxExtractHandler
+
+    shared = tmp_path / "shared"
+    scratch = tmp_path / "scratch"
+    edge = tmp_path / "edge"
+    shared.mkdir()
+    scratch.mkdir()
+    edge.mkdir()
+    wav = scratch / "song_slice0.wav"
+    wav.write_bytes(b"wav")
+    output = scratch / "cache" / "song_slice0.npy"
+    expected = np.arange(12, dtype=np.float32).reshape(3, 4)
+    handler = JukeboxExtractHandler(
+        edge_root=edge,
+        shared_root=shared,
+        scratch_root=scratch,
+        extractor=lambda _path: (expected, ""),
+    )
+
+    result = handler(
+        {"items": [{"wav": str(wav), "output": str(output)}]}
+    )
+
+    assert result["cached"] == 0
+    np.testing.assert_array_equal(np.load(output), expected)
 
 
 def test_audio_preprocess_handler_saves_exact_lodge_features(tmp_path, monkeypatch):
@@ -905,6 +933,54 @@ def test_audio_preprocess_handler_saves_exact_lodge_features(tmp_path, monkeypat
     assert result["shape"] == [2, 35]
     assert result["dtype"] == "float32"
     assert np.array_equal(np.load(output), expected)
+
+
+def test_audio_edge_preprocess_uses_and_cleans_local_scratch(
+    tmp_path, monkeypatch
+):
+    from agentlodge.audio import preprocess
+    from server.distributed.handlers import AudioPreprocessHandler
+
+    shared = tmp_path / "shared"
+    scratch = tmp_path / "scratch"
+    edge = shared / "EDGE"
+    shared.mkdir()
+    scratch.mkdir()
+    edge.mkdir()
+    wav = shared / "song.wav"
+    wav.write_bytes(b"wav")
+    output = shared / "features.npy"
+    expected = np.arange(24, dtype=np.float32).reshape(2, 3, 4)
+    observed = {}
+
+    def fake_extract(path, root, work_dir):
+        observed["path"] = path
+        observed["root"] = root
+        observed["work_dir"] = work_dir
+        assert work_dir.parent == scratch.resolve()
+        return list(expected)
+
+    monkeypatch.setattr(preprocess, "extract_edge_slices", fake_extract)
+    handler = AudioPreprocessHandler(
+        mode="edge",
+        shared_root=shared,
+        edge_root=edge,
+        scratch_root=scratch,
+    )
+
+    result = handler(
+        {
+            "wav": str(wav),
+            "output": str(output),
+            "work_dir": str(shared / "network-work"),
+        }
+    )
+
+    assert result["shape"] == [2, 3, 4]
+    assert observed["path"] == wav.resolve()
+    assert observed["root"] == edge.resolve()
+    assert not observed["work_dir"].exists()
+    np.testing.assert_array_equal(np.load(output), expected)
 
 
 def test_dance_generation_handler_preserves_timing_context(tmp_path, monkeypatch):
