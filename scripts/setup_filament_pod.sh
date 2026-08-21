@@ -40,30 +40,51 @@ for source in filament_bench.cpp vulkan_device_selector.c; do
   fi
 done
 
-archive="$WORKSPACE/.cache/agentlodge/$FFMPEG_ARCHIVE_NAME"
-mkdir -p "$(dirname "$archive")"
-if [ ! -f "$archive" ] \
-  || ! echo "$FFMPEG_SHA256  $archive" | sha256sum -c - >/dev/null 2>&1; then
-  rm -f "$archive"
-  curl -fL --retry 10 --retry-delay 3 --retry-all-errors \
-    -o "$archive" "$FFMPEG_URL"
+nvenc_works() {
+  local candidate="$1"
+  [ -x "$candidate" ] \
+    && "$candidate" -hide_banner -encoders 2>/dev/null |
+      grep -F h264_nvenc >/dev/null \
+    && "$candidate" -hide_banner -loglevel error \
+      -f lavfi -i color=c=black:s=256x256:r=1 \
+      -frames:v 1 -c:v h264_nvenc -f null - </dev/null
+}
+
+FFMPEG_BIN="${AGENTLODGE_FFMPEG_BIN:-/usr/bin/ffmpeg}"
+if ! nvenc_works "$FFMPEG_BIN"; then
+  archive="$WORKSPACE/.cache/agentlodge/$FFMPEG_ARCHIVE_NAME"
+  mkdir -p "$(dirname "$archive")"
+  if [ ! -f "$archive" ] \
+    || ! echo "$FFMPEG_SHA256  $archive" | sha256sum -c - >/dev/null 2>&1; then
+    rm -f "$archive"
+    curl -fL --retry 10 --retry-delay 3 --retry-all-errors \
+      -o "$archive" "$FFMPEG_URL"
+  fi
+  echo "$FFMPEG_SHA256  $archive" | sha256sum -c -
+  if [ ! -x "$FFMPEG_ROOT/bin/ffmpeg" ] \
+    || [ "$(cat "$FFMPEG_ROOT/.archive-sha256" 2>/dev/null || true)" != "$FFMPEG_SHA256" ]; then
+    rm -rf "$FFMPEG_ROOT"
+    mkdir -p "$FFMPEG_ROOT"
+    tar --no-same-owner -xJf "$archive" -C "$FFMPEG_ROOT" --strip-components=1
+    printf '%s\n' "$FFMPEG_SHA256" >"$FFMPEG_ROOT/.archive-sha256"
+  fi
+  FFMPEG_BIN="$FFMPEG_ROOT/bin/ffmpeg"
 fi
-echo "$FFMPEG_SHA256  $archive" | sha256sum -c -
-if [ ! -x "$FFMPEG_ROOT/bin/ffmpeg" ] \
-  || [ "$(cat "$FFMPEG_ROOT/.archive-sha256" 2>/dev/null || true)" != "$FFMPEG_SHA256" ]; then
-  rm -rf "$FFMPEG_ROOT"
-  mkdir -p "$FFMPEG_ROOT"
-  tar --no-same-owner -xJf "$archive" -C "$FFMPEG_ROOT" --strip-components=1
-  printf '%s\n' "$FFMPEG_SHA256" >"$FFMPEG_ROOT/.archive-sha256"
-fi
-ln -sfn "$FFMPEG_ROOT/bin/ffmpeg" /usr/local/bin/ffmpeg
-ln -sfn "$FFMPEG_ROOT/bin/ffprobe" /usr/local/bin/ffprobe
+nvenc_works "$FFMPEG_BIN" || {
+  echo "no installed or checksum-pinned FFmpeg can encode h264_nvenc on this Pod" >&2
+  exit 1
+}
+FFPROBE_BIN="$(dirname "$FFMPEG_BIN")/ffprobe"
+[ -x "$FFPROBE_BIN" ] || {
+  echo "selected FFmpeg has no matching ffprobe: $FFPROBE_BIN" >&2
+  exit 1
+}
+FFMPEG_BIN="$(readlink -f "$FFMPEG_BIN")"
+FFPROBE_BIN="$(readlink -f "$FFPROBE_BIN")"
+ln -sfn "$FFMPEG_BIN" /usr/local/bin/ffmpeg
+ln -sfn "$FFPROBE_BIN" /usr/local/bin/ffprobe
+printf '%s\n' "$FFMPEG_BIN" >"$ROOT/ffmpeg.path"
 hash -r
-"$FFMPEG_ROOT/bin/ffmpeg" -hide_banner -encoders 2>/dev/null |
-  grep -F h264_nvenc >/dev/null || {
-    echo "checksum-pinned FFmpeg is missing h264_nvenc" >&2
-    exit 1
-  }
 
 test -f "$SCRIPT_DIR/filament_glibc_compat.cpp" || {
   echo "missing Filament glibc compatibility source: $SCRIPT_DIR/filament_glibc_compat.cpp" >&2

@@ -41,7 +41,8 @@ volume it clones the requested ref, then:
 2. downloads and size-validates the approximately 10 GB Jukebox 5B prior during setup instead of
    deferring that cost to the first song;
 3. builds the exact Y-Bot scene and the audited EGL CUDA-device selector;
-4. builds checksum-pinned Filament v1.75.0 and NVENC FFmpeg from repository-retained native sources;
+4. builds checksum-pinned Filament v1.75.0, selects a driver-compatible NVENC FFmpeg, and retains a
+   checksum-pinned FFmpeg fallback;
 5. generates the static and animated Filament validation GLBs from the exact Y-Bot scene;
 6. runs real Vulkan/Filament/NVENC smoke tests;
 7. starts four resident Jukebox workers plus LODGE, EDGE, three audio workers, and the resident dance

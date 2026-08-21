@@ -111,7 +111,6 @@ required_files = (
     workspace / "EDGE/checkpoint.pt",
     workspace / ".agentlodge/lib/libagentlodge_egl_cuda_device.so",
     workspace / "maestro-filament-poc/filament_bench",
-    workspace / "maestro-filament-poc/nvffmpeg/ffmpeg",
     workspace / "maestro-filament-poc/ybot_production_animated.glb",
     root / ".venv/bin/python",
 )
@@ -190,7 +189,10 @@ if configured != verified:
 if os.environ.get("AGENTLODGE_REQUIRE_LLM_PLANNER") == "1" and not verified:
     raise SystemExit(f"planner verification is required but unavailable: {planner}")
 
-ffmpeg = workspace / "maestro-filament-poc/nvffmpeg/ffmpeg"
+ffmpeg_path_file = workspace / "maestro-filament-poc/ffmpeg.path"
+ffmpeg = Path(ffmpeg_path_file.read_text(encoding="utf-8").strip())
+if not ffmpeg.is_file():
+    raise SystemExit(f"selected FFmpeg is absent: {ffmpeg}")
 encoders = subprocess.run(
     [str(ffmpeg), "-hide_banner", "-encoders"],
     check=True,
@@ -199,7 +201,28 @@ encoders = subprocess.run(
     text=True,
 ).stdout
 if "h264_nvenc" not in encoders:
-    raise SystemExit("retained FFmpeg is missing h264_nvenc")
+    raise SystemExit("selected FFmpeg is missing h264_nvenc")
+subprocess.run(
+    [
+        str(ffmpeg),
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=black:s=256x256:r=1",
+        "-frames:v",
+        "1",
+        "-c:v",
+        "h264_nvenc",
+        "-f",
+        "null",
+        "-",
+    ],
+    check=True,
+    stdin=subprocess.DEVNULL,
+)
 
 status = {
     "gpu_count": 4,
@@ -207,6 +230,7 @@ status = {
     "server_port": port,
     "planner_configured": configured,
     "planner_verified": verified,
+    "ffmpeg": str(ffmpeg),
     "quality": expected_quality,
 }
 (workspace / ".maestro_four_gpu_ready.json").write_text(
