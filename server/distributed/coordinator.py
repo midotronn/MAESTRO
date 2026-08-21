@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from server.distributed.registry import WorkerRegistry, WorkerSpec
-from server.distributed.tasks import TaskRequest, TaskResult
+from server.distributed.tasks import TaskRequest, TaskResult, canonical_json
 
 
 class TaskExecutionError(RuntimeError):
@@ -43,6 +43,7 @@ def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
 class TaskHandle:
     request: TaskRequest
     worker: WorkerSpec
+    eligible_worker_ids: tuple[str, ...] = ()
 
     @property
     def result_path(self) -> Path:
@@ -107,8 +108,10 @@ class FileTaskCoordinator:
         task_id: str,
         *,
         exclude: set[str] | None = None,
+        eligible_worker_ids: tuple[str, ...] = (),
     ) -> WorkerSpec:
         excluded = exclude or set()
+        eligible = set(eligible_worker_ids)
         workers = [
             worker
             for worker in self.registry.require(
@@ -116,6 +119,7 @@ class FileTaskCoordinator:
                 max_age_seconds=self.heartbeat_max_age,
             )
             if worker.worker_id not in excluded
+            and (not eligible or worker.worker_id in eligible)
         ]
         if not workers:
             raise RuntimeError(
@@ -180,7 +184,8 @@ class FileTaskCoordinator:
                 ) from exc
             if (
                 existing.kind != request.kind
-                or existing.payload != request.payload
+                or canonical_json(existing.payload)
+                != canonical_json(request.payload)
             ):
                 raise ValueError(
                     f"task id {request.task_id} already names a different request"
@@ -188,8 +193,13 @@ class FileTaskCoordinator:
             return
         _atomic_json(record_path, request.to_dict())
 
-    def _existing_handle(self, request: TaskRequest) -> TaskHandle | None:
+    def _existing_handle(
+        self,
+        request: TaskRequest,
+        eligible_worker_ids: tuple[str, ...] = (),
+    ) -> TaskHandle | None:
         matches: list[TaskHandle] = []
+        eligible = set(eligible_worker_ids)
         for worker in self.registry.workers:
             paths = (
                 worker.task_dir / "results" / f"{request.task_id}.json",
@@ -237,12 +247,24 @@ class FileTaskCoordinator:
                         ) from exc
                     if (
                         queued.kind != request.kind
-                        or queued.payload != request.payload
+                        or canonical_json(queued.payload)
+                        != canonical_json(request.payload)
                     ):
                         raise ValueError(
                             f"task id {request.task_id} has conflicting payloads"
                         )
-                matches.append(TaskHandle(request=request, worker=worker))
+                    if eligible and worker.worker_id not in eligible:
+                        raise RuntimeError(
+                            f"queued task {request.task_id} is assigned outside "
+                            "its eligible worker cohort"
+                        )
+                matches.append(
+                    TaskHandle(
+                        request=request,
+                        worker=worker,
+                        eligible_worker_ids=eligible_worker_ids,
+                    )
+                )
                 break
         unique = {
             handle.worker.worker_id: handle
@@ -259,12 +281,17 @@ class FileTaskCoordinator:
         self,
         request: TaskRequest,
         worker: WorkerSpec,
+        eligible_worker_ids: tuple[str, ...] = (),
     ) -> TaskHandle:
         request_path = (
             worker.task_dir / "requests" / f"{request.task_id}.json"
         )
         _atomic_json(request_path, request.to_dict())
-        return TaskHandle(request=request, worker=worker)
+        return TaskHandle(
+            request=request,
+            worker=worker,
+            eligible_worker_ids=eligible_worker_ids,
+        )
 
     def _safe_reassign(self, handle: TaskHandle) -> TaskHandle | None:
         task_id = handle.request.task_id
@@ -277,7 +304,10 @@ class FileTaskCoordinator:
             )
             if claimed_path.exists():
                 return None
-            existing = self._existing_handle(handle.request)
+            existing = self._existing_handle(
+                handle.request,
+                handle.eligible_worker_ids,
+            )
             if existing is not None and existing.worker != handle.worker:
                 return existing
             request_path = (
@@ -304,6 +334,10 @@ class FileTaskCoordinator:
                     max_age_seconds=self.heartbeat_max_age,
                 )
                 if worker.worker_id != handle.worker.worker_id
+                and (
+                    not handle.eligible_worker_ids
+                    or worker.worker_id in handle.eligible_worker_ids
+                )
             ]
             if not alternatives:
                 if moved and cancelled_path.exists():
@@ -314,10 +348,12 @@ class FileTaskCoordinator:
                     handle.request.kind,
                     task_id,
                     exclude={handle.worker.worker_id},
+                    eligible_worker_ids=handle.eligible_worker_ids,
                 )
                 reassigned = self._queue_request(
                     handle.request,
                     replacement,
+                    handle.eligible_worker_ids,
                 )
             except Exception:
                 if moved and cancelled_path.exists():
@@ -326,13 +362,25 @@ class FileTaskCoordinator:
             cancelled_path.unlink(missing_ok=True)
             return reassigned
 
-    def _validate_worker(self, kind: str, selected: WorkerSpec) -> None:
+    def _validate_worker(
+        self,
+        kind: str,
+        selected: WorkerSpec,
+        eligible_worker_ids: tuple[str, ...] = (),
+    ) -> None:
         if kind not in selected.capabilities:
             raise ValueError(
                 f"worker {selected.worker_id} does not advertise {kind!r}"
             )
         if not selected.is_healthy(max_age_seconds=self.heartbeat_max_age):
             raise RuntimeError(f"worker {selected.worker_id} is not healthy")
+        if (
+            eligible_worker_ids
+            and selected.worker_id not in eligible_worker_ids
+        ):
+            raise ValueError(
+                f"worker {selected.worker_id} is outside the eligible cohort"
+            )
 
     def submit(
         self,
@@ -341,19 +389,25 @@ class FileTaskCoordinator:
         *,
         worker: WorkerSpec | None = None,
         task_id: str | None = None,
+        eligible_worker_ids: tuple[str, ...] | list[str] = (),
     ) -> TaskHandle:
+        eligible = tuple(sorted({str(value) for value in eligible_worker_ids}))
+        known_worker_ids = {item.worker_id for item in self.registry.workers}
+        if any(value not in known_worker_ids for value in eligible):
+            raise ValueError("eligible worker cohort contains an unknown worker")
         request = TaskRequest.create(kind, payload, task_id=task_id)
         with self._task_lock(request.task_id):
             self._record_task(request)
-            existing = self._existing_handle(request)
+            existing = self._existing_handle(request, eligible)
             if existing is not None:
                 return existing
             selected = worker or self._choose_worker(
                 kind,
                 request.task_id,
+                eligible_worker_ids=eligible,
             )
-            self._validate_worker(kind, selected)
-            return self._queue_request(request, selected)
+            self._validate_worker(kind, selected, eligible)
+            return self._queue_request(request, selected, eligible)
 
     def wait(
         self,
@@ -367,6 +421,9 @@ class FileTaskCoordinator:
             timeout=timeout,
             on_poll=on_poll,
         )[0]
+
+    def is_complete(self, handle: TaskHandle) -> bool:
+        return handle.result_path.is_file()
 
     def wait_many(
         self,

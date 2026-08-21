@@ -1,9 +1,101 @@
+import hashlib
 import json
 import threading
 import time
 from pathlib import Path
 
 import numpy as np
+
+
+def _render_provenance():
+    from server.distributed.render_contract import RENDER_CONTRACT_VERSION
+
+    return {
+        "render_contract_version": RENDER_CONTRACT_VERSION,
+        "daemon_protocol_version": 6,
+        "scene": {"blend_sha256": "1" * 64, "ybot_sha256": "2" * 64},
+        "renderer": {
+            "blender_version": "4.2.3 LTS",
+            "blender_daemon_sha256": "3" * 64,
+            "blender_render_ybot_sha256": "4" * 64,
+            "blender_studio_sha256": "5" * 64,
+            "render_root_motion_sha256": "6" * 64,
+        },
+        "selector": None,
+    }
+
+
+def _render_result(
+    payload,
+    shard,
+    provenance,
+    gpu_index,
+    *,
+    gpu_uuid=None,
+):
+    decoded_rgb_hash = "c" * 64
+    return {
+        "frame_start": payload["frame_start"],
+        "frame_end": payload["frame_end"],
+        "frames": payload["frame_end"] - payload["frame_start"],
+        "transport": "ffv1",
+        "render_contract_version": provenance["render_contract_version"],
+        "render_provenance": provenance,
+        "render_identity_digest": payload["render_identity_digest"],
+        "daemon_attestation": {
+            "schema_version": 1,
+            "pid": 1234,
+            **provenance,
+            "quality": {
+                key: payload[key]
+                for key in (
+                    "width",
+                    "height",
+                    "samples",
+                    "engine",
+                    "denoise",
+                    "frame_format",
+                )
+            },
+            "gpu": {
+                "cuda_index": gpu_index,
+                "uuid": gpu_uuid or f"GPU-test-{gpu_index}",
+                "pci_bus_id": f"00000000:{gpu_index + 1:02X}:00.0",
+                "selection_mode": "single-visible-gpu",
+            },
+        },
+        "source_frames_sha256": "a" * 64,
+        "shard_sha256": hashlib.sha256(b"ffv1").hexdigest(),
+        "source_decoded_rgb_sha256": decoded_rgb_hash,
+        "shard_decoded_rgb_sha256": decoded_rgb_hash,
+        "decoded_rgb_digest_version": "rgb24-global-frame-v1",
+        "shard_validation": {
+            "codec": "ffv1",
+            "width": payload["width"],
+            "height": payload["height"],
+            "fps": payload["fps"],
+            "frames": payload["frame_end"] - payload["frame_start"],
+            "decoded_rgb_digest_version": "rgb24-global-frame-v1",
+            "decoded_rgb_sha256": decoded_rgb_hash,
+            "worker_validation_version": (
+                "source-rgb-digest+ffprobe-v1"
+            ),
+            "worker_shard_full_decode": False,
+        },
+        "shard_output": str(shard),
+        **{
+            key: payload[key]
+            for key in (
+                "width",
+                "height",
+                "samples",
+                "engine",
+                "denoise",
+                "frame_format",
+                "fps",
+            )
+        },
+    }
 
 
 def _wait_for(predicate, timeout=3.0):
@@ -15,37 +107,47 @@ def _wait_for(predicate, timeout=3.0):
     raise AssertionError("condition did not become true")
 
 
-def test_render_scaling_report_uses_measured_worker_throughput(tmp_path):
+def test_render_scaling_report_uses_measured_worker_throughput(
+    tmp_path,
+    monkeypatch,
+):
     from scripts.benchmark_render_scaling import benchmark_render_workers
     from server.distributed.registry import WorkerRegistry, WorkerSpec
     from server.distributed.worker import FileTaskWorker
 
     poses = tmp_path / "poses.npz"
     np.savez(poses, fk_joints=np.zeros((10, 22, 3), dtype=np.float32))
+    provenance = _render_provenance()
     specs = [
         WorkerSpec(
             worker_id=f"render-{index}",
             capabilities=("render.frames",),
             task_dir=tmp_path / f"worker-{index}",
+            metadata={
+                "gpu_index": "0",
+                "render_provenance": provenance,
+            },
         )
         for index in range(2)
     ]
     workers = []
     threads = []
     for spec in specs:
-        def render(payload):
+        def render(
+            payload,
+            gpu_index=0,
+            gpu_uuid=f"GPU-{spec.worker_id}",
+        ):
             shard = Path(payload["shard_output"])
             shard.parent.mkdir(parents=True, exist_ok=True)
             shard.write_bytes(b"ffv1")
-            return {
-                "frame_start": payload["frame_start"],
-                "frame_end": payload["frame_end"],
-                "frames": payload["frame_end"] - payload["frame_start"],
-                "transport": "ffv1",
-                "source_frames_sha256": "a" * 64,
-                "shard_sha256": "b" * 64,
-                "shard_output": str(shard),
-            }
+            return _render_result(
+                payload,
+                shard,
+                provenance,
+                gpu_index,
+                gpu_uuid=gpu_uuid,
+            )
 
         worker = FileTaskWorker(
             spec,
@@ -59,6 +161,10 @@ def test_render_scaling_report_uses_measured_worker_throughput(tmp_path):
         threads.append(thread)
     for spec in specs:
         _wait_for(spec.is_healthy)
+    monkeypatch.setattr(
+        "scripts.benchmark_render_scaling.inspect_ffv1_shard",
+        lambda *_args, **_kwargs: {"decoded_rgb_sha256": "c" * 64},
+    )
 
     report = benchmark_render_workers(
         poses,
@@ -71,8 +177,16 @@ def test_render_scaling_report_uses_measured_worker_throughput(tmp_path):
     )
 
     assert report["status"] == "completed"
+    assert report["schema_version"] == 2
     assert report["frames"] == 10
     assert report["worker_count"] == 2
+    assert report["gpu_count"] == 2
+    assert report["workers_per_gpu"] == {
+        "GPU-render-0": 1,
+        "GPU-render-1": 1,
+    }
+    assert report["workers_per_cuda_index"] == {"0": 2}
+    assert {worker["gpu_index"] for worker in report["workers"]} == {"0"}
     assert len(report["workers"]) == 2
     assert report["aggregate_frames_per_second"] > 0
     assert report["capacity_projection"]["ideal_workers_at_median_rate"] >= 1
@@ -98,15 +212,18 @@ def test_render_scaling_reports_actual_failover_worker(
 
     poses = tmp_path / "poses.npz"
     np.savez(poses, fk_joints=np.zeros((1, 22, 3), dtype=np.float32))
+    provenance = _render_provenance()
     stale = WorkerSpec(
         worker_id="a-stale",
         capabilities=("render.frames",),
         task_dir=tmp_path / "a-stale",
+        metadata={"gpu_index": "0", "render_provenance": provenance},
     )
     healthy = WorkerSpec(
         worker_id="b-healthy",
         capabilities=("render.frames",),
         task_dir=tmp_path / "b-healthy",
+        metadata={"gpu_index": "1", "render_provenance": provenance},
     )
     stale.task_dir.mkdir()
     stale.heartbeat_path.write_text(
@@ -125,15 +242,7 @@ def test_render_scaling_reports_actual_failover_worker(
         shard = Path(payload["shard_output"])
         shard.parent.mkdir(parents=True, exist_ok=True)
         shard.write_bytes(b"ffv1")
-        return {
-            "frame_start": payload["frame_start"],
-            "frame_end": payload["frame_end"],
-            "frames": payload["frame_end"] - payload["frame_start"],
-            "transport": "ffv1",
-            "source_frames_sha256": "a" * 64,
-            "shard_sha256": "b" * 64,
-            "shard_output": str(shard),
-        }
+        return _render_result(payload, shard, provenance, 1)
 
     worker = FileTaskWorker(
         healthy,
@@ -145,6 +254,10 @@ def test_render_scaling_reports_actual_failover_worker(
     worker_thread.start()
     _wait_for(healthy.is_healthy)
     monkeypatch.setenv("AGENTLODGE_WORKER_HEARTBEAT_MAX_AGE", "1")
+    monkeypatch.setattr(
+        "scripts.benchmark_render_scaling.inspect_ffv1_shard",
+        lambda *_args, **_kwargs: {"decoded_rgb_sha256": "c" * 64},
+    )
 
     outcome = {}
 
@@ -172,5 +285,6 @@ def test_render_scaling_reports_actual_failover_worker(
     report = outcome["report"]
     assert report["workers"][0]["assigned_worker_id"] == "a-stale"
     assert report["workers"][0]["worker_id"] == "b-healthy"
+    assert report["workers"][0]["gpu_index"] == "1"
     worker.stop()
     worker_thread.join(timeout=2)

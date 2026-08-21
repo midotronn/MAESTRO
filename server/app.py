@@ -70,6 +70,12 @@ FPS = 30
 
 app = FastAPI(title="MAESTRO Interactive Editor")
 _sessions: dict[str, EditSession] = {}
+_PLANNER_STATUS: dict[str, object] = {
+    "configured": False,
+    "verified": False,
+    "model": os.environ.get("AGENTLODGE_PLANNER_MODEL", "gpt-4o"),
+    "message": "planner verification has not run",
+}
 
 
 @app.middleware("http")
@@ -151,7 +157,7 @@ def _prewarm() -> None:
         pass
     try:
         from server import warm_render
-        warm_render.ensure_pool(wait_ready=0)
+        warm_render.ensure_configured_pool(wait_ready=0)
     except Exception:  # noqa: BLE001 - cold rendering remains available
         pass
 
@@ -179,6 +185,77 @@ def _report_planner() -> None:
         )
 
 
+def _probe_llm_planner(api_key: str) -> str:
+    from agentlodge.editor.agent_edit import plan_edit
+
+    plan = plan_edit(
+        "make the selected window more energetic",
+        {"energy": 0.5, "bas": 0.5, "jerk": 0.5, "foot": 0.5},
+        0.0,
+        5.0,
+        api_key=api_key,
+    )
+    if plan.planner != "llm":
+        raise RuntimeError(plan.planner_note or f"planner returned {plan.planner!r}")
+    return plan.planner_note or "AI agent (LLM reasoning)"
+
+
+@app.on_event("startup")
+def _verify_planner() -> None:
+    global _PLANNER_STATUS
+
+    key = _openai_api_key()
+    model = os.environ.get("AGENTLODGE_PLANNER_MODEL", "gpt-4o")
+    verify = os.environ.get("AGENTLODGE_VERIFY_LLM_PLANNER", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    required = os.environ.get("AGENTLODGE_REQUIRE_LLM_PLANNER", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not key:
+        _PLANNER_STATUS = {
+            "configured": False,
+            "verified": False,
+            "model": model,
+            "message": "no OpenAI credential is configured",
+        }
+        if required:
+            raise RuntimeError("LLM planner is required but no OpenAI credential is configured")
+        return
+    if not verify:
+        _PLANNER_STATUS = {
+            "configured": True,
+            "verified": False,
+            "model": model,
+            "message": "credential present; live verification disabled",
+        }
+        return
+    try:
+        message = _probe_llm_planner(key)
+    except Exception as exc:
+        _PLANNER_STATUS = {
+            "configured": True,
+            "verified": False,
+            "model": model,
+            "message": f"live verification failed: {type(exc).__name__}",
+        }
+        if required:
+            raise RuntimeError("LLM planner live verification failed") from exc
+        return
+    _PLANNER_STATUS = {
+        "configured": True,
+        "verified": True,
+        "model": model,
+        "message": message,
+    }
+
+
 # --------------------------------------------------------------------------- session loading
 def _openai_api_key() -> str | None:
     value = os.environ.get("OPENAI_API_KEY", "").strip()
@@ -201,6 +278,11 @@ def _openai_api_key() -> str | None:
         if value:
             return value
     return None
+
+
+@app.get("/api/planner/status")
+def planner_status() -> dict:
+    return dict(_PLANNER_STATUS)
 
 
 def _song_dir(sid: str) -> Path:

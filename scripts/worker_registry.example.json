@@ -8,7 +8,7 @@
       "task_dir": "/workspace/maestro-workers/jukebox-0",
       "max_concurrency": 1,
       "metadata": {
-        "gpu": "one isolated NVIDIA GPU"
+        "gpu": "explicit AGENTLODGE_GPU_INDEX or the sole visible GPU"
       }
     },
     {
@@ -19,7 +19,7 @@
       "task_dir": "/workspace/maestro-workers/lodge-0",
       "max_concurrency": 1,
       "metadata": {
-        "gpu": "one isolated NVIDIA GPU"
+        "gpu": "explicit AGENTLODGE_GPU_INDEX or the sole visible GPU"
       }
     },
     {
@@ -30,7 +30,7 @@
       "task_dir": "/workspace/maestro-workers/edge-0",
       "max_concurrency": 1,
       "metadata": {
-        "gpu": "one isolated NVIDIA GPU"
+        "gpu": "explicit AGENTLODGE_GPU_INDEX or the sole visible GPU"
       }
     },
     {
@@ -41,7 +41,8 @@
       "task_dir": "/workspace/maestro-workers/render-0",
       "max_concurrency": 1,
       "metadata": {
-        "gpu": "one isolated NVIDIA GPU",
+        "gpu": "explicit AGENTLODGE_GPU_INDEX or the sole visible GPU",
+        "daemon": "one resident Blender daemon in a worker-unique root",
         "quality": "1080x1080 EEVEE 96 samples"
       }
     }

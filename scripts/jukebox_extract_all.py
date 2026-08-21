@@ -4,13 +4,10 @@
 from __future__ import annotations
 
 import argparse
-import gc
 import hashlib
 import os
 import sys
 from pathlib import Path
-
-import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -111,8 +108,6 @@ def main() -> int:
     os.chdir(edge_root)
     sys.path.insert(0, str(edge_root))
 
-    from data.audio_extraction.jukebox_features import extract as juke_extract
-
     wav_slices = sorted(slice_dir.glob("*.wav"), key=lambda p: int(p.stem.split("slice")[-1]))
     if not wav_slices:
         raise SystemExit(f"No wav slices found in {slice_dir}")
@@ -125,6 +120,11 @@ def main() -> int:
     distributed = capability_enabled("jukebox.extract")
     if pending and distributed:
         _extract_distributed(pending, cache_dir)
+    if pending and not distributed:
+        import gc
+
+        import numpy as np
+        from data.audio_extraction.jukebox_features import extract as juke_extract
 
     for index, wav_slice in enumerate(wav_slices):
         out_path = cache_dir / f"{wav_slice.stem}.npy"

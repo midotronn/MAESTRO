@@ -37,6 +37,14 @@ apt-get install -y -qq \
   libosmesa6 \
   aria2 curl ffmpeg git build-essential 2>&1 | tail -n 2 || true
 
+echo "--- EGL CUDA-device selector shim ---"
+EGL_SELECTOR="$WORKSPACE/.agentlodge/lib/libagentlodge_egl_cuda_device.so"
+WORKSPACE="$WORKSPACE" AGENTLODGE_ROOT="$AL" \
+  bash "$AL/scripts/build_egl_selector.sh" "$EGL_SELECTOR" || {
+    echo "SETUP_FAILED: EGL selector shim build" >&2
+    exit 1
+  }
+
 # Keep the 10GB Jukebox prior on the persistent volume and restore the cache link after restarts.
 PRIOR_SIZE=10288727721
 PRIOR_STORE="$WORKSPACE/.cache/jukemirlib/prior_level_2.pth.tar"

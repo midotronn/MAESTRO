@@ -21,6 +21,7 @@ import glob
 import math
 import os
 import sys
+import time
 
 import bpy  # type: ignore
 import numpy as np
@@ -86,6 +87,10 @@ def install_animation(obj, frames, channels):
             coordinates[0::2] = frame_values
             coordinates[1::2] = values[:, index]
             points.foreach_set("co", coordinates)
+            points.foreach_set(
+                "interpolation",
+                np.ones(frame_values.size, dtype=np.int32),
+            )
             curve.update()
 
 
@@ -128,6 +133,8 @@ def parse_args():
     p.add_argument("--fast", action="store_true",
                    help="Fast preview: ground on the cached foot meshes only + one fewer depsgraph "
                         "update per frame (used by the warm compare daemon).")
+    p.add_argument("--foot-grounding", action="store_true",
+                   help="Scan only the cached foot-region meshes for exact per-contact grounding.")
     p.add_argument("--lock-root", action="store_true",
                    help="Legacy preview mode: pin the pelvis horizontally and ground the feet "
                         "every frame instead of preserving the FK root trajectory.")
@@ -142,6 +149,8 @@ def parse_args():
                    help="Keyframe the clip and render it in one Blender animation pass.")
     p.add_argument("--video-path", default="",
                    help="Optional direct H.264 output for batch renders (skips image sequences).")
+    p.add_argument("--export-glb", default="",
+                   help="Optional animated GLB output for batch renders (skips image/video output).")
     return p.parse_args(argv)
 
 
@@ -193,6 +202,21 @@ def axis_angle_to_matrix(v):
         return Matrix.Identity(3)
     axis = Vector((float(v[0]) / ang, float(v[1]) / ang, float(v[2]) / ang))
     return Quaternion(axis, ang).to_matrix()
+
+
+def axis_angles_to_quaternions(values):
+    """Convert an (..., 3) rotation-vector array to Blender (w, x, y, z) quaternions."""
+    values = np.asarray(values, dtype=np.float64)
+    angles = np.linalg.norm(values, axis=-1)
+    half_angles = 0.5 * angles
+    scales = np.zeros_like(angles)
+    nonzero = angles >= 1e-8
+    scales[nonzero] = np.sin(half_angles[nonzero]) / angles[nonzero]
+    quaternions = np.empty((*values.shape[:-1], 4), dtype=np.float64)
+    quaternions[..., 0] = np.cos(half_angles)
+    quaternions[..., 1:] = values * scales[..., None]
+    quaternions[~nonzero] = (1.0, 0.0, 0.0, 0.0)
+    return quaternions
 
 
 def import_ybot(path):
@@ -306,6 +330,7 @@ def render_take(args, color):
     .blend or a warm daemon that already imported the rig + studio) when present; otherwise it does
     the one-time FBX import + studio setup. Factored out of ``main`` so a persistent daemon can call
     it per request and skip Blender's ~8s startup + scene load."""
+    render_take_start = time.perf_counter()
     data = np.load(args.poses)
     poses = data["poses"].astype(np.float32)  # (L, J, 3)
     L = poses.shape[0]
@@ -337,7 +362,13 @@ def render_take(args, color):
     # whole dance onto the floor, which per-bone alignment cannot fully undo.)
     arm.rotation_mode = "QUATERNION"
     clear_animation(arm)
-    import_rot = arm.rotation_quaternion.copy()
+    import_rotation_key = "_maestro_import_rotation"
+    if import_rotation_key not in arm:
+        arm[import_rotation_key] = tuple(arm.rotation_quaternion)
+    import_rot = Quaternion(tuple(arm[import_rotation_key]))
+    arm.rotation_quaternion = import_rot
+    arm.location = (0.0, 0.0, 0.0)
+    bpy.context.view_layer.update()
     for pb in arm.pose.bones:
         pb.rotation_mode = "QUATERNION"
 
@@ -399,6 +430,7 @@ def render_take(args, color):
     # single constant rotation (the data-frame vs armature-frame difference). Recover it once
     # by Kabsch-aligning the posed bone joints to the FK joints over sampled frames, so the
     # dance stands upright and balanced every frame (no per-frame heuristic).
+    alignment_start = time.perf_counter()
     fk = None
     if args.fk_npz and os.path.exists(args.fk_npz):
         fk = np.load(args.fk_npz)["joints"].astype(np.float64)
@@ -438,6 +470,10 @@ def render_take(args, color):
         world_rot = Quaternion(Vector((0.0, 0.0, 1.0)), math.radians(args.yaw)) @ world_rot
     arm.rotation_quaternion = world_rot
     bpy.context.view_layer.update()
+    print(
+        "YBOT_TIMING alignment_seconds="
+        f"{time.perf_counter() - alignment_start:.3f}"
+    )
 
     def pose_frame(i):
         apply_pose(i)
@@ -467,7 +503,13 @@ def render_take(args, color):
     # fast mode, scan only the cached foot meshes and fold the horizontal centring + vertical
     # grounding into a single location set (2 depsgraph updates/frame instead of 3). The horizontal
     # shift does not change z, so the grounded result is identical to the full-scan path.
-    ground_meshes = foot_meshes(arm, robot_meshes, poses, L, n_body, apply_pose) if fast else robot_meshes
+    grounding_start = time.perf_counter()
+    foot_grounding = bool(getattr(args, "foot_grounding", False))
+    ground_meshes = (
+        foot_meshes(arm, robot_meshes, poses, L, n_body, apply_pose)
+        if fast or foot_grounding
+        else robot_meshes
+    )
     preserve_root = fk is not None and not bool(getattr(args, "lock_root", False))
     root_path = None
     follow_xy = None
@@ -556,6 +598,10 @@ def render_take(args, color):
             )
         elif mesh_floor != float("inf"):
             root_ground_offset = -mesh_floor
+    print(
+        "YBOT_TIMING grounding_seconds="
+        f"{time.perf_counter() - grounding_start:.3f}"
+    )
 
     # Rate-limit the floor offset so per-frame foot-height jitter (the lowest vertex hopping between
     # feet/segments) does not bob the WHOLE body up and down. Real height changes are gradual and
@@ -677,6 +723,7 @@ def render_take(args, color):
     frame_format = str(getattr(args, "frame_format", "png")).lower()
     frame_extension = "tga" if frame_format == "tga" else "png"
     if bool(getattr(args, "batch_render", False)):
+        batch_prepare_start = time.perf_counter()
         driven_bones = [JOINT_NAMES[j] for j in range(n_body) if JOINT_NAMES[j] in rest]
         bone_quaternions = {
             name: np.empty((len(rendered_frames), 4), dtype=np.float64)
@@ -688,18 +735,68 @@ def render_take(args, color):
             for obj in (target, cam, spot)
             if obj is not None
         }
-        for out_i, i in enumerate(rendered_frames):
-            scene.frame_set(i)
-            place_frame(i)
-            for name in driven_bones:
-                bone_quaternions[name][out_i] = tuple(
-                    arm.pose.bones[name].rotation_quaternion
-                )
-            arm_locations[out_i] = tuple(arm.location)
+        if preserve_root and metric_projected is None:
+            frame_indices = np.asarray(rendered_frames, dtype=np.int64)
+            pose_quaternions = axis_angles_to_quaternions(
+                poses[frame_indices, :n_body]
+            )
+            for joint_index, name in enumerate(JOINT_NAMES[:n_body]):
+                if name in bone_quaternions:
+                    bone_quaternions[name][:] = pose_quaternions[:, joint_index]
+
+            apply_pose(rendered_frames[0])
+            arm.location = (0.0, 0.0, 0.0)
+            bpy.context.view_layer.update()
+            pelvis = np.asarray(tuple(whead("m_avg_Pelvis")), dtype=np.float64)
+            arm_locations[:] = root_path[frame_indices] - pelvis
+            if contact_ground_offsets is None:
+                arm_locations[:, 2] += root_ground_offset
+            else:
+                arm_locations[:, 2] += contact_ground_offsets[frame_indices]
+
             for obj in (target, cam, spot):
                 if obj is not None:
-                    object_locations[obj.name][out_i] = tuple(obj.location)
-            capture_metrics(i)
+                    object_locations[obj.name][:] = np.asarray(
+                        tuple(obj.location), dtype=np.float64
+                    )
+            if (
+                not bool(getattr(args, "fixed_camera", False))
+                and target is not None
+                and cam is not None
+                and cam_offset is not None
+            ):
+                followed_xy = follow_xy[frame_indices]
+                object_locations[target.name][:, :2] = followed_xy
+                object_locations[cam.name][:, 0] = followed_xy[:, 0] + cam_offset.x
+                object_locations[cam.name][:, 1] = followed_xy[:, 1] + cam_offset.y
+                object_locations[cam.name][:, 2] = target.location.z + cam_offset.z
+                if spot is not None and spot_offset is not None:
+                    object_locations[spot.name][:, 0] = (
+                        followed_xy[:, 0] + spot_offset.x
+                    )
+                    object_locations[spot.name][:, 1] = (
+                        followed_xy[:, 1] + spot_offset.y
+                    )
+                    object_locations[spot.name][:, 2] = (
+                        target.location.z + spot_offset.z
+                    )
+        else:
+            for out_i, i in enumerate(rendered_frames):
+                scene.frame_set(i)
+                place_frame(i)
+                for name in driven_bones:
+                    bone_quaternions[name][out_i] = tuple(
+                        arm.pose.bones[name].rotation_quaternion
+                    )
+                arm_locations[out_i] = tuple(arm.location)
+                for obj in (target, cam, spot):
+                    if obj is not None:
+                        object_locations[obj.name][out_i] = tuple(obj.location)
+                capture_metrics(i)
+        print(
+            "YBOT_TIMING batch_prepare_seconds="
+            f"{time.perf_counter() - batch_prepare_start:.3f}"
+        )
         arm_channels = [("location", arm_locations, "Object")]
         arm_channels.extend(
             (
@@ -720,7 +817,48 @@ def render_take(args, color):
         scene.frame_start = rendered_frames[0]
         scene.frame_end = rendered_frames[-1]
         scene.frame_step = stride
-        if args.video_path:
+        export_glb = str(getattr(args, "export_glb", "") or "")
+        if export_glb:
+            export_path = os.path.abspath(export_glb)
+            os.makedirs(os.path.dirname(export_path), exist_ok=True)
+            bpy.ops.object.select_all(action="DESELECT")
+            export_objects = [arm, *robot_meshes]
+            export_objects.extend(
+                obj
+                for obj in (
+                    target,
+                    cam,
+                    spot,
+                    bpy.data.objects.get("Fill"),
+                    bpy.data.objects.get("Cyclorama"),
+                )
+                if obj is not None
+            )
+            for obj in export_objects:
+                obj.hide_viewport = False
+                obj.hide_render = False
+                obj.select_set(True)
+            bpy.context.view_layer.objects.active = arm
+            scene.frame_set(rendered_frames[0])
+            export_start = time.perf_counter()
+            bpy.ops.export_scene.gltf(
+                filepath=export_path,
+                export_format="GLB",
+                use_selection=True,
+                export_animations=True,
+                export_force_sampling=(
+                    os.environ.get("YBOT_GLTF_FORCE_SAMPLING", "0") != "0"
+                ),
+                export_frame_range=True,
+                export_cameras=True,
+                export_lights=True,
+            )
+            print(
+                "YBOT_TIMING gltf_export_seconds="
+                f"{time.perf_counter() - export_start:.3f}"
+            )
+            print(f"YBOT_GLTF_EXPORTED {export_path}")
+        elif args.video_path:
             scene.render.image_settings.file_format = "FFMPEG"
             scene.render.ffmpeg.format = "MPEG4"
             scene.render.ffmpeg.codec = "H264"
@@ -738,7 +876,8 @@ def render_take(args, color):
             scene.render.use_file_extension = True
             scene.render.filepath = f"{frames_dir}/frame_"
         scene.frame_set(rendered_frames[0])
-        bpy.ops.render.render(animation=True)
+        if not export_glb:
+            bpy.ops.render.render(animation=True)
     else:
         for out_i, i in enumerate(rendered_frames):
             place_frame(i)
@@ -769,6 +908,10 @@ def render_take(args, color):
             })
         np.savez_compressed(metrics_path, **payload)
         print(f"YBOT_RIG_METRICS {metrics_path}")
+    print(
+        "YBOT_TIMING render_take_seconds="
+        f"{time.perf_counter() - render_take_start:.3f}"
+    )
     for obj in (arm, cam, target, spot):
         clear_animation(obj)
     destination = args.video_path or frames_dir

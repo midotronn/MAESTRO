@@ -14,7 +14,7 @@ _KIND_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 _TASK_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,95}$")
 
 
-def _canonical_json(value: Mapping[str, Any]) -> str:
+def canonical_json(value: Mapping[str, Any]) -> str:
     try:
         return json.dumps(
             value,
@@ -26,11 +26,14 @@ def _canonical_json(value: Mapping[str, Any]) -> str:
         raise ValueError("task payload must be JSON serializable") from exc
 
 
+_canonical_json = canonical_json
+
+
 def deterministic_task_id(kind: str, payload: Mapping[str, Any]) -> str:
     if not _KIND_RE.fullmatch(kind):
         raise ValueError(f"invalid task kind: {kind!r}")
     digest = hashlib.sha256(
-        f"{kind}\n{_canonical_json(payload)}".encode("utf-8")
+        f"{kind}\n{canonical_json(payload)}".encode("utf-8")
     ).hexdigest()[:32]
     prefix = kind.replace(".", "-")[:40]
     return f"{prefix}-{digest}"
@@ -80,7 +83,7 @@ class TaskRequest:
             raise ValueError(f"invalid task id: {self.task_id!r}")
         if not _KIND_RE.fullmatch(self.kind):
             raise ValueError(f"invalid task kind: {self.kind!r}")
-        _canonical_json(self.payload)
+        canonical_json(self.payload)
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -137,7 +140,7 @@ class TaskResult:
             raise ValueError("task result is missing worker_id")
         if self.finished_at < self.started_at:
             raise ValueError("task result finished before it started")
-        _canonical_json(self.output)
+        canonical_json(self.output)
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()

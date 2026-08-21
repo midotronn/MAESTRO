@@ -23,32 +23,122 @@ $env:AGENTLODGE_POD_HOST="213.173.107.238"; $env:AGENTLODGE_POD_PORT="20642"
 $env:AGENTLODGE_POD_KEY="$HOME\.ssh\id_ed25519"
 ```
 
-## 2. Provision the pod (idempotent, re-run after every restart)
+## 2. Provision the exact four-GPU service
+
+`pod.ps1` automatically uses the current local Git branch. Override it only when intentionally
+deploying another branch or immutable commit:
 
 ```powershell
-.\scripts\pod.ps1 setup
+$env:AGENTLODGE_GIT_REF = git branch --show-current
+.\scripts\pod.ps1 setup4
 ```
 
-For an existing workspace after a restart, `setup_pod.sh` installs, idempotently:
-1. the system libs Blender/ffmpeg need, `libXrender/libXi/libEGL/libglvnd/...` + `libOSMesa`
-   (which LODGE's PyOpenGL import needs, not Blender) + `ffmpeg`, `curl`, and `aria2`
-   (these are wiped on **every** restart);
-2. a Python venv (`/root/al_venv`, fast local disk) with `torch` + `pytorch3d` + the LODGE/EDGE
-   generation deps (`pytorch-lightning`, `accelerate`, ...);
-3. `LODGE/.venv` and `EDGE/.venv` links so the diffusion backends resolve.
+`setup4` requires exactly four visible GPUs and is safe to rerun after a pod restart. On a new
+volume it clones the requested ref, then:
 
-The Jukebox 5B prior is stored under `/workspace/.cache/jukemirlib/` and linked back into
-`/root/.cache/jukemirlib/`. The first EDGE preprocessing run still downloads the ~10GB file, but
-subsequent pod restarts reuse it instead of downloading it again.
+1. installs CUDA PyTorch, Blender 4.2.3, LODGE, EDGE, all checkpoints, and the complete Jukebox
+   runtime;
+2. downloads and size-validates the approximately 10 GB Jukebox 5B prior during setup instead of
+   deferring that cost to the first song;
+3. builds the exact Y-Bot scene and the audited EGL CUDA-device selector;
+4. builds checksum-pinned Filament v1.75.0 and NVENC FFmpeg from repository-retained native sources;
+5. generates the static and animated Filament validation GLBs from the exact Y-Bot scene;
+6. runs real Vulkan/Filament/NVENC smoke tests;
+7. starts four resident Jukebox workers plus LODGE, EDGE, three audio workers, and the resident dance
+   generation/cleanup worker;
+8. starts the warm server on pod-local port `8011` with one Filament lane per GPU; and
+9. verifies all ten fresh worker heartbeats, process IDs, CUDA/Blender quality attestation,
+   `h264_nvenc`, server JSON health, and planner status.
 
-Set `AGENTLODGE_TORCH_INDEX=cpu` for a render-only box (no GPU generation), else the default
-`cu128` installs CUDA torch for real backbone generation.
+The retained quality contract is 1080x1080, 30 FPS, 96 samples, EEVEE scene export, every frame,
+denoising enabled, TGA source frames, lossless FFV1 shards, and one final H.264/audio mux. The
+experimental bounded and foot-mesh grounding accelerations remain disabled unless explicitly
+enabled; fresh setup uses full contact-aware grounding.
 
-On a **new `/workspace` volume**, `pod.ps1 setup` detects that the repository is absent and runs
-`setup_gen_pod.sh` as the full bootstrap. It clones MAESTRO, LODGE, and EDGE; downloads the model
-weights; installs Blender; creates the persistent `/workspace/AgentLODGE/.venv`; builds the reusable
-exact-Y-Bot scene; and verifies CUDA with a real GPU matrix multiplication. On later pod restarts,
-the same command uses the lighter restart setup.
+To recheck a running pod without reinstalling anything:
+
+```powershell
+.\scripts\pod.ps1 ssh "cd /workspace/AgentLODGE && WORKSPACE=/workspace bash scripts/setup_four_gpu_pod.sh --verify-only"
+```
+
+The server binds to `127.0.0.1:8011`; RunPod's port `8001` is nginx, not MAESTRO. Use an SSH tunnel
+when accessing it from the host:
+
+```powershell
+ssh -p $env:AGENTLODGE_POD_PORT -i $env:AGENTLODGE_POD_KEY `
+  -L 18001:127.0.0.1:8011 "root@$env:AGENTLODGE_POD_HOST"
+```
+
+### Secure planner provisioning
+
+Never put an OpenAI credential in Git, chat, a process argument, or a setup script. Rotate any
+credential exposed through those channels. Place a replacement credential in a local file, upload
+it outside the repository, and restrict it before setup:
+
+```powershell
+.\scripts\pod.ps1 push C:\secure\maestro-openai-key.txt /workspace/.oai_key
+.\scripts\pod.ps1 ssh "chmod 600 /workspace/.oai_key"
+.\scripts\pod.ps1 setup4
+```
+
+When `OPENAI_API_KEY` or `/workspace/.oai_key` is present, server startup makes a real planner call
+and fails closed unless it succeeds. Set `AGENTLODGE_REQUIRE_LLM_PLANNER=1` on the pod to reject
+startup when no credential is configured. `GET /api/planner/status` reports both `configured` and
+`verified`; the four-GPU verifier rejects the configured-but-unverified state.
+
+The full-song path exports one animated GLB through the warm Blender daemon, splits all source frames
+into contiguous GPU ranges, renders and encodes each range with Filament plus NVENC, validates every
+shard and the exact final frame count, concatenates locally, and atomically publishes one audio-muxed
+MP4. Failures are fail-closed and never fall back to a lower-quality renderer. Render caching is
+disabled in the four-GPU SLA server so a cache hit cannot be mistaken for throughput.
+
+The legacy `.\scripts\pod.ps1 setup` command remains available for older single-pod generation and
+render workflows.
+
+For same-Pod multi-GPU EEVEE, run one `render.frames` worker process per resident daemon and set
+`AGENTLODGE_GPU_INDEX` to the nvidia-smi index. The guarded launcher validates the selector and gives
+each worker ID a unique daemon/tmp root. It defaults to isolated `/tmp`; shared memory is only used
+when `AGENTLODGE_RENDER_USE_SHM=1` passes the aggregate reservation preflight:
+
+```bash
+DAEMONS_PER_GPU=16
+mkdir -p /workspace/maestro-workers
+for gpu in 0 1; do
+  for slot in $(seq 0 $((DAEMONS_PER_GPU - 1))); do
+    id="render-g${gpu}-d${slot}"
+    AGENTLODGE_GPU_INDEX="$gpu" \
+      bash scripts/start_runpod_worker.sh render.frames "$id" \
+        "/workspace/maestro-workers/$id" &
+  done
+done
+```
+
+One-GPU containers may omit `AGENTLODGE_GPU_INDEX` and do not load the selector.
+The selector is loaded only in Blender, atomically attests the actual CUDA index selected through
+`EGL_CUDA_DEVICE_NV`, and is checked together with scene, renderer, protocol, quality, UUID, and PCI
+identity before a warm daemon is reused.
+Each render range also receives a runtime scratch estimate. An opted-in `/dev/shm` worker
+automatically uses its worker-unique `/tmp` fallback when either live free space or its reservation
+cannot cover the range; Blender is not started if neither filesystem can safely hold the source
+frames and FFV1 staging.
+
+The 2x RTX PRO 4500 render-plus-packaging saturation calibration peaked at 14.887 fps with 20 daemons on one GPU and
+22.462 fps with 32 daemons (16/GPU) across two GPUs: 1.509x speedup, 75.5% efficiency, and
+7,670 MiB maximum VRAM/GPU. `/dev/shm` improved the 12-daemon raw result only ~2.4%, so it is not the
+default. Direct Blender FFV1 was rejected despite a 2.9% saturated throughput gain because artifacts
+were 45.4% larger and it removed the source-TGA digest contract. See
+`experiments/performance/runpod_calibration_20260819/eevee_multigpu_consolidated.json`.
+
+The fully verified integrated filesystem path was measured separately before the worker decode
+optimization: four launcher workers
+(two/GPU) rendered 400 frames in 45.283s (8.833 fps) with range, source/shard hash, and decoded-RGB
+validation enabled. This is not a saturation-capacity replacement; see
+`experiments/performance/runpod_calibration_20260819/integrated_render_validation.json`.
+
+In `render.frames-ffv1-v3`, the worker derives the indexed RGB digest from the source sequence,
+packages and probes FFV1 without decoding the shard again, and leaves the independent full shard
+decode to the coordinator. Rerun the integrated capacity sweep before replacing the recorded
+8.833 fps baseline.
 
 ## 3. Build a real candidate bank for a song
 

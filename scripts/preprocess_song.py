@@ -17,24 +17,71 @@ Env: WORKSPACE (default /workspace)
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from pathlib import Path
-
-import numpy as np
-
-# librosa >= 0.10 dropped scipy.signal.hann that older LODGE/EDGE feature code imports.
-import scipy.signal as _sps
-if not hasattr(_sps, "hann"):
-    from scipy.signal.windows import hann as _hann
-    _sps.hann = _hann
 
 WORKSPACE = os.environ.get("WORKSPACE", "/workspace")
 AGENTLODGE_ROOT = os.environ.get("AGENTLODGE_ROOT", f"{WORKSPACE}/AgentLODGE")
 sys.path.insert(0, AGENTLODGE_ROOT)
 
-from agentlodge.config import Settings
-from agentlodge.audio.preprocess import preprocess_audio
+from server.distributed.runtime import capability_enabled
+
+
+def _fingerprint(path: Path) -> dict[str, object]:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {
+        "bytes": path.stat().st_size,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _distributed_preprocess(
+    capability: str,
+    wav_path: Path,
+    output_path: Path,
+    work_dir: Path,
+) -> dict[str, object]:
+    from server.distributed import FileTaskCoordinator, WorkerRegistry
+
+    registry = WorkerRegistry.from_env()
+    workers = registry.require(
+        capability,
+        max_age_seconds=float(
+            os.environ.get("AGENTLODGE_WORKER_HEARTBEAT_MAX_AGE", "30")
+        ),
+    )
+    coordinator = FileTaskCoordinator(
+        registry,
+        heartbeat_max_age=float(
+            os.environ.get("AGENTLODGE_WORKER_HEARTBEAT_MAX_AGE", "30")
+        ),
+    )
+    handle = coordinator.submit(
+        capability,
+        {
+            "wav": str(wav_path),
+            "output": str(output_path),
+            "work_dir": str(work_dir),
+            "source": _fingerprint(wav_path),
+        },
+        worker=workers[0],
+    )
+    result = coordinator.wait(
+        handle,
+        timeout=float(
+            os.environ.get("AGENTLODGE_AUDIO_PREPROCESS_TIMEOUT", "900")
+        ),
+    )
+    if not output_path.is_file() or output_path.stat().st_size == 0:
+        raise RuntimeError(
+            f"{capability} worker did not produce {output_path}"
+        )
+    return result.output
 
 
 def main() -> int:
@@ -54,27 +101,82 @@ def main() -> int:
         print(f"[{sid}] already preprocessed; skipping", flush=True)
         return 0
 
-    wav = f"{WORKSPACE}/LODGE/data/finedance/music_wav/{sid}.wav"
-    if not Path(wav).exists():
-        sys.stderr.write(f"missing wav {wav}\n")
+    wav_path = Path(
+        f"{WORKSPACE}/LODGE/data/finedance/music_wav/{sid}.wav"
+    ).resolve()
+    if not wav_path.exists():
+        sys.stderr.write(f"missing wav {wav_path}\n")
         return 2
-    settings = Settings.from_dict({
-        "lodge_code_path": f"{WORKSPACE}/LODGE",
-        "lodge_weights_path": f"{WORKSPACE}/LODGE/exp/Local_Module/FineDance_FineTuneV2_Local/checkpoints/epoch=299.ckpt",
-        "lodge_global_weights_path": f"{WORKSPACE}/LODGE/exp/Global_Module/FineDance_Global/checkpoints/epoch=2999.ckpt",
-        "edge_code_path": f"{WORKSPACE}/EDGE",
-        "edge_weights_path": f"{WORKSPACE}/EDGE/checkpoint.pt",
-        "lodge_genre": "Hiphop", "max_edge_slices": None,
-    })
-    print(f"=== preprocessing {sid} (lodge={want_lodge} edge={want_edge}) ===", flush=True)
-    pre = preprocess_audio(wav, settings, Path(f"{WORKSPACE}/gen{sid}_work"),
-                           extract_lodge=want_lodge, extract_edge=want_edge)
+    work_dir = Path(f"{WORKSPACE}/gen{sid}_work")
+    distributed_lodge = want_lodge and capability_enabled("audio.lodge")
+    distributed_edge = want_edge and capability_enabled("audio.edge")
+    print(
+        f"=== preprocessing {sid} "
+        f"(lodge={want_lodge} edge={want_edge}) ===",
+        flush=True,
+    )
     if want_lodge:
-        np.save(lodge_out, np.asarray(pre.lodge_features, dtype=np.float32))
-        print(f"[{sid}] LODGE feats {np.asarray(pre.lodge_features).shape} -> {lodge_out.name}", flush=True)
+        if distributed_lodge:
+            output = _distributed_preprocess(
+                "audio.lodge",
+                wav_path,
+                lodge_out,
+                work_dir,
+            )
+            print(
+                f"[{sid}] LODGE feats {tuple(output.get('shape', []))} "
+                f"-> {lodge_out.name}",
+                flush=True,
+            )
+        else:
+            import numpy as np
+
+            from agentlodge.audio.preprocess import extract_lodge_features
+
+            lodge_features = extract_lodge_features(
+                wav_path,
+                Path(WORKSPACE) / "LODGE",
+            )
+            np.save(
+                lodge_out,
+                np.asarray(lodge_features, dtype=np.float32),
+            )
+            print(
+                f"[{sid}] LODGE feats {np.asarray(lodge_features).shape} "
+                f"-> {lodge_out.name}",
+                flush=True,
+            )
     if want_edge:
-        np.save(edge_out, np.array(pre.edge_feature_slices))
-        print(f"[{sid}] EDGE slices {len(pre.edge_feature_slices)} -> {edge_out.name}", flush=True)
+        if distributed_edge:
+            output = _distributed_preprocess(
+                "audio.edge",
+                wav_path,
+                edge_out,
+                work_dir,
+            )
+            shape = output.get("shape", [])
+            count = shape[0] if isinstance(shape, list) and shape else 0
+            print(
+                f"[{sid}] EDGE slices {count} -> {edge_out.name}",
+                flush=True,
+            )
+        else:
+            import numpy as np
+
+            from agentlodge.audio.preprocess import extract_edge_slices
+
+            edge_slices = extract_edge_slices(
+                wav_path,
+                Path(WORKSPACE) / "EDGE",
+                work_dir,
+                max_slices=None,
+            )
+            np.save(edge_out, np.array(edge_slices))
+            print(
+                f"[{sid}] EDGE slices {len(edge_slices)} "
+                f"-> {edge_out.name}",
+                flush=True,
+            )
     print(f"PREPROCESS_{sid}_DONE", flush=True)
     return 0
 

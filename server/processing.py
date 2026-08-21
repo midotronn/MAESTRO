@@ -642,7 +642,28 @@ def _launch_background_bank(
     done = f"{out}/bank.done"
     failed = f"{out}/bank.failed"
     log = f"{out}/bank.log"
-    bank_script = f"{pod_repo}/scripts/build_window_bank.py"
+    distributed_enabled = os.environ.get(
+        "AGENTLODGE_DISTRIBUTED",
+        "",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    distributed_capabilities = {
+        item.strip().lower()
+        for item in os.environ.get(
+            "AGENTLODGE_DISTRIBUTED_CAPABILITIES",
+            "",
+        ).split(",")
+        if item.strip()
+    }
+    use_resident_worker = distributed_enabled and (
+        "dance.generate" in distributed_capabilities
+        or "dance" in distributed_capabilities
+    )
+    bank_client = (
+        "dispatch_bank_generation.py"
+        if use_resident_worker
+        else "build_window_bank.py"
+    )
+    bank_script = f"{pod_repo}/scripts/{bank_client}"
     bank_pattern = f"bank_{sid}_*.npy"
     expected_files = bank_k * 2
     inner = (
@@ -909,6 +930,8 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
             for script_name in (
                 "preprocess_song.py",
                 "make_song_bestofk.py",
+                "dispatch_song_generation.py",
+                "dispatch_bank_generation.py",
                 "build_window_bank.py",
                 "render_one_ybot.sh",
                 "process_song.sh",
@@ -940,6 +963,8 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
             for name in (
                 "preprocess_song.py",
                 "make_song_bestofk.py",
+                "dispatch_song_generation.py",
+                "dispatch_bank_generation.py",
                 "build_window_bank.py",
                 "render_one_ybot.sh",
                 "process_song.sh",

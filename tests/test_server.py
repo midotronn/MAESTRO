@@ -69,6 +69,42 @@ def test_openai_key_can_be_loaded_from_a_private_file(tmp_path, monkeypatch):
     assert A._openai_api_key() == "file-test-key"
 
 
+def test_planner_live_verification_records_success(monkeypatch):
+    import server.app as A
+
+    monkeypatch.setenv("AGENTLODGE_VERIFY_LLM_PLANNER", "1")
+    monkeypatch.setenv("AGENTLODGE_REQUIRE_LLM_PLANNER", "1")
+    monkeypatch.setattr(A, "_openai_api_key", lambda: "test-key")
+    monkeypatch.setattr(A, "_probe_llm_planner", lambda _key: "verified LLM planner")
+
+    A._verify_planner()
+
+    assert A._PLANNER_STATUS == {
+        "configured": True,
+        "verified": True,
+        "model": os.environ.get("AGENTLODGE_PLANNER_MODEL", "gpt-4o"),
+        "message": "verified LLM planner",
+    }
+
+
+def test_required_planner_fails_closed_when_live_call_fails(monkeypatch):
+    import server.app as A
+
+    monkeypatch.setenv("AGENTLODGE_VERIFY_LLM_PLANNER", "1")
+    monkeypatch.setenv("AGENTLODGE_REQUIRE_LLM_PLANNER", "1")
+    monkeypatch.setattr(A, "_openai_api_key", lambda: "test-key")
+
+    def fail(_key):
+        raise RuntimeError("provider rejected the request")
+
+    monkeypatch.setattr(A, "_probe_llm_planner", fail)
+
+    with pytest.raises(RuntimeError, match="live verification failed"):
+        A._verify_planner()
+    assert A._PLANNER_STATUS["configured"] is True
+    assert A._PLANNER_STATUS["verified"] is False
+
+
 def test_editor_prewarm_starts_the_blender_pool(monkeypatch):
     import server.app as A
     import server.rendering as rendering
@@ -89,6 +125,15 @@ def test_warm_daemon_liveness_requires_its_process(tmp_path, monkeypatch):
     (tmp_path / "daemon.pid").write_text("12345")
     (tmp_path / "daemon.ready").write_text(str(warm_render.PROTOCOL_VERSION))
     (tmp_path / "daemon.hb").touch()
+    (tmp_path / "daemon.attestation.json").write_text(
+        json.dumps(
+            {
+                "pid": 12345,
+                "daemon_protocol_version": warm_render.PROTOCOL_VERSION,
+                "render_contract_version": warm_render.RENDER_CONTRACT_VERSION,
+            }
+        )
+    )
     monkeypatch.setattr(warm_render.os, "kill", lambda pid, sig: None)
     assert warm_render._alive(tmp_path)
 
@@ -165,16 +210,23 @@ def test_warm_render_sends_sparse_direct_video_options(tmp_path, monkeypatch):
     d.mkdir()
     frames = tmp_path / "frames"
     raw_video = tmp_path / "raw.mp4"
+    animated_glb = tmp_path / "animated.glb"
     rid = "r" + "a" * 10
     done = d / f"{rid}.done"
 
     monkeypatch.setattr(warm_render, "DAEMON_ROOT", tmp_path)
     monkeypatch.setattr(warm_render, "POOL_SIZE", 1)
     monkeypatch.setattr(warm_render, "_alive", lambda _d: True)
+    monkeypatch.setattr(
+        warm_render,
+        "_attestation_matches",
+        lambda _d, **_kwargs: True,
+    )
     monkeypatch.setattr(warm_render.uuid, "uuid4", lambda: SimpleNamespace(hex="a" * 32))
 
     def finish_render(_delay):
         raw_video.write_bytes(b"video")
+        animated_glb.write_bytes(b"glb")
         done.write_text("0.1")
 
     monkeypatch.setattr(warm_render.time, "sleep", finish_render)
@@ -193,6 +245,7 @@ def test_warm_render_sends_sparse_direct_video_options(tmp_path, monkeypatch):
         projection_only=True,
         batch_render=True,
         video_path=str(raw_video),
+        export_glb=str(animated_glb),
         frame_start=15,
         frame_end=45,
         clear_frames=False,
@@ -206,6 +259,7 @@ def test_warm_render_sends_sparse_direct_video_options(tmp_path, monkeypatch):
     assert request["projection_only"] is True
     assert request["batch_render"] is True
     assert request["video_path"] == str(raw_video)
+    assert request["export_glb"] == str(animated_glb)
     assert request["frame_start"] == 15
     assert request["frame_end"] == 45
     assert request["clear_frames"] is False
@@ -257,6 +311,7 @@ def test_full_warm_render_preserves_quality_defaults_and_caches(tmp_path, monkey
     monkeypatch.setattr(warm_render, "ensure_pool", fake_ensure_pool)
     monkeypatch.setattr(warm_render, "ready_daemons", lambda: [0, 1])
     monkeypatch.setattr(warm_render, "warm_render", fake_render)
+    monkeypatch.setattr(warm_render, "render_provenance", lambda: {})
     monkeypatch.setattr(fk, "save_poses_npz", fake_save)
     monkeypatch.setattr(rendering, "_ffmpeg_frames", fake_encode)
 
@@ -325,6 +380,7 @@ def test_full_warm_render_shards_every_frame(tmp_path, monkeypatch):
 
     monkeypatch.setattr(fk, "save_poses_npz", fake_save)
     monkeypatch.setattr(warm_render, "warm_render", fake_render)
+    monkeypatch.setattr(warm_render, "render_provenance", lambda: {})
     monkeypatch.setattr(rendering, "_ffmpeg_frames", fake_encode)
 
     assert rendering._render_warm_local(
@@ -471,6 +527,85 @@ def test_render_cache_keys_include_quality_settings():
         stride=3,
         context="preview:10:10:123:456",
     )
+
+
+def test_render_identity_invalidates_cache_and_task_for_scene_and_root_motion():
+    import server.rendering as rendering
+    from server.distributed.render_contract import (
+        RENDER_CONTRACT_VERSION,
+        render_identity_digest,
+    )
+    from server.distributed.tasks import deterministic_task_id
+
+    motion = np.arange(10 * 6, dtype=np.float32).reshape(10, 6)
+    provenance = {
+        "render_contract_version": RENDER_CONTRACT_VERSION,
+        "daemon_protocol_version": 6,
+        "scene": {
+            "blend_sha256": "1" * 64,
+            "ybot_sha256": "2" * 64,
+        },
+        "renderer": {
+            "blender_version": "4.2.3 LTS",
+            "blender_daemon_sha256": "3" * 64,
+            "blender_render_ybot_sha256": "4" * 64,
+            "blender_studio_sha256": "5" * 64,
+            "render_root_motion_sha256": "6" * 64,
+        },
+        "selector": None,
+    }
+    quality = {
+        "width": 1080,
+        "height": 1080,
+        "samples": 96,
+        "engine": "eevee",
+        "denoise": 1,
+        "frame_format": "tga",
+        "fps": 30,
+    }
+    changed_scene = {
+        **provenance,
+        "scene": {**provenance["scene"], "blend_sha256": "a" * 64},
+    }
+    changed_root_motion = {
+        **provenance,
+        "renderer": {
+            **provenance["renderer"],
+            "render_root_motion_sha256": "b" * 64,
+        },
+    }
+    identities = [
+        render_identity_digest(candidate, quality)
+        for candidate in (provenance, changed_scene, changed_root_motion)
+    ]
+    assert len(set(identities)) == 3
+
+    cache_keys = {
+        rendering._render_cache_key(
+            motion,
+            width=1080,
+            height=1080,
+            samples=96,
+            stride=1,
+            engine="eevee",
+            denoise=1,
+            context=f"full:identity:{identity}",
+        )
+        for identity in identities
+    }
+    task_ids = {
+        deterministic_task_id(
+            "render.frames",
+            {
+                "frame_start": 0,
+                "frame_end": 10,
+                "render_identity_digest": identity,
+            },
+        )
+        for identity in identities
+    }
+    assert len(cache_keys) == 3
+    assert len(task_ids) == 3
 
 
 def test_frame_sequence_accepts_blender_batch_numbering(tmp_path):
@@ -804,6 +939,7 @@ def test_uploaded_song_pipeline_scripts_are_packaged():
     required = {
         "preprocess_song.py",
         "make_song_bestofk.py",
+        "dispatch_bank_generation.py",
         "build_window_bank.py",
         "process_song.sh",
         "runpod_worker.py",
@@ -843,6 +979,56 @@ def test_background_bank_launch_requires_every_seed(monkeypatch):
     assert "setsid bash -c" in command
     assert "/workspace/upload_song_123/bank.done" in command
     assert timeout == 60
+
+
+def test_background_bank_uses_resident_generation_worker(monkeypatch):
+    import server.processing as processing
+
+    cfg = processing.PodConfig(host="pod", ws="/workspace", bank_k="4")
+    commands = []
+
+    def fake_ssh(_cfg, command, timeout=60):
+        commands.append(command)
+        return subprocess.CompletedProcess([], 0, stdout="BANK_PID=123\n", stderr="")
+
+    monkeypatch.setenv("AGENTLODGE_DISTRIBUTED", "1")
+    monkeypatch.setenv(
+        "AGENTLODGE_DISTRIBUTED_CAPABILITIES",
+        "dance.generate,lodge.generate,edge.generate",
+    )
+    monkeypatch.setattr(processing, "_ssh", fake_ssh)
+
+    assert processing._launch_background_bank(
+        cfg,
+        "song_123",
+        "/workspace/upload_song_123",
+        "/workspace/AgentLODGE-lossless",
+        "/root/al_venv/bin/python",
+    )
+    assert "dispatch_bank_generation.py" in commands[0]
+
+
+def test_start_render_deduplicates_active_song(monkeypatch, tmp_path):
+    import server.rendering as rendering
+
+    starts = []
+
+    class FakeThread:
+        def __init__(self, **kwargs):
+            starts.append(kwargs)
+
+        def start(self):
+            return None
+
+    rendering._RJOBS.clear()
+    monkeypatch.setattr(rendering.threading, "Thread", FakeThread)
+    motion = np.zeros((4, 139), dtype=np.float32)
+
+    rendering.start_render("song", motion, tmp_path, scope="full")
+    rendering.start_render("song", motion, tmp_path, scope="full")
+
+    assert len(starts) == 1
+    assert rendering.get_render_job("song")["status"] == "queued"
 
 
 def test_upload_critical_path_builds_only_seed_zero():
@@ -913,10 +1099,17 @@ def test_packaged_song_generator_writes_expected_outputs(tmp_path, monkeypatch):
             section_scores=[{"common_motion_ids": ["wave"]}],
         ),
     )
+    beat_calls = []
+    monkeypatch.setattr(
+        M,
+        "write_beat_artifacts",
+        lambda value: beat_calls.append(value),
+    )
 
     report = M.generate_song(sid)
 
     assert report["frames"] == 600
+    assert beat_calls == [sid]
     assert np.array_equal(np.load(tmp_path / f"lodge_fd_{sid}_full.npy"), lodge)
     assert np.array_equal(np.load(tmp_path / f"edge_fd_{sid}_full.npy"), edge)
     assert np.array_equal(np.load(tmp_path / f"fd_{sid}_STORY_bestofk.npy"), story)

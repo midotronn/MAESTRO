@@ -80,12 +80,16 @@ single-pod path as the default. Implemented roles are:
 - `render.frames`: renders a contiguous global frame range at the fixed quality contract to local
   images, hashes the source frames, and transfers one lossless FFV1 shard.
 
-The protocol requires a shared mounted root and is configured with
+The original protocol still defaults to a shared mounted root configured with
 `AGENTLODGE_WORKER_REGISTRY`, `AGENTLODGE_SHARED_ROOT`, and
-`AGENTLODGE_DISTRIBUTED=1`. Local/fake worker tests validate capability routing,
-idempotent result reuse, stale-worker rejection, path confinement, exact render settings, and
-complete non-overlapping frame ranges. A two-shard synthetic RGB validation decoded all frames in
-order with an exact aggregate pixel hash match; its immutable report is
+`AGENTLODGE_DISTRIBUTED=1`. `render.frames` now also supports the opt-in authenticated HTTP
+task/artifact transport for independent render containers. It uses deterministic task IDs,
+expiring renewable leases, idempotent completions, coordinator-minted artifact IDs, confined
+scratch roots, and SHA-256/size verification on both upload and download. Local/fake worker tests
+validate authentication rejection, capability routing, deterministic result reuse and collision
+rejection, lease reassignment, artifact tamper detection, path confinement, exact render settings,
+and complete non-overlapping frame ranges. A two-shard synthetic RGB validation decoded all frames
+in order with an exact aggregate pixel hash match; its immutable report is
 `experiments/performance/lossless_transport_validation.json`.
 
 The exact-scene validation over frames 600-611 also passed at the full quality contract. The
@@ -110,19 +114,24 @@ calibration is still gated on approval.
 
 ### Rendering
 
-- Give every render worker exactly one visible GPU.
+- Give every render worker process an explicit CUDA/nvidia-smi index.
 - Keep NVIDIA EGL explicit with
   `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json`.
 - Set `NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility` or `all`.
+- In a multi-GPU container, load the setup-built EGL selector only in each Blender daemon process;
+  it resolves the requested CUDA index through `EGL_CUDA_DEVICE_NV`.
 - Render contiguous global frame ranges with the identical preloaded scene.
 - Package each local shard losslessly before transfer; do not move thousands of uncompressed image
   files between pods.
-- Verify decoded source-frame hashes before the one final H.264/audio encode.
+- Verify FFV1 codec, dimensions, fps, exact frame count/timestamps, artifact hash/size, and indexed
+  decoded-RGB digest before the one final H.264/audio encode.
 
 `CUDA_VISIBLE_DEVICES` is not sufficient by itself because EEVEE renders through OpenGL/EGL rather
-than the CUDA runtime. The paid dual-GPU calibration proved that both Blender daemons select the
-same physical GPU in a multi-GPU container. Render workers therefore require a container exposing
-exactly one physical GPU.
+than the CUDA runtime. Native CUDA/EGL/DRI/PRIME environment routing all selected CUDA GPU 1. A
+process-local `LD_PRELOAD` selector succeeded: it intercepts Blender/libepoxy EGL lookup, enumerates
+EGL devices, maps each with `EGL_CUDA_DEVICE_NV`, and replaces the default display with
+`eglGetPlatformDisplayEXT(EGL_PLATFORM_DEVICE_EXT, selected_device)`. The shim is scoped to Blender
+daemon subprocesses; one-GPU containers do not load it.
 
 ## RunPod deployment constraints
 
@@ -184,33 +193,64 @@ CUDA workers isolated correctly:
 - EDGE executed on physical GPU 1;
 - two Jukebox workers executed on distinct physical GPUs.
 
-`scripts/start_runpod_worker.sh` now accepts `AGENTLODGE_GPU_INDEX` for CUDA-based generation and
-Jukebox workers in a multi-GPU container. It explicitly rejects `render.frames` unless the
-container exposes exactly one GPU.
+`scripts/start_runpod_worker.sh` accepts `AGENTLODGE_GPU_INDEX` for CUDA generation, Jukebox, and
+render workers. Multi-GPU `render.frames` additionally requires the setup-built selector and rejects
+missing/out-of-range indices or an invalid shim. Every worker ID receives an independent local
+scratch and warm-daemon root, so one worker process can own one resident Blender daemon and multiple
+workers can intentionally share a GPU.
 
-EEVEE did not isolate by process. Blender workers launched with `CUDA_VISIBLE_DEVICES=0` and
-`CUDA_VISIBLE_DEVICES=1` both appeared on the GPU 1 UUID. The container also prohibited creating a
-device-filter mount namespace or changing device-node ownership. Therefore:
+Native routing attempts (`CUDA_VISIBLE_DEVICES`, `EGL_DEVICE_ID`, `EGL_VISIBLE_DEVICES`,
+`DRI_PRIME`, runtime `NVIDIA_VISIBLE_DEVICES`, and PRIME variables) all failed and selected CUDA GPU
+1. The selector's observed enumeration was EGL device 0 -> CUDA GPU 1 and EGL device 1 -> CUDA GPU
+0; selection now uses the CUDA attribute rather than that fragile enumeration order. Both GPUs then
+reached real utilization concurrently, and twelve TGA frames from each GPU were byte-identical.
 
-- do not report two-GPU render scaling from one multi-GPU Pod;
-- require one GPU exposed per render container;
-- add non-filesystem task and artifact transport before distributing render workers across Pods.
+### Same-Pod two-GPU render scaling
 
-### One-GPU render saturation
+The exact full-quality render-plus-packaging saturation sweep measured:
 
-The exact 1080 x 1080, 96-sample EEVEE/FFV1 path rendered 600 frames:
+| GPUs | Resident daemons | Daemons/GPU | Raw fps | External FFV1 end-to-end fps |
+|---:|---:|---:|---:|---:|
+| 1 | 10 | 10 | 14.080 | 13.526 |
+| 1 | 16 | 16 | 15.034 | 14.476 |
+| 1 | 20 | 20 | **15.496** | **14.887** |
+| 2 | 20 | 10 | 21.619 | — |
+| 2 | 24 | 12 | 22.780 | — |
+| 2 | 28 | 14 | 23.788 | — |
+| 2 | 32 | 16 | **24.132** | **22.462** |
 
-| Resident Blender daemons | Aggregate fps |
-|---:|---:|
-| 1 | 5.278 |
-| 2 | 9.170 |
-| 4 | 11.147 |
-| 6 | **11.959** |
+The best full-path two-GPU speedup over the optimal one-GPU result is **1.509x**, or **75.5%**
+scaling efficiency. Both GPUs reached 100% utilization; maximum observed VRAM was 7,670 MiB/GPU.
+At 22.462 fps, 5,400 frames project to **240.4 seconds** before final merge/encode, so the 23-second
+render budget remains far out of reach. Same-Pod multi-GPU rendering is valid, but RunPod's
+four-GPU Pod limit still caps this topology and the authenticated HTTP transport remains required
+for additional Pods.
 
-Six daemons are the best tested one-GPU configuration. At 11.959 fps, the 234.783 fps render target
-requires 20 ideal GPU equivalents, 22 at 90% scaling efficiency, or 25 at 80%. The real-scene
-quality check passed: worker pixels survived FFV1 exactly, and independent EEVEE rerenders differed
-in only 17 of 41,990,400 color channels, with maximum error 1/255.
+The real-scene quality checks passed. Twelve full-quality TGA frames rendered on each physical GPU
+were byte-identical, and the retained source-frame-to-FFV1 decoded RGB contract remained exact.
+
+`/dev/shm` improved the 12-daemon two-GPU raw result only from 17.951 to 18.373 fps (~2.4%).
+Workers therefore default to isolated `/tmp`; shared memory is explicit opt-in with an aggregate
+reservation/preflight.
+
+Direct Blender FFV1 was exact for 100 decoded RGB frames and improved a single daemon from 32.346s
+to 23.486s. At saturation, however, it delivered 23.122 fps versus 22.462 fps for external
+packaging (+2.9%) while producing 1.914 GB versus 1.316 GB for 3,200 frames (+45.4%) and removing
+the source-TGA byte-digest contract. It is tested and rejected for now.
+
+The consolidated immutable evidence is
+`experiments/performance/runpod_calibration_20260819/eevee_multigpu_consolidated.json`.
+
+A distinct fully verified pre-optimization production-path filesystem run used four launcher workers (two/GPU) for
+400 frames and measured 45.283s, or 8.833 fps, with exact range, source/shard SHA-256, and decoded
+RGB validation enabled. This lower integrated result includes transport/validation overhead and
+does not replace the saturation sweep; an integrated capacity rerun is pending. Its immutable
+summary is `experiments/performance/runpod_calibration_20260819/integrated_render_validation.json`.
+
+The subsequent `render.frames-ffv1-v3` contract removes the redundant worker-side full FFV1 decode:
+workers report the canonical indexed digest computed from source frames and only probe shard
+structure/timing, while the coordinator remains responsible for an independent full decode and
+digest match. The 8.833 fps result remains the immutable pre-optimization baseline.
 
 ### Resident generation
 
@@ -247,10 +287,13 @@ Preloading both workers took 224.855 seconds, after which the first two-GPU requ
 
 ## Decision after calibration
 
-- Do not buy a larger render Pod: multi-GPU EEVEE isolation failed.
+- Same-Pod multi-GPU rendering is now viable with the process-local EGL selector, but capacity
+  planning must use the measured 1.509x best full-path two-GPU speedup rather than assume linear
+  scaling.
 - Do not switch to RTX 5090 yet: resident LODGE/EDGE already meet their budget, while Jukebox and
   cross-Pod rendering are architecture bottlenecks rather than simple serial-GPU bottlenecks.
-- Implement object/API-backed cross-Pod tasks and artifacts for one-GPU render containers.
+- Use up to the four-GPU Pod limit where cost-effective, then calibrate the authenticated API-backed
+  transport across additional render Pods.
 - Optimize, batch, cache, or replace the first-round Jukebox preprocessing path before SLA fleet
   validation.
 - Re-run a capped paid benchmark only after those changes can plausibly satisfy the 60/90-second

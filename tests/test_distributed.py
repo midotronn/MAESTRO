@@ -1,4 +1,6 @@
+import hashlib
 import json
+import os
 import sys
 import threading
 import time
@@ -8,6 +10,72 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+
+
+def _render_provenance():
+    from server.distributed.render_contract import RENDER_CONTRACT_VERSION
+
+    return {
+        "render_contract_version": RENDER_CONTRACT_VERSION,
+        "daemon_protocol_version": 6,
+        "scene": {
+            "blend_sha256": "1" * 64,
+            "ybot_sha256": "2" * 64,
+        },
+        "renderer": {
+            "blender_version": "4.2.3 LTS",
+            "blender_daemon_sha256": "3" * 64,
+            "blender_render_ybot_sha256": "4" * 64,
+            "blender_studio_sha256": "5" * 64,
+            "render_root_motion_sha256": "6" * 64,
+        },
+        "selector": None,
+    }
+
+
+def _daemon_attestation(payload, provenance, gpu_index=0):
+    return {
+        "schema_version": 1,
+        "pid": 1234,
+        **provenance,
+        "quality": {
+            key: payload[key]
+            for key in (
+                "width",
+                "height",
+                "samples",
+                "engine",
+                "denoise",
+                "frame_format",
+            )
+        },
+        "gpu": {
+            "cuda_index": gpu_index,
+            "uuid": f"GPU-test-{gpu_index}",
+            "pci_bus_id": f"00000000:{gpu_index + 1:02X}:00.0",
+            "selection_mode": "single-visible-gpu",
+        },
+    }
+
+
+def _render_identity(provenance, payload):
+    from server.distributed.render_contract import render_identity_digest
+
+    return render_identity_digest(
+        provenance,
+        {
+            key: payload[key]
+            for key in (
+                "width",
+                "height",
+                "samples",
+                "engine",
+                "denoise",
+                "frame_format",
+                "fps",
+            )
+        },
+    )
 
 
 def _wait_for(predicate, timeout=3.0):
@@ -56,6 +124,12 @@ def test_runpod_launcher_forwards_full_render_quality_contract():
         / "scripts"
         / "start_runpod_worker.sh"
     ).read_text(encoding="utf-8")
+    gpu_guard = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "render_worker_env.sh"
+    ).read_text(encoding="utf-8")
+    launcher_surface = launcher + gpu_guard
 
     for option, environment in (
         ("--render-width", "AGENTLODGE_RENDER_FULL_W"),
@@ -68,9 +142,15 @@ def test_runpod_launcher_forwards_full_render_quality_contract():
         assert option in launcher
         assert environment in launcher
 
-    assert "AGENTLODGE_GPU_INDEX" in launcher
-    assert 'export CUDA_VISIBLE_DEVICES="$GPU_INDEX"' in launcher
-    assert "NVIDIA EGL ignores process-level CUDA_VISIBLE_DEVICES" in launcher
+    assert "AGENTLODGE_GPU_INDEX" in launcher_surface
+    assert "export CUDA_VISIBLE_DEVICES" in launcher_surface
+    assert "AGENTLODGE_EGL_SELECTOR_SHIM" in launcher_surface
+    assert "AGENTLODGE_RENDER_DAEMON_ROOT" in launcher_surface
+    assert "agentlodge_configure_gpu" in launcher
+    assert "AGENTLODGE_DISTRIBUTED_TRANSPORT" in launcher
+    assert "AGENTLODGE_HTTP_COORDINATOR_URL" in launcher
+    assert "AGENTLODGE_HTTP_TOKEN_FILE" in launcher
+    assert "AGENTLODGE_HTTP_WORKER_SCRATCH" in launcher
 
 
 def test_jukebox_preload_executes_representative_inference(
@@ -125,6 +205,35 @@ def test_jukebox_preload_executes_representative_inference(
     ]
 
 
+def test_jukebox_preload_syncs_the_runtime_models(tmp_path):
+    from server.distributed.handlers import JukeboxExtractHandler
+
+    edge = tmp_path / "edge"
+    shared = tmp_path / "shared"
+    edge.mkdir()
+    shared.mkdir()
+    models = (object(), object())
+    runtime = SimpleNamespace(
+        VQVAE=None,
+        TOP_PRIOR=None,
+        setup_models=lambda: models,
+    )
+    package = SimpleNamespace(VQVAE=None, TOP_PRIOR=None)
+    handler = JukeboxExtractHandler(
+        edge_root=edge,
+        shared_root=shared,
+        preload_audio_seconds=0,
+    )
+    handler._extractor = lambda _path: pytest.fail("no warm-up was requested")
+    handler._jukebox_lib = runtime
+    handler._jukebox_package = package
+
+    handler.preload()
+
+    assert (runtime.VQVAE, runtime.TOP_PRIOR) == models
+    assert (package.VQVAE, package.TOP_PRIOR) == models
+
+
 def test_file_worker_executes_and_reuses_idempotent_result(tmp_path):
     from server.distributed.coordinator import FileTaskCoordinator
     from server.distributed.registry import WorkerRegistry, WorkerSpec
@@ -167,6 +276,12 @@ def test_file_worker_executes_and_reuses_idempotent_result(tmp_path):
         coordinator.submit(
             "echo.task",
             {"value": 8},
+            task_id=first.request.task_id,
+        )
+    with pytest.raises(ValueError, match="different request"):
+        coordinator.submit(
+            "echo.task",
+            {"value": 7.0},
             task_id=first.request.task_id,
         )
 
@@ -444,6 +559,112 @@ def test_coordinator_reassigns_task_from_stale_worker(tmp_path):
     thread.join(timeout=2)
 
 
+def test_filesystem_reassignment_stays_within_eligible_cohort(tmp_path):
+    from server.distributed.coordinator import FileTaskCoordinator
+    from server.distributed.registry import WorkerRegistry, WorkerSpec
+    from server.distributed.tasks import PROTOCOL_VERSION
+
+    workers = [
+        WorkerSpec(
+            worker_id=worker_id,
+            capabilities=("echo.task",),
+            task_dir=tmp_path / worker_id,
+        )
+        for worker_id in ("selected", "eligible-new", "incompatible-old")
+    ]
+    for worker in workers:
+        worker.task_dir.mkdir()
+        worker.heartbeat_path.write_text(
+            json.dumps(
+                {
+                    "protocol_version": PROTOCOL_VERSION,
+                    "worker_id": worker.worker_id,
+                    "capabilities": ["echo.task"],
+                    "status": "ready",
+                    "updated_at": time.time(),
+                }
+            )
+        )
+    selected, eligible_new, incompatible_old = workers
+    coordinator = FileTaskCoordinator(
+        WorkerRegistry(workers),
+        poll_interval=0.01,
+        heartbeat_max_age=1,
+    )
+    handle = coordinator.submit(
+        "echo.task",
+        {"value": 23},
+        worker=selected,
+        eligible_worker_ids=("selected", "eligible-new"),
+    )
+    heartbeat = json.loads(selected.heartbeat_path.read_text())
+    heartbeat["updated_at"] = time.time() - 30
+    selected.heartbeat_path.write_text(json.dumps(heartbeat))
+
+    reassigned = coordinator._safe_reassign(handle)
+
+    assert reassigned is not None
+    assert reassigned.worker == eligible_new
+    assert not (
+        incompatible_old.task_dir
+        / "requests"
+        / f"{handle.request.task_id}.json"
+    ).exists()
+
+
+def test_render_worker_selection_rejects_mixed_provenance_cohorts():
+    import server.rendering as rendering
+
+    current = _render_provenance()
+    upgraded = {
+        **current,
+        "scene": {
+            **current["scene"],
+            "blend_sha256": "f" * 64,
+        },
+    }
+    workers = [
+        SimpleNamespace(
+            worker_id="old",
+            metadata={"render_provenance": current},
+        ),
+        SimpleNamespace(
+            worker_id="new-1",
+            metadata={"render_provenance": upgraded},
+        ),
+        SimpleNamespace(
+            worker_id="new-2",
+            metadata={"render_provenance": upgraded},
+        ),
+    ]
+    quality = rendering._render_quality_contract(
+        width=1080,
+        height=1080,
+        samples=96,
+        engine="eevee",
+        denoise=1,
+        frame_format="tga",
+        fps=30,
+    )
+
+    selected, eligible, provenance, _digest = (
+        rendering._select_render_worker_cohort(
+            workers,
+            requested_workers=2,
+            quality=quality,
+        )
+    )
+    assert [worker.worker_id for worker in selected] == ["new-1", "new-2"]
+    assert eligible == ("new-1", "new-2")
+    assert provenance == upgraded
+    with pytest.raises(RuntimeError, match="mixed provenance/quality"):
+        rendering._select_render_worker_cohort(
+            workers,
+            requested_workers=3,
+            quality=quality,
+        )
+
+
 def test_coordinator_does_not_duplicate_a_claimed_task_on_stale_worker(
     tmp_path,
 ):
@@ -581,6 +802,43 @@ def test_jukebox_handler_preserves_slice_outputs_and_cache(tmp_path):
     assert calls == [str(wav.resolve())]
 
 
+def test_jukebox_handler_disables_repeated_cuda_cache_flushes(tmp_path):
+    from server.distributed.handlers import JukeboxExtractHandler
+
+    shared = tmp_path / "shared"
+    edge = tmp_path / "edge"
+    shared.mkdir()
+    edge.mkdir()
+    wav = shared / "song_slice0.wav"
+    wav.write_bytes(b"wav")
+    output = shared / "cache" / "song_slice0.npy"
+    calls = []
+    expected = np.arange(12, dtype=np.float32).reshape(3, 4)
+
+    runtime = SimpleNamespace(
+        load_audio=lambda path: calls.append(("load", path)) or np.ones(8),
+        extract=lambda **kwargs: calls.append(("extract", kwargs)) or {66: expected},
+    )
+    handler = JukeboxExtractHandler(
+        edge_root=edge,
+        shared_root=shared,
+    )
+    handler._extractor = lambda _path: pytest.fail("wrapper extraction was used")
+    handler._jukebox_lib = runtime
+    handler._jukebox_package = SimpleNamespace()
+    payload = {"items": [{"wav": str(wav), "output": str(output)}]}
+
+    result = handler(payload)
+
+    np.testing.assert_array_equal(np.load(output), expected)
+    assert result["cached"] == 0
+    assert calls[0] == ("load", str(wav.resolve()))
+    assert calls[1][0] == "extract"
+    assert calls[1][1]["layers"] == [66]
+    assert calls[1][1]["downsample_target_rate"] == 30
+    assert calls[1][1]["force_empty_cache"] is False
+
+
 def test_jukebox_handler_rejects_paths_outside_shared_root(tmp_path):
     from server.distributed.handlers import JukeboxExtractHandler
 
@@ -607,6 +865,134 @@ def test_jukebox_handler_rejects_paths_outside_shared_root(tmp_path):
                 ]
             }
         )
+
+
+def test_audio_preprocess_handler_saves_exact_lodge_features(tmp_path, monkeypatch):
+    from agentlodge.audio import preprocess
+    from server.distributed.handlers import AudioPreprocessHandler
+
+    shared = tmp_path / "shared"
+    lodge = shared / "LODGE"
+    shared.mkdir()
+    lodge.mkdir()
+    wav = shared / "song.wav"
+    wav.write_bytes(b"wav")
+    output = shared / "features.npy"
+    expected = np.arange(70, dtype=np.float32).reshape(2, 35)
+    monkeypatch.setattr(
+        preprocess,
+        "extract_lodge_features",
+        lambda path, root: (
+            expected
+            if path == wav.resolve() and root == lodge.resolve()
+            else pytest.fail("unexpected audio preprocessing input")
+        ),
+    )
+    handler = AudioPreprocessHandler(
+        mode="lodge",
+        shared_root=shared,
+        lodge_root=lodge,
+    )
+
+    result = handler(
+        {
+            "wav": str(wav),
+            "output": str(output),
+            "work_dir": str(shared / "work"),
+        }
+    )
+
+    assert result["shape"] == [2, 35]
+    assert result["dtype"] == "float32"
+    assert np.array_equal(np.load(output), expected)
+
+
+def test_dance_generation_handler_preserves_timing_context(tmp_path, monkeypatch):
+    from server.distributed.handlers import DanceGenerationHandler
+
+    shared = tmp_path / "shared"
+    sid = "song_123"
+    wav = shared / "LODGE/data/finedance/music_wav" / f"{sid}.wav"
+    wav.parent.mkdir(parents=True)
+    wav.write_bytes(b"wav")
+    np.save(shared / f"lodge_fd_{sid}_feats.npy", np.zeros((2, 35)))
+    np.save(shared / f"edge{sid}_slices.npy", np.zeros((2, 3)))
+    timing = shared / "upload" / "timings.tsv"
+    handler = DanceGenerationHandler(shared_root=shared)
+    observed = {}
+    sequence = []
+
+    def fake_generate(value):
+        sequence.append("generate")
+        observed["sid"] = value
+        observed["timing"] = os.environ.get("MAESTRO_TIMING_FILE")
+        np.save(
+            shared / f"fd_{sid}_STORY_bestofk.npy",
+            np.zeros((4, 139), dtype=np.float32),
+        )
+        return {"frames": 4, "best_of_k": 1, "generation_workers": {}}
+
+    def fake_build(value, bank_k, **kwargs):
+        sequence.append("bank")
+        observed["bank"] = {
+            "sid": value,
+            "bank_k": bank_k,
+            "timing": os.environ.get("MAESTRO_TIMING_FILE"),
+            **kwargs,
+        }
+        return {"sid": value, "bank_k": bank_k, "files": ["one", "two"]}
+
+    handler._generate_song = fake_generate
+    handler._build_bank = fake_build
+    monkeypatch.setenv("MAESTRO_TIMING_FILE", "original")
+
+    result = handler({"sid": sid, "timing_file": str(timing)})
+
+    assert result["frames"] == 4
+    assert sequence == ["generate", "bank"]
+    assert observed == {
+        "sid": sid,
+        "timing": str(timing.resolve()),
+        "bank": {
+            "sid": sid,
+            "bank_k": 1,
+            "timing": str(timing.resolve()),
+            "workspace": shared.resolve(),
+            "distributed": True,
+        },
+    }
+    assert os.environ["MAESTRO_TIMING_FILE"] == "original"
+
+
+def test_dance_generation_handler_builds_bank_with_resident_workers(tmp_path):
+    from server.distributed.handlers import DanceGenerationHandler
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    handler = DanceGenerationHandler(shared_root=shared)
+    observed = {}
+
+    def fake_build(sid, bank_k, **kwargs):
+        observed.update({"sid": sid, "bank_k": bank_k, **kwargs})
+        return {"sid": sid, "bank_k": bank_k, "files": ["one", "two"]}
+
+    handler._build_bank = fake_build
+
+    result = handler(
+        {
+            "operation": "build_bank",
+            "sid": "song_123",
+            "bank_k": 4,
+        }
+    )
+
+    assert result["files"] == ["one", "two"]
+    assert observed == {
+        "sid": "song_123",
+        "bank_k": 4,
+        "workspace": shared.resolve(),
+        "distributed": True,
+    }
 
 
 def test_lodge_handler_preload_loads_models_before_ready(
@@ -664,6 +1050,52 @@ def test_jukebox_partitioning_is_contiguous_and_complete():
 
     assert [len(partition) for partition in partitions] == [4, 3, 3]
     assert [item for partition in partitions for item in partition] == slices
+
+
+def test_distributed_jukebox_client_skips_local_model_import(tmp_path, monkeypatch):
+    import scripts.jukebox_extract_all as client
+
+    edge_root = tmp_path / "edge"
+    module_root = edge_root / "data" / "audio_extraction"
+    module_root.mkdir(parents=True)
+    (module_root / "jukebox_features.py").write_text(
+        "raise RuntimeError('local Jukebox model imported')\n",
+        encoding="utf-8",
+    )
+    slice_dir = tmp_path / "slices"
+    slice_dir.mkdir()
+    (slice_dir / "song_slice0.wav").write_bytes(b"wav")
+    cache_dir = tmp_path / "cache"
+
+    def fake_extract(wav_slices, output_dir):
+        for wav_slice in wav_slices:
+            np.save(
+                output_dir / f"{wav_slice.stem}.npy",
+                np.zeros((1, 1), dtype=np.float32),
+            )
+
+    monkeypatch.setattr(client, "capability_enabled", lambda _capability: True)
+    monkeypatch.setattr(client, "_extract_distributed", fake_extract)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "jukebox_extract_all.py",
+            "--edge-root",
+            str(edge_root),
+            "--slice-dir",
+            str(slice_dir),
+            "--cache-dir",
+            str(cache_dir),
+        ],
+    )
+    previous_directory = Path.cwd()
+    previous_path = list(sys.path)
+    try:
+        assert client.main() == 0
+    finally:
+        os.chdir(previous_directory)
+        sys.path[:] = previous_path
 
 
 def test_packaged_generator_can_route_through_capability_worker(tmp_path, monkeypatch):
@@ -747,6 +1179,17 @@ def test_render_handler_enforces_quality_and_frame_completeness(tmp_path, monkey
         return True
 
     monkeypatch.setattr(warm_render, "warm_render", fake_render)
+    provenance = _render_provenance()
+    monkeypatch.setattr(
+        warm_render,
+        "render_provenance",
+        lambda: provenance,
+    )
+    monkeypatch.setattr(
+        warm_render,
+        "daemon_attestation",
+        lambda _daemon, **_kwargs: _daemon_attestation(payload, provenance),
+    )
     handler = RenderFramesHandler(shared_root=shared)
     handler.preload()
     payload = {
@@ -760,8 +1203,12 @@ def test_render_handler_enforces_quality_and_frame_completeness(tmp_path, monkey
         "engine": "eevee",
         "denoise": 1,
         "frame_format": "tga",
+        "fps": 30,
         "timeout": 60,
+        "render_contract_version": provenance["render_contract_version"],
+        "render_provenance": provenance,
     }
+    payload["render_identity_digest"] = _render_identity(provenance, payload)
 
     result = handler(payload)
     assert result["frames"] == 4
@@ -806,16 +1253,181 @@ def test_render_handler_packages_local_frames_as_lossless_shard(
 
     monkeypatch.setattr(warm_render, "warm_render", fake_render)
     monkeypatch.setattr(handlers, "_package_ffv1", fake_package)
+    provenance = _render_provenance()
+    decoded_rgb_hash = "c" * 64
+    monkeypatch.setattr(warm_render, "render_provenance", lambda: provenance)
+    source_digest_calls = []
+
+    def fake_source_digest(*_args, **kwargs):
+        source_digest_calls.append(dict(kwargs))
+        return decoded_rgb_hash
+
+    monkeypatch.setattr(
+        handlers,
+        "source_sequence_rgb_sha256",
+        fake_source_digest,
+    )
+    probes = []
+
+    def fake_probe(*_args, **kwargs):
+        probes.append(dict(kwargs))
+        return {
+            "codec": "ffv1",
+            "width": kwargs["width"],
+            "height": kwargs["height"],
+            "fps": kwargs["fps"],
+            "frames": kwargs["frame_end"] - kwargs["frame_start"],
+        }
+
+    monkeypatch.setattr(handlers, "probe_ffv1_shard", fake_probe)
     handler = handlers.RenderFramesHandler(
         shared_root=shared,
         local_tmp=worker_tmp,
     )
-    result = handler(
+    payload = {
+        "poses": str(poses),
+        "shard_output": str(shard),
+        "frame_start": 0,
+        "frame_end": 3,
+        "width": 1080,
+        "height": 1080,
+        "samples": 96,
+        "engine": "eevee",
+        "denoise": 1,
+        "frame_format": "tga",
+        "fps": 30,
+        "timeout": 60,
+        "render_contract_version": provenance["render_contract_version"],
+        "render_provenance": provenance,
+    }
+    payload["render_identity_digest"] = _render_identity(provenance, payload)
+    monkeypatch.setattr(
+        warm_render,
+        "daemon_attestation",
+        lambda _daemon, **_kwargs: _daemon_attestation(payload, provenance),
+    )
+    result = handler(payload)
+
+    assert shard.read_bytes() == b"ffv1"
+    assert result["transport"] == "ffv1"
+    assert result["frames"] == 3
+    assert len(result["source_frames_sha256"]) == 64
+    assert len(result["shard_sha256"]) == 64
+    assert result["source_decoded_rgb_sha256"] == decoded_rgb_hash
+    assert result["shard_decoded_rgb_sha256"] == decoded_rgb_hash
+    assert result["shard_validation"]["decoded_rgb_sha256"] == decoded_rgb_hash
+    assert result["shard_validation"]["worker_shard_full_decode"] is False
+    assert len(source_digest_calls) == 1
+    assert probes == [
         {
-            "poses": str(poses),
-            "shard_output": str(shard),
             "frame_start": 0,
             "frame_end": 3,
+            "width": 1080,
+            "height": 1080,
+            "fps": 30,
+        }
+    ]
+    assert packaged["frame_start"] == 0
+    assert packaged["frame_end"] == 3
+    assert not packaged["frames_dir"].exists()
+
+
+def test_render_handler_falls_back_from_insufficient_shm(
+    tmp_path,
+    monkeypatch,
+):
+    from server.distributed import handlers
+
+    shm_root = tmp_path / "shm"
+    local_tmp = shm_root / "render-worker"
+    fallback_root = tmp_path / "fallback"
+    fallback = fallback_root / "agentlodge-render-render-worker"
+    reservation = shm_root / ".agentlodge-reservations" / "worker.reservation"
+    reservation.parent.mkdir(parents=True)
+    reservation.write_text(f"{os.getpid()} 1 worker\n")
+    monkeypatch.setenv("AGENTLODGE_SHM_ROOT", str(shm_root))
+    monkeypatch.setenv("AGENTLODGE_SHM_RESERVATION_FILE", str(reservation))
+    monkeypatch.setenv(
+        "AGENTLODGE_RENDER_FALLBACK_ROOT",
+        str(fallback_root),
+    )
+    monkeypatch.setattr(
+        handlers.shutil,
+        "disk_usage",
+        lambda path: SimpleNamespace(
+            free=(
+                10 * 1024**3
+                if Path(path).resolve().is_relative_to(fallback.resolve())
+                else 1024
+            )
+        ),
+    )
+    handler = handlers.RenderFramesHandler(
+        shared_root=tmp_path,
+        local_tmp=local_tmp,
+        worker_id="render-worker",
+    )
+
+    selected, used_fallback = handler._scratch_parent(512 * 1024**2)
+
+    assert used_fallback
+    assert selected == fallback.resolve()
+
+
+def test_render_handler_rejects_enospc_before_starting_blender(
+    tmp_path,
+    monkeypatch,
+):
+    from server import warm_render
+    from server.distributed import handlers
+
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    poses = shared / "poses.npz"
+    poses.write_bytes(b"poses")
+    shm_root = tmp_path / "shm"
+    local_tmp = shm_root / "render-worker"
+    fallback_root = tmp_path / "fallback"
+    fallback = fallback_root / "agentlodge-render-render-worker"
+    reservation = shm_root / ".agentlodge-reservations" / "worker.reservation"
+    reservation.parent.mkdir(parents=True)
+    reservation.write_text(f"{os.getpid()} {10 * 1024**3} worker\n")
+    monkeypatch.setenv("AGENTLODGE_SHM_ROOT", str(shm_root))
+    monkeypatch.setenv("AGENTLODGE_SHM_RESERVATION_FILE", str(reservation))
+    monkeypatch.setenv(
+        "AGENTLODGE_RENDER_FALLBACK_ROOT",
+        str(fallback_root),
+    )
+    monkeypatch.setattr(
+        handlers.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(free=0),
+    )
+    provenance = _render_provenance()
+    monkeypatch.setattr(warm_render, "render_provenance", lambda: provenance)
+    blender_calls = []
+    monkeypatch.setattr(
+        warm_render,
+        "ensure_pool",
+        lambda **_kwargs: blender_calls.append("ensure") or 1,
+    )
+    monkeypatch.setattr(
+        warm_render,
+        "warm_render",
+        lambda *_args, **_kwargs: blender_calls.append("render") or True,
+    )
+    handler = handlers.RenderFramesHandler(
+        shared_root=shared,
+        local_tmp=local_tmp,
+        worker_id="render-worker",
+    )
+
+    with pytest.raises(RuntimeError, match="both shared memory"):
+        payload = {
+            "poses": str(poses),
+            "shard_output": str(shared / "shard.mkv"),
+            "frame_start": 0,
+            "frame_end": 10,
             "width": 1080,
             "height": 1080,
             "samples": 96,
@@ -823,18 +1435,17 @@ def test_render_handler_packages_local_frames_as_lossless_shard(
             "denoise": 1,
             "frame_format": "tga",
             "fps": 30,
-            "timeout": 60,
+            "render_contract_version": provenance[
+                "render_contract_version"
+            ],
+            "render_provenance": provenance,
         }
-    )
-
-    assert shard.read_bytes() == b"ffv1"
-    assert result["transport"] == "ffv1"
-    assert result["frames"] == 3
-    assert len(result["source_frames_sha256"]) == 64
-    assert len(result["shard_sha256"]) == 64
-    assert packaged["frame_start"] == 0
-    assert packaged["frame_end"] == 3
-    assert not packaged["frames_dir"].exists()
+        payload["render_identity_digest"] = _render_identity(
+            provenance,
+            payload,
+        )
+        handler(payload)
+    assert blender_calls == []
 
 
 def test_full_render_dispatches_lossless_ranges_to_remote_workers(
@@ -848,11 +1459,14 @@ def test_full_render_dispatches_lossless_ranges_to_remote_workers(
     from server.distributed.worker import FileTaskWorker
 
     calls = []
+    provenance = _render_provenance()
+    decoded_rgb_hash = "c" * 64
     specs = [
         WorkerSpec(
             worker_id=f"render-{index}",
             capabilities=("render.frames",),
             task_dir=tmp_path / f"render-{index}",
+            metadata={"render_provenance": provenance},
         )
         for index in range(2)
     ]
@@ -870,8 +1484,47 @@ def test_full_render_dispatches_lossless_ranges_to_remote_workers(
                 "frames": payload["frame_end"] - payload["frame_start"],
                 "source_frames_sha256": "a" * 64,
                 "shard_output": str(shard),
-                "shard_sha256": "b" * 64,
+                "shard_sha256": hashlib.sha256(b"ffv1").hexdigest(),
                 "transport": "ffv1",
+                "render_contract_version": provenance[
+                    "render_contract_version"
+                ],
+                "render_provenance": provenance,
+                "render_identity_digest": payload["render_identity_digest"],
+                "daemon_attestation": _daemon_attestation(
+                    payload,
+                    provenance,
+                ),
+                "source_decoded_rgb_sha256": decoded_rgb_hash,
+                "shard_decoded_rgb_sha256": decoded_rgb_hash,
+                "decoded_rgb_digest_version": "rgb24-global-frame-v1",
+                "shard_validation": {
+                    "codec": "ffv1",
+                    "width": payload["width"],
+                    "height": payload["height"],
+                    "fps": payload["fps"],
+                    "frames": (
+                        payload["frame_end"] - payload["frame_start"]
+                    ),
+                    "decoded_rgb_digest_version": "rgb24-global-frame-v1",
+                    "decoded_rgb_sha256": decoded_rgb_hash,
+                    "worker_validation_version": (
+                        "source-rgb-digest+ffprobe-v1"
+                    ),
+                    "worker_shard_full_decode": False,
+                },
+                **{
+                    key: payload[key]
+                    for key in (
+                        "width",
+                        "height",
+                        "samples",
+                        "engine",
+                        "denoise",
+                        "frame_format",
+                        "fps",
+                    )
+                },
             }
 
         worker = FileTaskWorker(
@@ -899,6 +1552,7 @@ def test_full_render_dispatches_lossless_ranges_to_remote_workers(
                     "id": spec.worker_id,
                     "capabilities": list(spec.capabilities),
                     "task_dir": str(spec.task_dir),
+                    "metadata": {"render_provenance": provenance},
                 }
                 for spec in specs
             ]
@@ -920,6 +1574,13 @@ def test_full_render_dispatches_lossless_ranges_to_remote_workers(
         return True
 
     monkeypatch.setattr(rendering, "_ffmpeg_shards", fake_encode)
+    coordinator_decodes = []
+
+    def fake_inspect(path, **kwargs):
+        coordinator_decodes.append((Path(path), dict(kwargs)))
+        return {"decoded_rgb_sha256": decoded_rgb_hash}
+
+    monkeypatch.setattr(rendering, "inspect_ffv1_shard", fake_inspect)
 
     assert rendering._render_warm_local(
         "distributed",
@@ -949,6 +1610,10 @@ def test_full_render_dispatches_lossless_ranges_to_remote_workers(
     assert encoded["frame_count"] == 10
     assert (tmp_path / "media" / "edited.mp4").read_bytes() == b"video"
     assert rendering._RJOBS["distributed"]["rendered_frames"] == 10
+    assert [
+        (details["frame_start"], details["frame_end"])
+        for _path, details in coordinator_decodes
+    ] == [(0, 5), (5, 10)]
 
     for worker in workers:
         worker.stop()

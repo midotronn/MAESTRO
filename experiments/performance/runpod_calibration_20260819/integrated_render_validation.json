@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "report_id": "runpod-20260819-integrated-render-filesystem-v1",
+  "immutable": true,
+  "status": "completed",
+  "measurement_class": "fully_verified_integrated_filesystem_transport",
+  "source_reference": "integrated-benchmark://render.frames/400-frames/4-workers",
+  "measured_after_initial_calibration_window": true,
+  "timing_and_cost": {
+    "wall_seconds": 45.283,
+    "estimated_compute_cost_usd": null,
+    "cost_status": "not_derived"
+  },
+  "topology": {
+    "transport": "filesystem",
+    "workers": 4,
+    "physical_gpus": 2,
+    "workers_per_gpu": 2,
+    "gpus": [
+      {
+        "cuda_index": 0,
+        "uuid": "GPU-ca6ff11c-6098-2bb9-e228-92c6f52a5be4",
+        "pci_bus_id": "00000000:82:00.0"
+      },
+      {
+        "cuda_index": 1,
+        "uuid": "GPU-0bca43b2-23d3-c94f-a873-75b4e7b576cb",
+        "pci_bus_id": "00000000:C2:00.0"
+      }
+    ]
+  },
+  "quality": {
+    "width": 1080,
+    "height": 1080,
+    "samples": 96,
+    "engine": "eevee",
+    "denoise": 1,
+    "render_every_frame": true,
+    "transport_artifact": "ffv1"
+  },
+  "result": {
+    "frames": 400,
+    "frames_per_second": 8.833,
+    "exact_contiguous_ranges_verified": true,
+    "source_frame_hashes_verified": true,
+    "shard_sha256_verified": true,
+    "decoded_rgb_sha256_verified": true
+  },
+  "interpretation": {
+    "includes_production_transport_and_decoded_validation_overhead": true,
+    "replaces_saturation_calibration": false,
+    "capacity_result": false,
+    "integrated_capacity_rerun_pending": true,
+    "comparison": "The earlier 14.887/22.462 fps results are render-plus-packaging saturation calibration. This result measures the fully verified integrated filesystem path and must remain a separate evidence class."
+  }
+}

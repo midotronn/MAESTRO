@@ -8,6 +8,8 @@
 #      $env:AGENTLODGE_POD_USER = "root"
 # 2) Provision everything on the pod (idempotent; re-run after each restart):
 #      .\scripts\pod.ps1 setup
+#    Provision and start the exact warm four-GPU SLA stack:
+#      .\scripts\pod.ps1 setup4
 # 3) Build a real candidate bank for a song (K seeded LODGE/EDGE takes) and pull it into the app:
 #      .\scripts\pod.ps1 bank trs 4
 # 4) Run the editor:  uvicorn server.app:app   ->  http://127.0.0.1:8000
@@ -29,6 +31,22 @@ $User = if ($env:AGENTLODGE_POD_USER) { $env:AGENTLODGE_POD_USER } else { "root"
 if (-not $HostName) { throw "Set AGENTLODGE_POD_HOST (and _PORT/_KEY) or create scripts\pod.config.ps1" }
 $Repo = Split-Path $PSScriptRoot -Parent
 $Target = "$User@$HostName"
+$GitRef = if ($env:AGENTLODGE_GIT_REF) {
+  $env:AGENTLODGE_GIT_REF
+} else {
+  (& git -C $Repo branch --show-current).Trim()
+}
+if (-not $GitRef) {
+  $GitRef = (& git -C $Repo rev-parse HEAD).Trim()
+}
+if ($LASTEXITCODE -ne 0 -or $GitRef -notmatch '^[A-Za-z0-9._/-]+$') {
+  throw "Could not determine a safe AGENTLODGE_GIT_REF"
+}
+$GitUrl = if ($env:AGENTLODGE_GIT_URL) {
+  $env:AGENTLODGE_GIT_URL
+} else {
+  "https://github.com/midotronn/MAESTRO.git"
+}
 
 function Pod-SSH([string]$cmd) {
   $output = & ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=20 `
@@ -57,15 +75,56 @@ switch ($Command) {
     if (($state -join "`n") -match "FRESH_WORKSPACE") {
       Write-Host "Fresh workspace detected; uploading the full generation + rendering bootstrap..." -ForegroundColor Cyan
       Pod-Push "$Repo\scripts\setup_gen_pod.sh" "$WS/setup_gen_pod.sh"
-      Pod-SSH "sed -i 's/\r`$//' '$WS/setup_gen_pod.sh' && WORKSPACE=$WS AGENTLODGE_TORCH_INDEX=$torch bash '$WS/setup_gen_pod.sh'"
+      Pod-Push "$Repo\scripts\build_egl_selector.sh" "$WS/build_egl_selector.sh"
+      Pod-Push "$Repo\scripts\egl_cuda_device_selector.c" "$WS/egl_cuda_device_selector.c"
+      Pod-SSH "sed -i 's/\r`$//' '$WS/setup_gen_pod.sh' && WORKSPACE=$WS AGENTLODGE_GIT_REF='$GitRef' AGENTLODGE_TORCH_INDEX=$torch bash '$WS/setup_gen_pod.sh'"
       Pod-SSH "cp '$WS/setup_gen_pod.sh' '$WS/AgentLODGE/scripts/setup_gen_pod.sh'"
     } else {
       Write-Host "Uploading restart setup scripts..." -ForegroundColor Cyan
       Pod-Push "$Repo\scripts\setup_pod.sh" "$WS/AgentLODGE/scripts/setup_pod.sh"
+      Pod-Push "$Repo\scripts\build_egl_selector.sh" "$WS/AgentLODGE/scripts/build_egl_selector.sh"
+      Pod-Push "$Repo\scripts\egl_cuda_device_selector.c" "$WS/AgentLODGE/scripts/egl_cuda_device_selector.c"
       Pod-Push "$Repo\scripts\build_window_bank.py" "$WS/AgentLODGE/scripts/build_window_bank.py"
       Write-Host "Provisioning pod (system libs + venv + pytorch3d)... this takes a while." -ForegroundColor Cyan
-      Pod-SSH "cd $WS/AgentLODGE && sed -i 's/\r`$//' scripts/setup_pod.sh scripts/build_window_bank.py && WORKSPACE=$WS TORCH_INDEX=$torch bash scripts/setup_pod.sh"
+      Pod-SSH "cd $WS/AgentLODGE && sed -i 's/\r`$//' scripts/setup_pod.sh scripts/build_egl_selector.sh scripts/build_window_bank.py && WORKSPACE=$WS TORCH_INDEX=$torch bash scripts/setup_pod.sh"
     }
+  }
+  "setup4" {
+    $torch = if ($env:AGENTLODGE_TORCH_INDEX) { $env:AGENTLODGE_TORCH_INDEX } else { "cu128" }
+    Write-Host "Provisioning the exact warm four-GPU MAESTRO stack from '$GitRef'..." -ForegroundColor Cyan
+    Pod-SSH @"
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq ca-certificates git
+if [ ! -d '$WS/AgentLODGE/.git' ]; then
+  if git ls-remote --exit-code --heads '$GitUrl' 'refs/heads/$GitRef' >/dev/null 2>&1; then
+    git clone --branch '$GitRef' --single-branch '$GitUrl' '$WS/AgentLODGE'
+  else
+    git clone '$GitUrl' '$WS/AgentLODGE'
+    git -C '$WS/AgentLODGE' fetch --depth=1 origin '$GitRef'
+    git -C '$WS/AgentLODGE' checkout --detach FETCH_HEAD
+  fi
+else
+  if ! git -C '$WS/AgentLODGE' diff --quiet ||
+      ! git -C '$WS/AgentLODGE' diff --cached --quiet; then
+    echo 'Refusing to replace a modified pod checkout.' >&2
+    exit 1
+  fi
+  git -C '$WS/AgentLODGE' fetch origin '$GitRef'
+  if git -C '$WS/AgentLODGE' show-ref --verify --quiet 'refs/remotes/origin/$GitRef'; then
+    git -C '$WS/AgentLODGE' checkout -B '$GitRef' 'origin/$GitRef'
+  else
+    git -C '$WS/AgentLODGE' checkout --detach FETCH_HEAD
+  fi
+fi
+cd '$WS/AgentLODGE'
+WORKSPACE='$WS' \
+AGENTLODGE_GIT_URL='$GitUrl' \
+AGENTLODGE_GIT_REF='$GitRef' \
+AGENTLODGE_TORCH_INDEX='$torch' \
+bash scripts/setup_four_gpu_pod.sh
+"@
   }
   "bank" {
     $sid = $Args[0]; $k = if ($Args[1]) { $Args[1] } else { "4" }
@@ -79,5 +138,5 @@ switch ($Command) {
     Get-ChildItem $dst -Filter "bank_${sid}_*.npy" | Select-Object Name, @{n = 'MB'; e = { [math]::Round($_.Length / 1MB, 2) } }
     Write-Host "Done. Restart the server (or reopen the session) to use the richer bank." -ForegroundColor Green
   }
-  default { throw "unknown command '$Command' (use: setup | bank | ssh | push | pull)" }
+  default { throw "unknown command '$Command' (use: setup4 | setup | bank | ssh | push | pull)" }
 }

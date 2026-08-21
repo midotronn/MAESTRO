@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "report_id": "runpod-20260819-eevee-multigpu-final-v1",
+  "immutable": true,
+  "status": "completed",
+  "scope": "Full-quality 1080x1080, 96-sample EEVEE render binding, saturation, exactness, and FFV1 packaging on one two-GPU Pod.",
+  "raw_reports_root": "session-artifact://eevee_multigpu/remote_reports_all/eevee-binding-tests",
+  "method": {
+    "frames_per_daemon": 100,
+    "render_every_frame": true,
+    "frame_format": "tga",
+    "external_transport": "FFV1 level 3 Matroska after source-TGA hashing",
+    "engine": "eevee",
+    "width": 1080,
+    "height": 1080,
+    "samples": 96,
+    "denoise": 1,
+    "gpu_observation": "nvidia-smi utilization, memory, UUID, and PCI bus ID sampled during concurrent resident-daemon runs",
+    "binding_observation": "EGL devices mapped to physical CUDA/nvidia-smi indices with EGL_CUDA_DEVICE_NV"
+  },
+  "hardware": {
+    "pod_id": "lvc21nmkwm3gkr",
+    "gpu_model": "NVIDIA RTX PRO 4500 Blackwell",
+    "gpu_memory_mib": 32623,
+    "driver_version": "580.126.20",
+    "blender_version": "4.2.3 LTS",
+    "gpus": [
+      {
+        "cuda_index": 0,
+        "uuid": "GPU-ca6ff11c-6098-2bb9-e228-92c6f52a5be4",
+        "pci_bus_id": "00000000:82:00.0"
+      },
+      {
+        "cuda_index": 1,
+        "uuid": "GPU-0bca43b2-23d3-c94f-a873-75b4e7b576cb",
+        "pci_bus_id": "00000000:C2:00.0"
+      }
+    ]
+  },
+  "selector_matrix": {
+    "native_selectors": [
+      "CUDA_VISIBLE_DEVICES",
+      "EGL_DEVICE_ID",
+      "EGL_VISIBLE_DEVICES",
+      "DRI_PRIME",
+      "NVIDIA_VISIBLE_DEVICES set inside the running container",
+      "__NV_PRIME_RENDER_OFFLOAD with __GLX_VENDOR_LIBRARY_NAME"
+    ],
+    "native_result": "All rendered on physical CUDA GPU 1.",
+    "egl_enumeration_mapping": {
+      "egl_device_0_cuda_index": 1,
+      "egl_device_1_cuda_index": 0
+    },
+    "accepted_selector": "Process-local LD_PRELOAD shim matching the requested CUDA index through EGL_CUDA_DEVICE_NV and replacing the default display with EGL_PLATFORM_DEVICE_EXT.",
+    "ld_preload_scope": "Blender daemon subprocess only",
+    "result": "Both physical GPUs reached real concurrent utilization."
+  },
+  "exactness": {
+    "cross_gpu_tga_frames_per_gpu": 12,
+    "cross_gpu_tga_byte_identical": true,
+    "common_first_frame_sha256": "3ee6b58679c4a55a178780da91b91d48355f0cf8789c62962ef9e95eee7a312c",
+    "direct_blender_ffv1_decoded_rgb_frames": 100,
+    "direct_blender_ffv1_decoded_rgb_exact": true
+  },
+  "saturation_sweep": {
+    "one_gpu": [
+      {
+        "resident_daemons": 2,
+        "raw_frames_per_second": 8.17
+      },
+      {
+        "resident_daemons": 4,
+        "raw_frames_per_second": 11.131
+      },
+      {
+        "resident_daemons": 6,
+        "raw_frames_per_second": 13.384
+      },
+      {
+        "resident_daemons": 10,
+        "raw_frames_per_second": 14.08,
+        "external_ffv1_end_to_end_frames_per_second": 13.526
+      },
+      {
+        "resident_daemons": 16,
+        "raw_frames_per_second": 15.034,
+        "external_ffv1_end_to_end_frames_per_second": 14.476
+      },
+      {
+        "resident_daemons": 20,
+        "raw_frames_per_second": 15.496,
+        "external_ffv1_end_to_end_frames_per_second": 14.887
+      }
+    ],
+    "two_gpu": [
+      {
+        "resident_daemons": 4,
+        "daemons_per_gpu": 2,
+        "raw_frames_per_second": 13.514
+      },
+      {
+        "resident_daemons": 8,
+        "daemons_per_gpu": 4,
+        "raw_frames_per_second": 16.45
+      },
+      {
+        "resident_daemons": 12,
+        "daemons_per_gpu": 6,
+        "raw_frames_per_second_tmp": 17.951,
+        "raw_frames_per_second_shm": 18.373
+      },
+      {
+        "resident_daemons": 16,
+        "daemons_per_gpu": 8,
+        "raw_frames_per_second": 20.197
+      },
+      {
+        "resident_daemons": 20,
+        "daemons_per_gpu": 10,
+        "raw_frames_per_second": 21.619
+      },
+      {
+        "resident_daemons": 24,
+        "daemons_per_gpu": 12,
+        "raw_frames_per_second": 22.78
+      },
+      {
+        "resident_daemons": 28,
+        "daemons_per_gpu": 14,
+        "raw_frames_per_second": 23.788
+      },
+      {
+        "resident_daemons": 32,
+        "daemons_per_gpu": 16,
+        "raw_frames_per_second": 24.132,
+        "external_ffv1_end_to_end_frames_per_second": 22.462
+      }
+    ]
+  },
+  "best_full_path": {
+    "one_gpu": {
+      "resident_daemons": 20,
+      "external_ffv1_end_to_end_frames_per_second": 14.887
+    },
+    "two_gpu": {
+      "resident_daemons": 32,
+      "daemons_per_gpu": 16,
+      "raw_frames_per_second": 24.132,
+      "external_ffv1_end_to_end_frames_per_second": 22.462,
+      "speedup_over_best_one_gpu": 1.509,
+      "scaling_efficiency": 0.755,
+      "max_gpu_utilization_percent": 100,
+      "max_memory_used_mib_per_gpu": 7670
+    }
+  },
+  "scratch_comparison": {
+    "configuration": "12 daemons total, six per GPU",
+    "tmp_frames_per_second": 17.951,
+    "dev_shm_frames_per_second": 18.373,
+    "improvement_percent": 2.4,
+    "decision": "Default to isolated /tmp. Shared memory is explicit opt-in with aggregate reservation because the measured gain does not justify overcommit risk."
+  },
+  "direct_blender_ffv1": {
+    "single_daemon_tga_seconds": 32.346,
+    "single_daemon_direct_ffv1_seconds": 23.486,
+    "saturated_direct_ffv1_frames_per_second": 23.122,
+    "saturated_external_packaging_frames_per_second": 22.462,
+    "throughput_improvement_percent": 2.9,
+    "direct_artifact_bytes_for_3200_frames": 1914312768,
+    "external_artifact_bytes_for_3200_frames": 1316499648,
+    "artifact_size_increase_percent": 45.4,
+    "decision": "Rejected for now: the small saturated throughput gain costs substantially larger artifacts and removes the retained source-TGA byte-digest contract."
+  },
+  "projection": {
+    "target_frames": 5400,
+    "two_gpu_external_ffv1_seconds_before_final_merge_encode": 240.4,
+    "render_budget_seconds": 23,
+    "render_budget_met": false
+  },
+  "decision": {
+    "same_pod_multi_gpu_supported": true,
+    "one_visible_gpu_compatible_without_selector": true,
+    "cross_pod_transport_required_beyond_runpod_four_gpu_limit": true,
+    "transport": "Keep external TGA-to-FFV1 packaging and use authenticated HTTP task/artifact transport for independent Pods."
+  },
+  "artifact_sources": [
+    "env-matrix-summary.txt",
+    "shim-maps\\result.json",
+    "shim3-0\\result.json",
+    "shim3-1\\result.json",
+    "one-gpu-two\\report.json",
+    "one-gpu-four\\report.json",
+    "one-gpu-six-shm\\report.json",
+    "one-gpu-ten-ffv1\\report.json",
+    "one-gpu-sixteen-ffv1\\report.json",
+    "one-gpu-twenty-ffv1\\report.json",
+    "two-gpu-four\\report.json",
+    "two-gpu-eight\\report.json",
+    "two-gpu-twelve-shim\\report.json",
+    "two-gpu-twelve-shm\\report.json",
+    "two-gpu-sixteen-shm\\report.json",
+    "two-gpu-twenty-shm\\report.json",
+    "two-gpu-twenty-four-shm\\report.json",
+    "two-gpu-twenty-eight-shm\\report.json",
+    "two-gpu-thirty-two-ffv1\\report.json",
+    "tga-100\\result.json",
+    "direct-ffv1-100\\result.json",
+    "two-gpu-thirty-two-direct-ffv1\\report.json"
+  ]
+}

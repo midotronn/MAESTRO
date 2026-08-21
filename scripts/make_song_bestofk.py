@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the canonical full-song LODGE, EDGE, and story motions from cached audio features."""
+"""Generate canonical full-song motions and beat artifacts from cached audio features."""
 
 from __future__ import annotations
 
@@ -24,6 +24,9 @@ sys.path.insert(0, str(AGENTLODGE_ROOT))
 
 from agentlodge.agent.storyboard import author_storyboard  # noqa: E402
 from agentlodge.audio.preprocess import (  # noqa: E402
+    AUDIO_TIMING_CONTRACT_VERSION,
+    SongMetadata,
+    extract_editor_beat_artifacts,
     extract_audio_descriptor,
     extract_song_metadata,
     release_torch_memory,
@@ -98,6 +101,81 @@ def _file_fingerprint(path: Path) -> dict[str, object]:
     }
 
 
+def _load_song_metadata(sid: str, wav: Path) -> SongMetadata:
+    artifact = WORKSPACE / f"audio_timing_{sid}.json"
+    if artifact.is_file():
+        try:
+            payload = json.loads(artifact.read_text(encoding="utf-8"))
+            if payload.get("contract_version") != AUDIO_TIMING_CONTRACT_VERSION:
+                raise ValueError("unsupported timing contract")
+            if payload.get("source") != _file_fingerprint(wav):
+                raise ValueError("source fingerprint mismatch")
+            duration_seconds = float(payload["duration_seconds"])
+            bpm = float(payload["bpm"])
+            beat_frames = np.asarray(payload["beat_frames"], dtype=np.int64).reshape(-1)
+            if (
+                not np.isfinite(duration_seconds)
+                or duration_seconds <= 0.0
+                or not np.isfinite(bpm)
+                or bpm < 0.0
+                or np.any(beat_frames < 0)
+            ):
+                raise ValueError("invalid timing values")
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+            print(
+                f"[{sid}] ignoring invalid resident audio timing artifact: {exc}",
+                flush=True,
+            )
+            artifact.unlink(missing_ok=True)
+        else:
+            print(f"[{sid}] reusing resident audio timing analysis", flush=True)
+            return SongMetadata(
+                duration_seconds=duration_seconds,
+                bpm=bpm,
+                beat_frames=beat_frames,
+                wav_path=wav,
+            )
+    return extract_song_metadata(wav)
+
+
+def _valid_beat_artifacts(sid: str) -> bool:
+    beats_path = WORKSPACE / f"beats_{sid}.npy"
+    strengths_path = WORKSPACE / f"beat_strengths_{sid}.npy"
+    if not beats_path.is_file() or not strengths_path.is_file():
+        return False
+    try:
+        beats = np.load(beats_path).astype(np.float32).reshape(-1)
+        strengths = np.load(strengths_path).astype(np.float32).reshape(-1)
+    except (OSError, ValueError):
+        return False
+    return (
+        beats.size == strengths.size
+        and np.isfinite(beats).all()
+        and np.isfinite(strengths).all()
+    )
+
+
+def write_beat_artifacts(
+    sid: str,
+    *,
+    workspace: Path | str | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    root = Path(workspace) if workspace is not None else WORKSPACE
+    beat_times, strengths = extract_editor_beat_artifacts(
+        root / f"LODGE/data/finedance/music_wav/{sid}.wav",
+        librosa_module=librosa,
+    )
+    np.save(root / f"beats_{sid}.npy", beat_times)
+    np.save(root / f"beat_strengths_{sid}.npy", strengths)
+    print(
+        "beats",
+        len(beat_times),
+        "strongest",
+        float(strengths.max()) if strengths.size else 0.0,
+    )
+    return beat_times, strengths
+
+
 def _distributed_generation_job(
     backbone: str,
     features_path: Path,
@@ -157,7 +235,7 @@ def generate_song(sid: str) -> dict:
 
     settings = _settings()
     settings_dict = _settings_to_dict(settings)
-    metadata = extract_song_metadata(wav)
+    metadata = _load_song_metadata(sid, wav)
     if metadata.duration_seconds < settings.min_audio_seconds:
         raise ValueError(
             f"audio is {metadata.duration_seconds:.1f}s; "
@@ -313,6 +391,11 @@ def generate_song(sid: str) -> dict:
 
     lodge_motion = _successful_motion(lodge_result, "LODGE")
     edge_motion = _successful_motion(edge_result, "EDGE")
+    source_frames = {
+        "lodge": int(lodge_motion.shape[0]),
+        "edge": int(edge_motion.shape[0]),
+    }
+    target_frames = int(round(metadata.duration_seconds * 30))
     np.save(WORKSPACE / f"lodge_fd_{sid}_full.npy", lodge_motion)
     np.save(WORKSPACE / f"edge_fd_{sid}_full.npy", edge_motion)
     release_torch_memory()
@@ -321,13 +404,12 @@ def generate_song(sid: str) -> dict:
         "MAESTRO_SUBPROGRESS generation 84 Analyzing the song structure",
         flush=True,
     )
-    total_frames = min(lodge_motion.shape[0], edge_motion.shape[0])
     _emit_timing("structure_analysis", "start")
     try:
         structure = analyze_structure(
             wav,
             metadata,
-            total_frames,
+            target_frames,
             min_section_seconds=8.0,
         )
     finally:
@@ -367,10 +449,16 @@ def generate_song(sid: str) -> dict:
             metadata,
             blend_frames=15,
             motif_reuse=True,
+            target_frames=target_frames,
         )
     finally:
         _emit_timing("story_assembly", "end")
     motion = assembled.motion
+    if motion.shape[0] != target_frames:
+        raise RuntimeError(
+            f"story assembly produced {motion.shape[0]} frames; "
+            f"expected {target_frames}"
+        )
     schedule = [
         [int(a), int(b), str(source), str(role)]
         for a, b, source, role in assembled.schedule
@@ -378,6 +466,10 @@ def generate_song(sid: str) -> dict:
 
     output = WORKSPACE / f"fd_{sid}_STORY_bestofk.npy"
     np.save(output, np.asarray(motion, dtype=np.float32))
+    if _valid_beat_artifacts(sid):
+        print(f"[{sid}] reusing resident editor beat artifacts", flush=True)
+    else:
+        write_beat_artifacts(sid)
     print(
         "MAESTRO_SUBPROGRESS generation 100 Motion generation complete",
         flush=True,
@@ -387,6 +479,8 @@ def generate_song(sid: str) -> dict:
         "sid": sid,
         "best_of_k": k,
         "frames": int(motion.shape[0]),
+        "target_frames": target_frames,
+        "source_frames": source_frames,
         "lodge_summary": lodge_result.get("summary", ""),
         "edge_summary": edge_result.get("summary", ""),
         "generation_workers": {

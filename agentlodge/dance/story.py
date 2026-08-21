@@ -581,10 +581,24 @@ def build_story_dance(lodge_motion: np.ndarray, edge_motion: np.ndarray,
                       structure: MusicStructure, storyboard: Storyboard,
                       metadata: "SongMetadata", *, blend_frames: int = 15,
                       motif_reuse: bool = True, energy_shaping: bool = False,
-                      recapitulate: bool = False, post_variations: dict | None = None) -> StoryResult:
+                      recapitulate: bool = False, post_variations: dict | None = None,
+                      target_frames: int | None = None) -> StoryResult:
     """Assemble a structure-aware dance from independent LODGE and EDGE motions + a storyboard."""
     lodge = to_zup(to_agentlodge139(ensure_lodge139(lodge_motion)))  # native -> AgentLODGE, Y->Z up
     edge = to_agentlodge139(ensure_lodge139(edge_motion))            # EDGE already Z-up
+    if target_frames is not None:
+        target = int(target_frames)
+        if target < 2:
+            raise ValueError(f"target_frames must be at least 2, got {target}")
+        for label, motion in (("LODGE", lodge), ("EDGE", edge)):
+            relative_change = abs(motion.shape[0] - target) / target
+            if relative_change > 0.02:
+                raise ValueError(
+                    f"{label} length {motion.shape[0]} is too far from "
+                    f"the requested {target} frames"
+                )
+        lodge = retime(lodge, target)
+        edge = retime(edge, target)
     n = min(lodge.shape[0], edge.shape[0], structure.total_frames)
     if n < 30:
         raise ValueError(f"Motions too short for story assembly ({n} frames)")

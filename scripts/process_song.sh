@@ -15,6 +15,8 @@ AL="${AGENTLODGE_ROOT:-$WORKSPACE/AgentLODGE}"
 PY="${AL_PY:-$AL/.venv/bin/python}"
 SKIP_RENDER="${AGENTLODGE_SKIP_RENDER:-0}"
 OUT="$WORKSPACE/upload_${SID}"
+PENETRATION_MARKER="$WORKSPACE/penetration_cleanup_${SID}.done"
+AUDIO_TIMING="$WORKSPACE/audio_timing_${SID}.json"
 TIMING_FILE="${MAESTRO_TIMING_FILE:-$OUT/timings.tsv}"
 cd "$WORKSPACE"
 export PYTHONUNBUFFERED=1 WORKSPACE AGENTLODGE_ROOT="$AL"
@@ -70,12 +72,42 @@ timing assets end
 
 PRE="$(find_script preprocess_song.py)" || fail "preprocess_song.py not found on the pod"
 GEN="$(find_script make_song_bestofk.py)" || fail "make_song_bestofk.py not found on the pod"
+if [ "${AGENTLODGE_DISTRIBUTED:-0}" = "1" ]; then
+  case ",${AGENTLODGE_DISTRIBUTED_CAPABILITIES:-}," in
+    *,dance.generate,*)
+      DISPATCH_GEN="$(find_script dispatch_song_generation.py || true)"
+      [ -n "$DISPATCH_GEN" ] && GEN="$DISPATCH_GEN"
+      ;;
+  esac
+fi
+DISPATCH_BEATS=""
+if [ "${AGENTLODGE_DISTRIBUTED:-0}" = "1" ]; then
+  case ",${AGENTLODGE_DISTRIBUTED_CAPABILITIES:-}," in
+    *,audio.beats,*)
+      DISPATCH_BEATS="$(find_script dispatch_beat_tracking.py || true)"
+      ;;
+  esac
+fi
 RECAP="$(find_script make_energetic_recap_aligned.py || true)"
 BANK="$(find_script build_window_bank.py)" || fail "build_window_bank.py not found"
 REND="$(find_script render_one_ybot.sh)" || fail "render_one_ybot.sh not found"
 
-progress preprocess 25 "Extracting LODGE and EDGE music features"
-echo "### [1/6] preprocess (LODGE feats + EDGE jukebox slices)"
+# A retry may reuse the same SID. Remove every derived fast-path artifact before
+# launching concurrent preprocessing so no worker can consume stale results.
+rm -f \
+  "bank_${SID}_lodge_seed0.npy" \
+  "bank_${SID}_edge_seed0.npy" \
+  "beats_${SID}.npy" \
+  "beat_strengths_${SID}.npy" \
+  "$AUDIO_TIMING" \
+  "$OUT/bank_${SID}_lodge_seed0.npy" \
+  "$OUT/bank_${SID}_edge_seed0.npy" \
+  "$OUT/beats.npy" \
+  "$OUT/beat_strengths.npy" \
+  "$PENETRATION_MARKER"
+
+progress preprocess 25 "Extracting music features and beat timing"
+echo "### [1/6] preprocess (LODGE + EDGE + resident beat analysis)"
 PREP_LOG_DIR="$WORKSPACE/gen${SID}_work"; mkdir -p "$PREP_LOG_DIR"
 (
   timing preprocess_lodge start
@@ -93,9 +125,27 @@ LODGE_PREP_PID=$!
   exit "$rc"
 ) > "$PREP_LOG_DIR/preprocess_edge.log" 2>&1 &
 EDGE_PREP_PID=$!
+BEAT_PREP_PID=""
+if [ -n "$DISPATCH_BEATS" ]; then
+  (
+    timing preprocess_beats start
+    "$PY" "$DISPATCH_BEATS" "$SID"
+    rc=$?
+    timing preprocess_beats end "rc=$rc"
+    exit "$rc"
+  ) > "$PREP_LOG_DIR/preprocess_beats.log" 2>&1 &
+  BEAT_PREP_PID=$!
+fi
 LODGE_PREP_RC=0; wait "$LODGE_PREP_PID" || LODGE_PREP_RC=$?
 EDGE_PREP_RC=0; wait "$EDGE_PREP_PID" || EDGE_PREP_RC=$?
+BEAT_PREP_RC=0
+if [ -n "$BEAT_PREP_PID" ]; then
+  wait "$BEAT_PREP_PID" || BEAT_PREP_RC=$?
+fi
 cat "$PREP_LOG_DIR/preprocess_lodge.log" "$PREP_LOG_DIR/preprocess_edge.log"
+if [ -f "$PREP_LOG_DIR/preprocess_beats.log" ]; then
+  cat "$PREP_LOG_DIR/preprocess_beats.log"
+fi
 if [ "$LODGE_PREP_RC" -ne 0 ]; then
   echo "### parallel LODGE preprocessing failed; retrying alone"
   timing preprocess_lodge_retry start
@@ -112,6 +162,10 @@ if [ "$EDGE_PREP_RC" -ne 0 ]; then
   timing preprocess_edge_retry end "rc=$retry_rc"
   [ "$retry_rc" -eq 0 ] || fail "EDGE preprocess failed"
 fi
+if [ "$BEAT_PREP_RC" -ne 0 ]; then
+  echo "### resident beat analysis failed; generation will use the exact local fallback"
+  rm -f "beats_${SID}.npy" "beat_strengths_${SID}.npy" "$AUDIO_TIMING"
+fi
 progress generation 40 "Generating LODGE and EDGE motion"
 echo "### [2/6] best-of-K generation + storyboard"
 timing generation_total start
@@ -123,24 +177,36 @@ progress polish 68 "Assembling and polishing the choreography"
 timing polish start
 if [ -n "${RECAP:-}" ]; then echo "### [2b] recap alignment"; "$PY" "$RECAP" "$SID" || true; fi
 echo "### [2c] resolve hand-through-body self-penetration"
-PEN="$(find_script resolve_penetration.py || true)"
-if [ -n "${PEN:-}" ]; then
+if [ -s "$PENETRATION_MARKER" ]; then
+  echo "  resident penetration cleanup already complete; skipping standalone cleanup"
+else
+  rm -f "$PENETRATION_MARKER"
+  PEN="$(find_script resolve_penetration.py)" || fail "resolve_penetration.py not found"
   "$PY" "$PEN" "fd_${SID}_STORY_bestofk.npy" "fd_${SID}_STORY_bestofk.npy" \
-    --radius 0.12 --margin 0.03 --max-deg 30 || echo "  (penetration cleanup skipped)"
+    --radius 0.12 --margin 0.03 --max-deg 30 || fail "penetration cleanup failed"
 fi
 timing polish end
 progress seed_bank 73 "Building the initial editing bank"
 echo "### [3/6] seed-0 editing bank"
 timing seed_bank start
-AGENTLODGE_BANK_K=1 "$PY" "$BANK" "$SID"
-BANK_RC=$?
+if [ -f "bank_${SID}_lodge_seed0.npy" ] && [ -f "bank_${SID}_edge_seed0.npy" ]; then
+  echo "  seed-0 bank already exists; skipping standalone build"
+  BANK_RC=0
+else
+  AGENTLODGE_BANK_K=1 "$PY" "$BANK" "$SID"
+  BANK_RC=$?
+fi
 timing seed_bank end "rc=$BANK_RC"
 [ "$BANK_RC" -eq 0 ] || fail "seed-0 bank build failed"
 
 progress beats 76 "Tracking beats and musical accents"
 echo "### [4/6] beats"
 timing beats start
-"$PY" - "$SID" <<'PY'
+if [ -f "beats_${SID}.npy" ] && [ -f "beat_strengths_${SID}.npy" ]; then
+  echo "  beat artifacts already exist; skipping standalone tracking"
+  BEAT_RC=0
+else
+  "$PY" - "$SID" <<'PY'
 import sys, numpy as np, librosa
 sid = sys.argv[1]
 y, sr = librosa.load(f"/workspace/LODGE/data/finedance/music_wav/{sid}.wav", sr=22050, mono=True)
@@ -160,7 +226,8 @@ np.save(f"/workspace/beats_{sid}.npy", np.asarray(beat_times, dtype=np.float32))
 np.save(f"/workspace/beat_strengths_{sid}.npy", strengths)
 print("beats", len(beat_frames), "strongest", float(strengths.max()) if strengths.size else 0.0)
 PY
-BEAT_RC=$?
+  BEAT_RC=$?
+fi
 timing beats end "rc=$BEAT_RC"
 [ "$BEAT_RC" -eq 0 ] || fail "beat tracking failed"
 

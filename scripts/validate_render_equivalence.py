@@ -25,6 +25,7 @@ from server.distributed.handlers import (  # noqa: E402
     _ffmpeg_executable,
     _frame_digest,
 )
+from server.distributed.render_contract import render_identity_digest  # noqa: E402
 
 DEFAULT_MAX_CHANGED_CHANNEL_FRACTION = 0.0005
 DEFAULT_MAX_MEAN_ABSOLUTE_ERROR = 0.001
@@ -248,6 +249,9 @@ def validate_render_equivalence(
         width=width,
         height=height,
         samples=samples,
+        engine=engine,
+        denoise=denoise,
+        frame_format=frame_format,
         wait_ready=120,
     ) < 1:
         raise RuntimeError("no warm Blender daemon is available")
@@ -284,23 +288,42 @@ def validate_render_equivalence(
         daemon=worker_daemon,
     )
     handler.preload()
-    worker_started_at = time.time()
-    worker_result = handler(
+    render_provenance = handler.render_provenance()
+    worker_payload = {
+        "poses": str(poses_path),
+        "frames_dir": str(worker_frames),
+        "frame_start": frame_start,
+        "frame_end": frame_end,
+        "width": width,
+        "height": height,
+        "samples": samples,
+        "engine": engine,
+        "denoise": denoise,
+        "frame_format": frame_format,
+        "fps": fps,
+        "timeout": timeout,
+        "render_contract_version": render_provenance[
+            "render_contract_version"
+        ],
+        "render_provenance": render_provenance,
+    }
+    worker_payload["render_identity_digest"] = render_identity_digest(
+        render_provenance,
         {
-            "poses": str(poses_path),
-            "frames_dir": str(worker_frames),
-            "frame_start": frame_start,
-            "frame_end": frame_end,
-            "width": width,
-            "height": height,
-            "samples": samples,
-            "engine": engine,
-            "denoise": denoise,
-            "frame_format": frame_format,
-            "fps": fps,
-            "timeout": timeout,
-        }
+            key: worker_payload[key]
+            for key in (
+                "width",
+                "height",
+                "samples",
+                "engine",
+                "denoise",
+                "frame_format",
+                "fps",
+            )
+        },
     )
+    worker_started_at = time.time()
+    worker_result = handler(worker_payload)
     worker_render_seconds = time.time() - worker_started_at
 
     frame_count = frame_end - frame_start

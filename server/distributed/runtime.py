@@ -23,3 +23,19 @@ def capability_enabled(capability: str) -> bool:
     normalized = capability.strip().lower()
     role = normalized.split(".", 1)[0]
     return normalized in allowed or role in allowed
+
+
+def distributed_transport(capability: str) -> str:
+    configured = os.environ.get(
+        "AGENTLODGE_DISTRIBUTED_TRANSPORT",
+        "filesystem",
+    ).strip().lower()
+    aliases = {"file": "filesystem", "shared": "filesystem"}
+    transport = aliases.get(configured, configured)
+    if transport not in {"filesystem", "http"}:
+        raise ValueError(f"unsupported distributed transport: {configured!r}")
+    if transport == "http" and capability != "render.frames":
+        raise ValueError(
+            "HTTP distributed transport is currently scoped to render.frames"
+        )
+    return transport

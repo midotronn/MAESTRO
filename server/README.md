@@ -60,15 +60,16 @@ copy `bank_<sid>_*.npy` into `server/media/<sid>/bank/`.
   browser-generated request ID with browser upload/total latency, server stage intervals, remote
   LODGE/EDGE/Jukebox timings, render frames, and worker count. Summarize frozen warm runs with
   `python scripts/analyze_pipeline_traces.py <trace...>`.
-- The optional distributed path uses a shared-volume, idempotent task protocol. It is disabled by
-  default. Set `AGENTLODGE_DISTRIBUTED=1`, point `AGENTLODGE_WORKER_REGISTRY` at a JSON registry
-  based on `scripts/worker_registry.example.json`, and set `AGENTLODGE_SHARED_ROOT` to the common
-  mount. Healthy workers advertise one or more explicit capabilities:
+- The optional distributed path is disabled by default. Its backward-compatible default transport
+  is the shared-volume protocol: set `AGENTLODGE_DISTRIBUTED=1`, point
+  `AGENTLODGE_WORKER_REGISTRY` at a JSON registry based on
+  `scripts/worker_registry.example.json`, and set `AGENTLODGE_SHARED_ROOT` to the common mount.
+  Healthy workers advertise one or more explicit capabilities:
   `jukebox.extract`, `lodge.generate`, `edge.generate`, or `render.frames`.
 - `AGENTLODGE_DISTRIBUTED_CAPABILITIES` can restrict a calibration to selected roles without
   changing the other stages, for example `jukebox.extract,lodge.generate,edge.generate`. When it is
   unset, distributed mode requires all roles reached by the request.
-- Start one capability worker per isolated GPU container with `scripts/runpod_worker.py`. Task
+- Start one capability worker per resident model or Blender daemon with `scripts/runpod_worker.py`. Task
   requests and results live under each worker's configured `task_dir`; deterministic task IDs make
   retries idempotent, and heartbeat/version checks prevent dispatch to stale workers. Coordinators
   share `AGENTLODGE_DISTRIBUTED_STATE` (by default the worker directories' common
@@ -80,12 +81,34 @@ copy `bank_<sid>_*.npy` into `server/media/<sid>/bank/`.
 - Distributed render workers accept only the configured quality contract, render disjoint global
   frame ranges to worker-local lossless TGA/PNG files, hash every assigned source frame, and package
   each range as an FFV1 Matroska shard before crossing the shared volume. The coordinator verifies
-  range metadata and hashes, decodes the ordered lossless shards, and runs the established H.264/audio
-  encode once. Render containers must expose exactly one GPU and select NVIDIA EGL explicitly.
+  FFV1 codec, dimensions, frame rate, exact contiguous frame count/timestamps, artifact hash/size,
+  and an indexed decoded-RGB digest before running the established H.264/audio encode once. Task
+  identity includes the versioned render contract plus attested scene/renderer identity, preventing
+  stale shard reuse after an upgrade. A one-visible-GPU container needs no selector shim. In a
+  multi-GPU container,
+  `AGENTLODGE_GPU_INDEX` names the CUDA/nvidia-smi index and the launcher validates the setup-built
+  EGL selector shim before starting Blender.
+- `render.frames` can instead use the no-shared-volume authenticated HTTP transport. Set
+  `AGENTLODGE_DISTRIBUTED_TRANSPORT=http`, `AGENTLODGE_HTTP_COORDINATOR_URL`, an
+  `AGENTLODGE_HTTP_TOKEN` or token file, and separate confined coordinator/worker scratch roots.
+  Workers register and heartbeat over the coordinator API, lease deterministic tasks, download only
+  coordinator-minted input artifact IDs, and stage FFV1 output artifacts under their active lease.
+  The coordinator verifies size and SHA-256 on upload and download, atomically publishes an artifact
+  with its idempotent completion, and reassigns expired leases. Failed tasks are retried only when
+  the coordinator explicitly resubmits the identical canonical request; transport/5xx failures are
+  retried within bounded lease/deadline windows while 4xx protocol, lease, payload, and artifact
+  errors fail closed. Use HTTPS or a private authenticated network; the built-in service can
+  terminate TLS with `--tls-cert` and `--tls-key`.
 - The LLM edit planner reads `OPENAI_API_KEY`, a private key file selected by `OAI_KEY_FILE`, or
   `~/.oai_key`. Without one of those sources it falls back to the offline keyword planner.
 - Sessions persist under `server/sessions/<sid>/` (checkpoint tree + motion snapshots), so history
   survives a restart.
+- Full-song rendering can use the opt-in `AGENTLODGE_FULL_RENDER_BACKEND=filament` SLA candidate.
+  It exports a GLB through one warm Blender daemon, renders contiguous ranges on the GPUs selected by
+  `AGENTLODGE_FILAMENT_GPU_INDICES`, uses NVENC, validates exact frame coverage, and fails closed.
+  Run `scripts/setup_filament_pod.sh` first. This does not change the default EEVEE quality contract;
+  Filament still requires explicit visual approval. Disable its render cache during timing with
+  `AGENTLODGE_FILAMENT_DISABLE_CACHE=1`.
 
 Example worker commands on containers sharing `/workspace`:
 
@@ -109,21 +132,105 @@ python scripts/runpod_worker.py \
   --shared-root /workspace --edge-root /workspace/EDGE \
   --edge-checkpoint /workspace/EDGE/checkpoint.pt
 
-AGENTLODGE_WARM_POOL=1 \
-__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
-python scripts/runpod_worker.py \
-  --worker-id render-0 --capability render.frames \
-  --task-dir /workspace/maestro-workers/render-0 \
-  --shared-root /workspace --worker-tmp /tmp/maestro-render
-```
-
-On a provisioned pod, the guarded launcher selects the correct Python environment and rejects a
-container unless exactly one GPU is visible:
-
-```bash
 bash scripts/start_runpod_worker.sh render.frames render-0 \
   /workspace/maestro-workers/render-0
 ```
+
+`setup_pod.sh` and `setup_gen_pod.sh` compile
+`/workspace/.agentlodge/lib/libagentlodge_egl_cuda_device.so` from the audited C source; no binary is
+committed. The guarded launcher keeps one-GPU behavior unchanged. In a multi-GPU container it
+requires a valid `AGENTLODGE_GPU_INDEX` and selector, gives every worker a unique daemon root, and
+defaults each worker to isolated `/tmp` scratch. `/dev/shm` is explicit opt-in through
+`AGENTLODGE_RENDER_USE_SHM=1` and requires an aggregate per-worker reservation preflight.
+
+```bash
+# N resident Blender daemons per GPU in one two-GPU Pod.
+DAEMONS_PER_GPU=16
+mkdir -p /workspace/maestro-workers
+for gpu in 0 1; do
+  for slot in $(seq 0 $((DAEMONS_PER_GPU - 1))); do
+    worker="render-g${gpu}-d${slot}"
+    AGENTLODGE_GPU_INDEX="$gpu" \
+      bash scripts/start_runpod_worker.sh \
+        render.frames "$worker" "/workspace/maestro-workers/$worker" \
+        >"/workspace/maestro-workers/$worker.launch.log" 2>&1 &
+  done
+done
+```
+
+Each process owns one warm daemon (`AGENTLODGE_WARM_POOL=1`), task directory, local frame/shard
+scratch, and `AGENTLODGE_RENDER_DAEMON_ROOT`; multiple worker processes may intentionally share a
+GPU. Register every filesystem worker ID, or let HTTP workers heartbeat dynamically.
+
+The selector intercepts Blender/libepoxy EGL lookup only in the Blender daemon subprocess. It maps
+the requested CUDA index through `EGL_CUDA_DEVICE_NV`, so EGL enumeration order is irrelevant;
+`LD_PRELOAD` is not exported to the worker or generation processes. The shim atomically records the
+selected CUDA/EGL device and build identity; warm-render daemon reuse additionally validates the
+scene, renderer code, Blender version, protocol, quality, GPU UUID/PCI ID, and selector binary.
+
+The render-plus-packaging saturation calibration on the 2x RTX PRO 4500 Pod was sublinear. The best one-GPU result used
+20 daemons at 14.887 fps after external FFV1 packaging. The best two-GPU result used 32 daemons
+(16/GPU): 24.132 raw fps and 22.462 end-to-end fps, a 1.509x speedup and 75.5% efficiency. Both GPUs
+reached 100% utilization with 7,670 MiB maximum VRAM/GPU; 5,400 frames project to 240.4s before the
+final merge/encode. Twelve full-quality TGA frames per physical GPU were byte-identical.
+
+Direct Blender FFV1 was decoded-RGB exact and only 2.9% faster at saturation, but produced 45.4%
+larger artifacts and removed the source-TGA digest contract, so it is not adopted. `/dev/shm`
+improved a 12-daemon result only 17.951 to 18.373 fps (~2.4%), hence the safer `/tmp` default. See
+`experiments/performance/runpod_calibration_20260819/eevee_multigpu_consolidated.json`. Use the
+authenticated HTTP transport for independent Pods and scale beyond RunPod's four-GPU Pod limit.
+
+A separate pre-optimization production-path filesystem run used four launcher workers (two per physical GPU) for
+400 frames and completed in 45.283s (8.833 fps), including exact range, source/shard hash, and
+decoded-RGB validation. It is an integrated transport result, not a replacement saturation point;
+an integrated capacity sweep remains pending. See `integrated_render_validation.json` in the same
+evidence directory.
+
+For independent render containers, first run a coordinator with durable local state:
+
+```bash
+export AGENTLODGE_HTTP_TOKEN_FILE=/run/secrets/agentlodge-http-token
+python scripts/run_http_coordinator.py \
+  --bind 0.0.0.0 --port 8765 \
+  --state-root /var/lib/agentlodge/coordinator \
+  --artifact-root /var/lib/agentlodge/artifacts \
+  --tls-cert /run/secrets/coordinator.crt \
+  --tls-key /run/secrets/coordinator.key
+```
+
+Configure the render-owning process:
+
+```bash
+export AGENTLODGE_DISTRIBUTED=1
+export AGENTLODGE_DISTRIBUTED_CAPABILITIES=render.frames
+export AGENTLODGE_DISTRIBUTED_TRANSPORT=http
+export AGENTLODGE_HTTP_COORDINATOR_URL=https://coordinator.example:8765
+export AGENTLODGE_HTTP_TOKEN_FILE=/run/secrets/agentlodge-http-token
+export AGENTLODGE_HTTP_COORDINATOR_SCRATCH=/var/lib/agentlodge/render-scratch
+```
+
+Then start the same guarded launcher in each worker container. No coordinator path is mounted into
+the worker; one-GPU containers may omit `AGENTLODGE_GPU_INDEX`:
+
+```bash
+export AGENTLODGE_DISTRIBUTED_TRANSPORT=http
+export AGENTLODGE_HTTP_COORDINATOR_URL=https://coordinator.example:8765
+export AGENTLODGE_HTTP_TOKEN_FILE=/run/secrets/agentlodge-http-token
+bash scripts/start_runpod_worker.sh render.frames render-0
+```
+
+The coordinator selects one canonical scene/renderer/selector/protocol/quality cohort for a render
+and records its eligible worker IDs on every task; incompatible rolling-deployment workers cannot
+claim or inherit those ranges. Input downloads and idempotent output uploads retry only network and
+retryable 5xx failures while the lease remains valid. Permanent 4xx, hash, payload, and stale-lease
+errors stop immediately. When shared-memory scratch is explicitly enabled, each assigned range is
+preflighted from its frame count and resolution; insufficient `/dev/shm` falls back to that
+worker's isolated `/tmp` root before Blender starts.
+
+Render contract `render.frames-ffv1-v3` computes the canonical indexed RGB digest once from the
+source TGA sequence. The worker packages FFV1 and performs a metadata/timing probe without a second
+full shard decode. The coordinator still independently decodes every downloaded shard and requires
+its indexed RGB digest to match before merge.
 
 The same launcher accepts `jukebox.extract`, `lodge.generate`, and `edge.generate`. Jukebox uses
 the isolated EDGE environment; the other roles use the MAESTRO environment. Worker preload loads
@@ -137,8 +244,10 @@ python scripts/benchmark_render_scaling.py \
   --output-dir /workspace/calibration/results
 ```
 
-The report records per-worker duration, aggregate and median frame throughput, source/shard hashes,
-and the idealized worker count for the frozen 5,400-frame/23-second render budget.
+The report records per-worker duration, observed daemon-attested CUDA index/UUID/PCI ID, workers per
+physical GPU keyed by UUID (with container-local CUDA-index counts retained as diagnostics),
+aggregate and median frame throughput, source/shard/decoded-RGB hashes, artifact IDs when HTTP is
+selected, and the idealized worker count for the frozen 5,400-frame/23-second render budget.
 
 Before scaling a target GPU, compare a small exact-scene range with the direct warm renderer:
 

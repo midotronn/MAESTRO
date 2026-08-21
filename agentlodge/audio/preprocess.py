@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 HOP_LENGTH = 512
 SAMPLE_RATE = FPS * HOP_LENGTH
+AUDIO_TIMING_CONTRACT_VERSION = "audio-timing-v1"
 
 
 @dataclass
@@ -101,6 +102,54 @@ def _metadata_from_waveform(y: np.ndarray, sr: int, wav_path: Path) -> SongMetad
 def extract_song_metadata(wav_path: Path) -> SongMetadata:
     y, sr = librosa.load(str(wav_path), sr=SAMPLE_RATE)
     return _metadata_from_waveform(y, sr, wav_path)
+
+
+def extract_editor_beat_artifacts(
+    wav_path: Path,
+    *,
+    librosa_module=librosa,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the exact 30 FPS beat positions and normalized onset strengths."""
+    y, sr = librosa_module.load(
+        str(wav_path),
+        sr=22_050,
+        mono=True,
+    )
+    _, beat_frames = librosa_module.beat.beat_track(
+        y=y,
+        sr=sr,
+        hop_length=HOP_LENGTH,
+        units="frames",
+    )
+    beat_frames = np.asarray(beat_frames, dtype=np.int64).reshape(-1)
+    beat_times = librosa_module.frames_to_time(
+        beat_frames,
+        sr=sr,
+        hop_length=HOP_LENGTH,
+    ) * FPS
+    onset = librosa_module.onset.onset_strength(
+        y=y,
+        sr=sr,
+        hop_length=HOP_LENGTH,
+    )
+    strengths = np.asarray(
+        [
+            np.max(onset[max(0, frame - 1) : min(len(onset), frame + 2)])
+            if len(onset)
+            else 0.0
+            for frame in beat_frames
+        ],
+        dtype=np.float32,
+    )
+    strengths = np.nan_to_num(
+        strengths,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
+    if strengths.size and float(strengths.max()) > 0.0:
+        strengths /= float(strengths.max())
+    return np.asarray(beat_times, dtype=np.float32), strengths
 
 
 _PITCH_CLASSES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]

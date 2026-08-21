@@ -28,6 +28,15 @@ PY="$VENV/bin/python"
 PIP="$VENV/bin/pip"
 TORCH_INDEX="${AGENTLODGE_TORCH_INDEX:-cu128}"        # cu128 verified on Blackwell; use 'cpu' for render-only
 AL="$WORK/AgentLODGE"
+AGENTLODGE_GIT_URL="${AGENTLODGE_GIT_URL:-https://github.com/midotronn/MAESTRO.git}"
+AGENTLODGE_GIT_REF="${AGENTLODGE_GIT_REF:-}"
+if [ -z "$AGENTLODGE_GIT_REF" ]; then
+  AGENTLODGE_GIT_REF="$(
+    git -C "$AL" symbolic-ref --quiet --short HEAD 2>/dev/null ||
+      git -C "$AL" rev-parse HEAD 2>/dev/null ||
+      printf '%s\n' main
+  )"
+fi
 BLENDER="$WORK/blender/blender"
 YBOT="$WORK/EDGE/SMPL-to-FBX/ybot.fbx"
 YBOT_SCENE="$WORK/ybot_scene.blend"
@@ -37,6 +46,28 @@ JUKEBOX_PRIOR_LINK="$HOME/.cache/jukemirlib/prior_level_2.pth.tar"
 step() { echo ""; echo "=== $* ==="; }
 die()  { echo "SETUP_FAILED: $*" >&2; exit 1; }
 
+ensure_jukebox_prior() {
+  mkdir -p "$(dirname "$JUKEBOX_PRIOR_STORE")" "$(dirname "$JUKEBOX_PRIOR_LINK")"
+  if [ "$(stat -c %s "$JUKEBOX_PRIOR_STORE" 2>/dev/null || echo 0)" \
+      -ne "$JUKEBOX_PRIOR_SIZE" ]; then
+    step "fetching Jukebox 5B prior (~10GB, resumable, one-time)"
+    local prior_url
+    prior_url=https://openaipublic.azureedge.net/jukebox/models/5b/prior_level_2.pth.tar
+    if command -v aria2c >/dev/null 2>&1; then
+      aria2c --continue=true --max-connection-per-server=16 --split=16 \
+        --min-split-size=16M --file-allocation=none --auto-file-renaming=false \
+        --dir="$(dirname "$JUKEBOX_PRIOR_STORE")" --out="$(basename "$JUKEBOX_PRIOR_STORE")" \
+        "$prior_url" || die "prior download"
+    else
+      curl -L -C - --retry 20 --retry-delay 5 --retry-all-errors \
+        -o "$JUKEBOX_PRIOR_STORE" "$prior_url" || die "prior download"
+    fi
+  fi
+  [ "$(stat -c %s "$JUKEBOX_PRIOR_STORE" 2>/dev/null || echo 0)" \
+    -eq "$JUKEBOX_PRIOR_SIZE" ] || die "prior download is incomplete"
+  ln -sfn "$JUKEBOX_PRIOR_STORE" "$JUKEBOX_PRIOR_LINK"
+}
+
 # ---- optional per-song preprocessing mode -------------------------------------------------
 if [ "${1:-}" = "--song" ]; then
   SID="${2:?--song needs a <sid>}"
@@ -45,26 +76,7 @@ if [ "${1:-}" = "--song" ]; then
   # routinely dies mid-download; pre-fetch it resumably (parallel aria2, or curl as a fallback) to
   # persistent storage, then link the cache path jukemirlib checks.
   if [ "$MODE" != "--lodge-only" ]; then
-    mkdir -p "$(dirname "$JUKEBOX_PRIOR_STORE")" "$(dirname "$JUKEBOX_PRIOR_LINK")"
-    if [ ! -f "$JUKEBOX_PRIOR_STORE" ] \
-      || [ "$(stat -c %s "$JUKEBOX_PRIOR_STORE" 2>/dev/null || echo 0)" -lt "$JUKEBOX_PRIOR_SIZE" ]; then
-      TMP=$(ls "$(dirname "$JUKEBOX_PRIOR_LINK")"/prior_level_2.pth.tar*.tmp 2>/dev/null | head -1)
-      [ -n "$TMP" ] && mv -f "$TMP" "$JUKEBOX_PRIOR_STORE"
-      step "fetching Jukebox 5B prior (~10GB, resumable, one-time)"
-      PRIOR_URL=https://openaipublic.azureedge.net/jukebox/models/5b/prior_level_2.pth.tar
-      if command -v aria2c >/dev/null 2>&1; then
-        aria2c --continue=true --max-connection-per-server=16 --split=16 \
-          --min-split-size=16M --file-allocation=none --auto-file-renaming=false \
-          --dir="$(dirname "$JUKEBOX_PRIOR_STORE")" --out="$(basename "$JUKEBOX_PRIOR_STORE")" "$PRIOR_URL" \
-          || die "prior download"
-      else
-        curl -L -C - --retry 20 --retry-delay 5 --retry-all-errors -o "$JUKEBOX_PRIOR_STORE" \
-          "$PRIOR_URL" || die "prior download"
-      fi
-      [ "$(stat -c%s "$JUKEBOX_PRIOR_STORE" 2>/dev/null || echo 0)" -eq "$JUKEBOX_PRIOR_SIZE" ] \
-        || die "prior download is incomplete"
-    fi
-    ln -sfn "$JUKEBOX_PRIOR_STORE" "$JUKEBOX_PRIOR_LINK"
+    ensure_jukebox_prior
   fi
   step "preprocess $SID (LODGE feats + EDGE Jukebox slices)"
   cd "$AL" && WORKSPACE="$WORK" "$PY" scripts/preprocess_song.py "$SID" "$MODE" || die "preprocess failed"
@@ -79,14 +91,11 @@ if command -v apt-get >/dev/null 2>&1; then
     libosmesa6 libosmesa6-dev libgl1-mesa-glx libglu1-mesa freeglut3-dev libglib2.0-0 \
     libxrender1 libxi6 libxxf86vm1 libxfixes3 libxkbcommon0 >/dev/null 2>&1 || true
 fi
-mkdir -p "$(dirname "$JUKEBOX_PRIOR_STORE")" "$(dirname "$JUKEBOX_PRIOR_LINK")"
-if [ "$(stat -c %s "$JUKEBOX_PRIOR_STORE" 2>/dev/null || echo 0)" -eq "$JUKEBOX_PRIOR_SIZE" ]; then
-  ln -sfn "$JUKEBOX_PRIOR_STORE" "$JUKEBOX_PRIOR_LINK"
-fi
 
 # ---- 2. GPU present? ----------------------------------------------------------------------
 step "GPU"
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader || die "no GPU"
+ensure_jukebox_prior
 
 # ---- 3. Blender ---------------------------------------------------------------------------
 step "Blender 4.2.3"
@@ -106,7 +115,32 @@ fi
 # ---- 4. repos -----------------------------------------------------------------------------
 step "repos"
 cd "$WORK"
-[ -d AgentLODGE ] || git clone -q https://github.com/midotronn/MAESTRO.git AgentLODGE
+if [ ! -d AgentLODGE/.git ]; then
+  if git ls-remote --exit-code --heads "$AGENTLODGE_GIT_URL" \
+      "refs/heads/$AGENTLODGE_GIT_REF" >/dev/null 2>&1; then
+    git clone -q --branch "$AGENTLODGE_GIT_REF" --single-branch \
+      "$AGENTLODGE_GIT_URL" AgentLODGE
+  else
+    git clone -q "$AGENTLODGE_GIT_URL" AgentLODGE
+    git -C AgentLODGE fetch -q --depth=1 origin "$AGENTLODGE_GIT_REF" \
+      || die "MAESTRO ref fetch"
+    git -C AgentLODGE checkout -q --detach FETCH_HEAD \
+      || die "MAESTRO ref checkout"
+  fi
+else
+  current_ref="$(git -C AgentLODGE symbolic-ref --quiet --short HEAD || true)"
+  if [ "$current_ref" = "$AGENTLODGE_GIT_REF" ]; then
+    git -C AgentLODGE pull --ff-only -q \
+      || die "MAESTRO branch update"
+  elif [ -z "$current_ref" ] \
+      && [ "$(git -C AgentLODGE rev-parse HEAD)" \
+        = "$(git -C AgentLODGE rev-parse "$AGENTLODGE_GIT_REF^{commit}")" ]; then
+    echo "  MAESTRO is at detached ref $AGENTLODGE_GIT_REF"
+  else
+    die "existing MAESTRO checkout is '${current_ref:-detached}', expected '$AGENTLODGE_GIT_REF'"
+  fi
+fi
+printf '%s\n' "$AGENTLODGE_GIT_REF" >"$WORK/.maestro_git_ref"
 # LODGE: a bare/empty dir (fresh, or a volume migration that dropped file contents) has no code.
 # Guard on the code package (dld/), and preserve downloaded weights (exp/) + the licence-gated
 # SMPL-X template across a re-clone via mv (instant on the same fs, no multi-GB copy).
@@ -129,7 +163,19 @@ if [ ! -f EDGE/EDGE.py ]; then
   [ -f "$_ebak/ybot.fbx" ] && mv -f "$_ebak/ybot.fbx" EDGE/SMPL-to-FBX/ybot.fbx 2>/dev/null || true
   rm -rf "$_ebak"
 fi
-( cd AgentLODGE && git pull --ff-only -q || true )
+# pod.ps1 uploads these beside this bootstrap so an uncommitted local setup can build the selector
+# before the branch is pushed; normal cloned repositories already contain them.
+[ -f "$WORK/build_egl_selector.sh" ] \
+  && cp -f "$WORK/build_egl_selector.sh" "$AL/scripts/build_egl_selector.sh"
+[ -f "$WORK/egl_cuda_device_selector.c" ] \
+  && cp -f "$WORK/egl_cuda_device_selector.c" "$AL/scripts/egl_cuda_device_selector.c"
+sed -i 's/\r$//' "$AL/scripts/build_egl_selector.sh"
+
+step "EGL CUDA-device selector shim"
+EGL_SELECTOR="$WORK/.agentlodge/lib/libagentlodge_egl_cuda_device.so"
+WORKSPACE="$WORK" AGENTLODGE_ROOT="$AL" \
+  bash "$AL/scripts/build_egl_selector.sh" "$EGL_SELECTOR" \
+  || die "EGL selector shim build"
 
 # ---- 5. CUDA venv + PyTorch (Blackwell gate) ----------------------------------------------
 step "CUDA venv + torch ($TORCH_INDEX)"
@@ -170,9 +216,10 @@ step "python deps"
 "$PIP" install -q gdown omegaconf pytorch-lightning einops tqdm soundfile librosa \
   opencv-python-headless pyrender PyOpenGL trimesh smplx p_tqdm h5py imageio imageio-ffmpeg psutil \
   torchmetrics accelerate wandb fire pytest==9.1.1
-# pytorch3d (transforms only -> CPU build is fine; no nvcc). Build isolation OFF so it sees torch.
+# MAESTRO only uses pytorch3d.transforms. Skip the unused C++/CUDA operators, which are extremely
+# slow to compile on network-backed fresh Pods. Build isolation stays off so setup.py sees torch.
 if ! "$PIP" show pytorch3d >/dev/null 2>&1; then
-  CUDA_VISIBLE_DEVICES="" FORCE_CUDA=0 MAX_JOBS="$(nproc)" \
+  CUDA_VISIBLE_DEVICES="" FORCE_CUDA=0 PYTORCH3D_NO_EXTENSION=1 \
     "$PIP" install -q --no-build-isolation \
       "git+https://github.com/facebookresearch/pytorch3d.git@stable" \
     || die "pytorch3d build"
@@ -191,6 +238,20 @@ for module in (
     "pytest",
 ):
     importlib.import_module(module)
+from pytorch3d.transforms import (
+    axis_angle_to_matrix,
+    axis_angle_to_quaternion,
+    matrix_to_axis_angle,
+    quaternion_apply,
+)
+import torch
+
+axis_angle = torch.zeros((1, 3))
+matrix = axis_angle_to_matrix(axis_angle)
+assert matrix.shape == (1, 3, 3)
+assert matrix_to_axis_angle(matrix).shape == (1, 3)
+quaternion = axis_angle_to_quaternion(axis_angle)
+assert quaternion_apply(quaternion, torch.ones((1, 3))).shape == (1, 3)
 print("  Python dependency imports: OK")
 PY
 
@@ -205,8 +266,13 @@ else
   "$PY" "$AL/scripts/download_gdrive.py" 13Yp__EPAw0EjrSS898X5FtSQGmveBykA pretrained_models.tar.gz || die "LODGE weights download"
   gunzip -c pretrained_models.tar.gz | tar --no-same-owner -xf - || die "LODGE weights extract"
 fi
-[ -f "$WORK/LODGE/data/smplx_neu_J_1.npy" ] || echo "  WARNING: missing LODGE/data/smplx_neu_J_1.npy (FK/render)"
 mkdir -p "$AL/server/data"
+if [ ! -f "$WORK/LODGE/data/smplx_neu_J_1.npy" ] \
+  && [ -f "$AL/server/data/smplx_neu_J_1.npy" ]; then
+  mkdir -p "$WORK/LODGE/data"
+  cp "$AL/server/data/smplx_neu_J_1.npy" "$WORK/LODGE/data/smplx_neu_J_1.npy"
+fi
+[ -f "$WORK/LODGE/data/smplx_neu_J_1.npy" ] || echo "  WARNING: missing LODGE/data/smplx_neu_J_1.npy (FK/render)"
 if [ ! -f "$AL/server/data/smplx_neu_J_1.npy" ]; then
   cp "$WORK/LODGE/data/smplx_neu_J_1.npy" "$AL/server/data/smplx_neu_J_1.npy" \
     || die "FK template install"
@@ -230,11 +296,15 @@ echo "$VENV/lib/$PYVER/site-packages" > "$WORK/EDGE/.venv/lib/$PYVER/site-packag
 if [ "${AGENTLODGE_SKIP_JUKEBOX:-0}" = "1" ]; then
   echo "  skipping Jukebox install (only NEW-song EDGE feature extraction needs it; cached slices don't)"
 else
-  "$WORK/EDGE/.venv/bin/python" -c "import jukemirlib" 2>/dev/null || {
+  if ! "$WORK/EDGE/.venv/bin/python" -c "import jukemirlib" 2>/dev/null; then
     "$WORK/EDGE/.venv/bin/pip" install -q --no-build-isolation --no-deps "git+https://github.com/rodrigo-castellon/jukebox.git"
     "$WORK/EDGE/.venv/bin/pip" install -q --no-deps "git+https://github.com/rodrigo-castellon/jukemirlib.git"
-    "$WORK/EDGE/.venv/bin/pip" install -q fire unidecode wget
-  }
+  fi
+  # Match the shared runtime instead of shadowing librosa/pytorch-lightning with 2020-era packages.
+  # The four-GPU validation compares every produced tensor before this environment is accepted.
+  "$WORK/EDGE/.venv/bin/pip" install -q \
+    "fire==0.7.1" "soundfile==0.14.0" "tqdm==4.70.0" \
+    "unidecode==1.4.0" wget
   "$WORK/EDGE/.venv/bin/python" -c "import jukemirlib" \
     || die "EDGE Jukebox import"
 fi

@@ -21,12 +21,16 @@ can detect a live daemon.
 
 import argparse
 import glob
+import hashlib
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
 import traceback
+import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import bpy  # type: ignore
@@ -35,7 +39,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import blender_render_ybot as ybot  # noqa: E402
 import blender_studio as studio  # noqa: E402
 
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 6
+RENDER_CONTRACT_VERSION = "render.frames-ffv1-v3"
+SELECTOR_VERSION = 2
 
 
 def _args():
@@ -48,10 +54,174 @@ def _args():
     p.add_argument("--samples", type=int, default=8)
     p.add_argument("--engine", default="eevee")
     p.add_argument("--denoise", type=int, default=1)
+    p.add_argument("--frame-format", default="png")
     p.add_argument("--color", default="0.5,0.5,0.52")
     p.add_argument("--idle-exit", type=int, default=3600,
                    help="Exit after this many seconds with no requests (0 = never).")
     return p.parse_args(argv)
+
+
+def _file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _atomic_json(path, payload):
+    target = Path(path)
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _gpu_inventory():
+    result = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,uuid,pci.bus_id",
+            "--format=csv,noheader,nounits",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"nvidia-smi GPU attestation failed: {result.stderr[-400:]}")
+    inventory = []
+    for line in result.stdout.splitlines():
+        fields = [value.strip() for value in line.split(",")]
+        if len(fields) != 3 or not fields[0].isdigit():
+            raise RuntimeError(f"invalid nvidia-smi GPU identity row: {line!r}")
+        inventory.append(
+            {
+                "cuda_index": int(fields[0]),
+                "uuid": fields[1],
+                "pci_bus_id": fields[2],
+            }
+        )
+    if not inventory:
+        raise RuntimeError("nvidia-smi reported no GPUs for daemon attestation")
+    return inventory
+
+
+def _selector_identity():
+    multi_gpu = os.environ.get("AGENTLODGE_RENDER_MULTI_GPU", "").strip().lower()
+    if multi_gpu not in {"1", "true", "yes", "on"}:
+        return None
+    attestation_path = os.environ.get("AGENTLODGE_EGL_ATTESTATION_PATH", "").strip()
+    selector_path = os.environ.get("AGENTLODGE_EGL_SELECTOR_SHIM", "").strip()
+    requested = os.environ.get("AGENTLODGE_GPU_INDEX", "").strip()
+    if not attestation_path or not selector_path or not requested.isdigit():
+        raise RuntimeError("multi-GPU daemon is missing selector attestation configuration")
+    try:
+        selector_attestation = json.loads(
+            Path(attestation_path).read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("EGL selector did not publish a valid attestation") from exc
+    requested_index = int(requested)
+    expected_build_id = "sha256:" + _file_sha256(
+        Path(__file__).with_name("egl_cuda_device_selector.c")
+    )
+    expected = {
+        "schema_version": 1,
+        "selector_version": SELECTOR_VERSION,
+        "pid": os.getpid(),
+        "requested_cuda_index": requested_index,
+        "selected_cuda_index": requested_index,
+    }
+    for key, value in expected.items():
+        if selector_attestation.get(key) != value:
+            raise RuntimeError(
+                f"EGL selector attestation mismatch for {key}: "
+                f"{selector_attestation.get(key)!r} != {value!r}"
+            )
+    if selector_attestation.get("selector_build_id") != expected_build_id:
+        raise RuntimeError("EGL selector build identity does not match repository source")
+    selector = Path(selector_path).resolve()
+    if not selector.is_file():
+        raise RuntimeError(f"EGL selector binary is missing: {selector}")
+    return {
+        "version": SELECTOR_VERSION,
+        "build_id": expected_build_id,
+        "binary_sha256": _file_sha256(selector),
+        "egl_device_index": int(selector_attestation["egl_device_index"]),
+        "requested_cuda_index": requested_index,
+        "selected_cuda_index": requested_index,
+    }
+
+
+def _daemon_attestation(cfg, requests_dir):
+    selector = _selector_identity()
+    inventory = _gpu_inventory()
+    if selector is None:
+        if len(inventory) != 1:
+            raise RuntimeError(
+                "render daemon sees multiple GPUs without the EGL selector shim"
+            )
+        selected_index = inventory[0]["cuda_index"]
+        selection_mode = "single-visible-gpu"
+    else:
+        selected_index = selector["selected_cuda_index"]
+        selection_mode = "egl-cuda-device-nv"
+    matches = [
+        item for item in inventory if item["cuda_index"] == selected_index
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"selected CUDA index {selected_index} does not identify one physical GPU"
+        )
+    scripts_dir = Path(__file__).resolve().parent
+    scene_path = Path(str(bpy.data.filepath or "")).resolve()
+    if not scene_path.is_file():
+        raise RuntimeError("Blender daemon scene file is unavailable for attestation")
+    ybot_path = Path(cfg.ybot).resolve()
+    payload = {
+        "schema_version": 1,
+        "render_contract_version": RENDER_CONTRACT_VERSION,
+        "daemon_protocol_version": PROTOCOL_VERSION,
+        "pid": os.getpid(),
+        "scene": {
+            "blend_sha256": _file_sha256(scene_path),
+            "ybot_sha256": _file_sha256(ybot_path),
+        },
+        "renderer": {
+            "blender_version": str(bpy.app.version_string),
+            "blender_daemon_sha256": _file_sha256(Path(__file__).resolve()),
+            "blender_render_ybot_sha256": _file_sha256(
+                scripts_dir / "blender_render_ybot.py"
+            ),
+            "blender_studio_sha256": _file_sha256(
+                scripts_dir / "blender_studio.py"
+            ),
+            "render_root_motion_sha256": _file_sha256(
+                scripts_dir / "render_root_motion.py"
+            ),
+        },
+        "quality": {
+            "width": int(cfg.width),
+            "height": int(cfg.height),
+            "samples": int(cfg.samples),
+            "engine": str(cfg.engine).lower(),
+            "denoise": int(cfg.denoise),
+            "frame_format": str(cfg.frame_format).lower().lstrip("."),
+        },
+        "gpu": {
+            **matches[0],
+            "selection_mode": selection_mode,
+        },
+        "selector": selector,
+    }
+    _atomic_json(Path(requests_dir) / "daemon.attestation.json", payload)
+    return payload
 
 
 def _ensure_scene(cfg, color):
@@ -103,12 +273,14 @@ def _render_request(req, cfg):
         frame_format=req.get("frame_format", "png"),
         build_scene="", force_align=False, fk_npz=req.get("fk_npz", ""),
         fast=bool(req.get("fast", True)),
+        foot_grounding=bool(req.get("foot_grounding", False)),
         lock_root=bool(req.get("lock_root", False)),
         fixed_camera=bool(req.get("fixed_camera", False)),
         rig_metrics=req.get("rig_metrics", ""),
         projection_only=bool(req.get("projection_only", False)),
         batch_render=bool(req.get("batch_render", False)),
         video_path=req.get("video_path", ""),
+        export_glb=req.get("export_glb", ""),
     )
     os.makedirs(args.frames_dir, exist_ok=True)
     ybot.render_take(args, color)
@@ -121,9 +293,15 @@ def main():
     color = tuple(float(c) for c in cfg.color.split(","))[:3]
     _ensure_scene(cfg, color)
     _warm_renderer(cfg, rdir)
+    attestation = _daemon_attestation(cfg, rdir)
     with open(os.path.join(rdir, "daemon.ready"), "w") as ready:
         ready.write(str(PROTOCOL_VERSION))
-    print("BLENDER_DAEMON_READY", flush=True)
+    print(
+        "BLENDER_DAEMON_READY "
+        f"cuda={attestation['gpu']['cuda_index']} "
+        f"uuid={attestation['gpu']['uuid']}",
+        flush=True,
+    )
 
     # Heartbeat on a background thread so it keeps ticking even while a long render holds the main
     # thread; a client uses the heartbeat freshness to tell a live (busy) daemon from a dead one.

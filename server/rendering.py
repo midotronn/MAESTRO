@@ -10,6 +10,7 @@ UI, mirroring :mod:`server.processing`.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -19,10 +20,19 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Mapping
 
 import numpy as np
 
-from server.distributed.runtime import capability_enabled
+from server.distributed.render_contract import (
+    RENDER_CONTRACT_VERSION,
+    RGB_DIGEST_VERSION,
+    WORKER_SHARD_VALIDATION_VERSION,
+    canonical_render_identity,
+    inspect_ffv1_shard,
+    render_identity_digest,
+)
+from server.distributed.runtime import capability_enabled, distributed_transport
 from server.processing import REPO, _scp_from, _scp_to, _ssh, pod_config
 
 logger = logging.getLogger(__name__)
@@ -88,7 +98,7 @@ def prewarm_pod() -> None:
             # future renders) skip the ~8s Blender startup entirely.
             try:
                 from server import warm_render
-                warm_render.ensure_pool()
+                warm_render.ensure_configured_pool()
             except Exception:  # noqa: BLE001 - warm pool is best-effort
                 pass
         except Exception:  # noqa: BLE001 - warming is best-effort
@@ -104,7 +114,8 @@ def _upload_scripts(cfg) -> None:
     _ssh(cfg, f"mkdir -p {cfg.ws}/AgentLODGE/scripts")
     scripts = [REPO / "scripts" / s for s in
                ("render_one_ybot.sh", "render_poses_ybot.sh", "render_blender_dance.py",
-                "blender_render_ybot.py", "blender_studio.py")]
+                "blender_render_ybot.py", "blender_studio.py",
+                "render_root_motion.py")]
     scripts = [p for p in scripts if p.exists()]
     r = _scp_many(cfg, scripts, f"{cfg.ws}/AgentLODGE/scripts")
     if r is not None and r.returncode == 0:
@@ -150,6 +161,341 @@ def _render_ranges(frame_count: int, worker_count: int) -> list[tuple[int, int]]
     return ranges
 
 
+def _validate_render_ranges(
+    ranges: list[tuple[int, int]],
+    frame_count: int,
+) -> None:
+    cursor = 0
+    for start, end in ranges:
+        if start != cursor or end <= start:
+            raise RuntimeError(
+                f"distributed render ranges are not contiguous: {ranges}"
+            )
+        cursor = end
+    if cursor != frame_count:
+        raise RuntimeError(
+            f"distributed render ranges cover {cursor}/{frame_count} frames"
+        )
+
+
+def _file_sha256(path: Path) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _validate_render_output(
+    output: dict,
+    *,
+    start: int,
+    end: int,
+    width: int,
+    height: int,
+    samples: int,
+    engine: str,
+    denoise: int,
+    frame_format: str,
+    fps: int,
+    render_provenance: Mapping[str, object],
+) -> tuple[str, str, str]:
+    expected = {
+        "frame_start": start,
+        "frame_end": end,
+        "frames": end - start,
+        "width": width,
+        "height": height,
+        "samples": samples,
+        "engine": str(engine).lower(),
+        "denoise": denoise,
+        "frame_format": str(frame_format).lower().lstrip("."),
+        "fps": fps,
+        "transport": "ffv1",
+        "render_contract_version": RENDER_CONTRACT_VERSION,
+    }
+    actual = {
+        key: (
+            str(output.get(key)).lower().lstrip(".")
+            if key in {"engine", "frame_format"}
+            else output.get(key)
+        )
+        for key in expected
+    }
+    for key in {
+        "frame_start",
+        "frame_end",
+        "frames",
+        "width",
+        "height",
+        "samples",
+        "denoise",
+        "fps",
+    }:
+        try:
+            actual[key] = int(actual[key])
+        except (TypeError, ValueError):
+            pass
+    if actual != expected:
+        raise RuntimeError(
+            f"distributed render returned invalid range/quality metadata: {output}"
+        )
+    returned_provenance = output.get("render_provenance")
+    attestation = output.get("daemon_attestation")
+    if (
+        not isinstance(returned_provenance, Mapping)
+        or dict(returned_provenance) != dict(render_provenance)
+        or not isinstance(attestation, Mapping)
+    ):
+        raise RuntimeError("distributed render provenance is missing or mismatched")
+    expected_identity = render_identity_digest(
+        render_provenance,
+        {
+            "width": width,
+            "height": height,
+            "samples": samples,
+            "engine": engine,
+            "denoise": denoise,
+            "frame_format": frame_format,
+            "fps": fps,
+        },
+    )
+    if output.get("render_identity_digest") != expected_identity:
+        raise RuntimeError("distributed render identity digest is missing or mismatched")
+    attested_provenance = {
+        key: attestation.get(key)
+        for key in (
+            "render_contract_version",
+            "daemon_protocol_version",
+            "scene",
+            "renderer",
+        )
+    }
+    selector = attestation.get("selector")
+    attested_provenance["selector"] = (
+        None
+        if selector is None
+        else {
+            key: selector.get(key)
+            for key in ("version", "build_id", "binary_sha256")
+        }
+    )
+    gpu = attestation.get("gpu")
+    if (
+        attested_provenance != dict(render_provenance)
+        or attestation.get("quality")
+        != {
+            "width": width,
+            "height": height,
+            "samples": samples,
+            "engine": str(engine).lower(),
+            "denoise": denoise,
+            "frame_format": str(frame_format).lower().lstrip("."),
+        }
+        or not isinstance(gpu, Mapping)
+        or not str(gpu.get("uuid") or "").startswith("GPU-")
+        or not str(gpu.get("pci_bus_id") or "")
+        or not isinstance(gpu.get("cuda_index"), int)
+    ):
+        raise RuntimeError("distributed render daemon attestation is invalid")
+    if selector is None:
+        if gpu.get("selection_mode") != "single-visible-gpu":
+            raise RuntimeError("distributed render GPU selection is not attested")
+    elif (
+        not isinstance(selector, Mapping)
+        or gpu.get("selection_mode") != "egl-cuda-device-nv"
+        or selector.get("selected_cuda_index") != gpu.get("cuda_index")
+        or selector.get("requested_cuda_index") != gpu.get("cuda_index")
+        or not isinstance(selector.get("egl_device_index"), int)
+    ):
+        raise RuntimeError("distributed render EGL selection is not attested")
+    source_hash = str(output.get("source_frames_sha256") or "").lower()
+    shard_hash = str(output.get("shard_sha256") or "").lower()
+    source_rgb_hash = str(
+        output.get("source_decoded_rgb_sha256") or ""
+    ).lower()
+    shard_rgb_hash = str(
+        output.get("shard_decoded_rgb_sha256") or ""
+    ).lower()
+    if (
+        re.fullmatch(r"[a-f0-9]{64}", source_hash) is None
+        or re.fullmatch(r"[a-f0-9]{64}", shard_hash) is None
+        or re.fullmatch(r"[a-f0-9]{64}", source_rgb_hash) is None
+        or re.fullmatch(r"[a-f0-9]{64}", shard_rgb_hash) is None
+        or source_rgb_hash != shard_rgb_hash
+    ):
+        raise RuntimeError(
+            f"distributed render shard hashes are invalid: {output}"
+        )
+    shard_validation = output.get("shard_validation")
+    if not isinstance(shard_validation, Mapping):
+        raise RuntimeError("distributed render is missing shard validation metadata")
+    reported_validation = {
+        "codec": str(shard_validation.get("codec") or "").lower(),
+        "width": shard_validation.get("width"),
+        "height": shard_validation.get("height"),
+        "fps": shard_validation.get("fps"),
+        "frames": shard_validation.get("frames"),
+        "decoded_rgb_digest_version": shard_validation.get(
+            "decoded_rgb_digest_version"
+        ),
+        "decoded_rgb_sha256": str(
+            shard_validation.get("decoded_rgb_sha256") or ""
+        ).lower(),
+    }
+    for key in {"width", "height", "fps", "frames"}:
+        try:
+            reported_validation[key] = int(reported_validation[key])
+        except (TypeError, ValueError):
+            pass
+    expected_validation = {
+        "codec": "ffv1",
+        "width": width,
+        "height": height,
+        "fps": fps,
+        "frames": end - start,
+        "decoded_rgb_digest_version": RGB_DIGEST_VERSION,
+        "decoded_rgb_sha256": shard_rgb_hash,
+    }
+    if (
+        output.get("decoded_rgb_digest_version") != RGB_DIGEST_VERSION
+        or reported_validation != expected_validation
+        or shard_validation.get("worker_validation_version")
+        != WORKER_SHARD_VALIDATION_VERSION
+        or shard_validation.get("worker_shard_full_decode") is not False
+    ):
+        raise RuntimeError(
+            "distributed render returned invalid decoded shard metadata"
+        )
+    return source_hash, shard_hash, shard_rgb_hash
+
+
+def _worker_metadata(worker) -> dict:
+    metadata = dict(getattr(worker, "metadata", {}) or {})
+    heartbeat = getattr(worker, "heartbeat", None)
+    if callable(heartbeat):
+        try:
+            metadata.update(dict(heartbeat().get("metadata") or {}))
+        except Exception:  # noqa: BLE001 - worker health was already checked
+            pass
+    return metadata
+
+
+def _worker_render_provenance(worker, metadata: Mapping[str, object] | None = None) -> dict:
+    metadata = dict(metadata or _worker_metadata(worker))
+    provenance = metadata.get("render_provenance")
+    if (
+        not isinstance(provenance, Mapping)
+        or provenance.get("render_contract_version")
+        != RENDER_CONTRACT_VERSION
+    ):
+        raise RuntimeError(
+            f"render worker {getattr(worker, 'worker_id', '?')} "
+            "is missing compatible render provenance"
+        )
+    return dict(provenance)
+
+
+def _render_quality_contract(
+    *,
+    width: int,
+    height: int,
+    samples: int,
+    engine: str,
+    denoise: int,
+    frame_format: str,
+    fps: int = 30,
+) -> dict[str, object]:
+    return {
+        "width": int(width),
+        "height": int(height),
+        "samples": int(samples),
+        "engine": str(engine).lower(),
+        "denoise": int(denoise),
+        "frame_format": str(frame_format).lower().lstrip("."),
+        "fps": int(fps),
+    }
+
+
+def _select_render_worker_cohort(
+    workers,
+    *,
+    requested_workers: int,
+    quality: Mapping[str, object],
+) -> tuple[list, tuple[str, ...], dict, str]:
+    groups: dict[str, list[tuple[object, dict, str]]] = {}
+    for worker in workers:
+        metadata = _worker_metadata(worker)
+        provenance = _worker_render_provenance(worker, metadata)
+        advertised_quality = metadata.get("quality")
+        if isinstance(advertised_quality, Mapping):
+            expected_worker_quality = {
+                key: quality[key]
+                for key in (
+                    "width",
+                    "height",
+                    "samples",
+                    "engine",
+                    "denoise",
+                    "frame_format",
+                )
+            }
+            normalized_advertised = {
+                key: (
+                    str(advertised_quality.get(key)).lower().lstrip(".")
+                    if key in {"engine", "frame_format"}
+                    else int(advertised_quality.get(key))
+                )
+                for key in expected_worker_quality
+            }
+            if normalized_advertised != expected_worker_quality:
+                raise RuntimeError(
+                    f"render worker {getattr(worker, 'worker_id', '?')} "
+                    "advertises incompatible quality"
+                )
+        identity = canonical_render_identity(provenance, quality)
+        canonical = json.dumps(
+            identity,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        advertised_digest = metadata.get("render_identity_digest")
+        if advertised_digest not in {None, "", digest}:
+            raise RuntimeError(
+                f"render worker {getattr(worker, 'worker_id', '?')} "
+                "advertises a mismatched render identity"
+            )
+        groups.setdefault(canonical, []).append((worker, provenance, digest))
+    if not groups:
+        raise RuntimeError("no compatible render worker cohort is available")
+    canonical, records = min(
+        groups.items(),
+        key=lambda item: (
+            -len(item[1]),
+            hashlib.sha256(item[0].encode("utf-8")).hexdigest(),
+        ),
+    )
+    del canonical
+    records.sort(key=lambda item: str(getattr(item[0], "worker_id", "")))
+    limit = max(1, int(requested_workers))
+    required = min(limit, len(workers))
+    if len(records) < required:
+        raise RuntimeError(
+            "render workers have mixed provenance/quality and no homogeneous "
+            f"cohort can satisfy {required} requested assignments"
+        )
+    selected = [record[0] for record in records[:limit]]
+    eligible_worker_ids = tuple(
+        str(getattr(record[0], "worker_id")) for record in records
+    )
+    return selected, eligible_worker_ids, records[0][1], records[0][2]
+
+
 def _count_frame_files(frames_dir: Path, frame_format: str) -> int:
     """Count completed render frames while a warm Blender request is running."""
     suffix = "." + frame_format.lower().lstrip(".")
@@ -169,7 +515,17 @@ def _count_frame_files(frames_dir: Path, frame_format: str) -> int:
 def start_render(sid: str, motion: np.ndarray, media_dir: Path, *, scope: str = "window",
                  a: int | None = None, b: int | None = None,
                  audio_wav: str | None = None) -> None:
-    _set(sid, status="queued", message="queued", progress=3, scope=scope, started=time.time())
+    with _RLOCK:
+        current = _RJOBS.get(sid, {})
+        if current.get("status") in {"queued", "rendering"}:
+            return
+        _RJOBS.setdefault(sid, {}).update(
+            status="queued",
+            message="queued",
+            progress=3,
+            scope=scope,
+            started=time.time(),
+        )
     threading.Thread(target=_render, args=(sid, np.asarray(motion), media_dir, scope, a, b),
                      kwargs={"audio_wav": audio_wav},
                      daemon=True).start()
@@ -178,6 +534,16 @@ def start_render(sid: str, motion: np.ndarray, media_dir: Path, *, scope: str = 
 def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
                        *, audio_wav: str | None = None) -> bool:
     """Render full-quality frames through the resident Blender process when hosted on the pod."""
+    from server import filament_render
+
+    if filament_render.enabled(scope):
+        return filament_render.render_full_motion(
+            sid,
+            motion,
+            media_dir,
+            audio_wav=audio_wav,
+            update=lambda **fields: _set(sid, **fields),
+        )
     from server import fk
     from server import warm_render as wr
     distributed = _distributed_enabled() and scope == "full"
@@ -194,6 +560,70 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
     media_dir.mkdir(parents=True, exist_ok=True)
     cache_dir = media_dir / ".render_cache"
     cache_dir.mkdir(exist_ok=True)
+    requested_workers = (
+        max(1, int(os.environ.get("AGENTLODGE_FULL_RENDER_WORKERS", "6")))
+        if scope == "full"
+        else 1
+    )
+    render_quality = _render_quality_contract(
+        width=width,
+        height=height,
+        samples=samples,
+        engine=engine,
+        denoise=denoise,
+        frame_format=frame_format,
+        fps=30,
+    )
+    coordinator = None
+    transport = "filesystem"
+    render_workers = []
+    daemon_ids = []
+    eligible_worker_ids: tuple[str, ...] = ()
+    selected_render_provenance: dict
+    if distributed:
+        transport = distributed_transport("render.frames")
+        heartbeat_max_age = float(
+            os.environ.get("AGENTLODGE_WORKER_HEARTBEAT_MAX_AGE", "30")
+        )
+        if transport == "http":
+            from server.distributed import HttpTaskCoordinator
+
+            coordinator = HttpTaskCoordinator.from_env()
+            candidates = coordinator.require_workers(
+                "render.frames",
+                max_age_seconds=heartbeat_max_age,
+            )
+        else:
+            from server.distributed import FileTaskCoordinator, WorkerRegistry
+
+            registry = WorkerRegistry.from_env()
+            candidates = registry.require(
+                "render.frames",
+                max_age_seconds=heartbeat_max_age,
+            )
+            coordinator = FileTaskCoordinator(
+                registry,
+                heartbeat_max_age=heartbeat_max_age,
+            )
+        (
+            render_workers,
+            eligible_worker_ids,
+            selected_render_provenance,
+            render_identity,
+        ) = _select_render_worker_cohort(
+            candidates,
+            requested_workers=requested_workers,
+            quality=render_quality,
+        )
+        worker_count = min(len(render_workers), int(motion.shape[0]))
+        render_workers = render_workers[:worker_count]
+        worker_ids = [worker.worker_id for worker in render_workers]
+    else:
+        selected_render_provenance = wr.render_provenance()
+        render_identity = render_identity_digest(
+            selected_render_provenance,
+            render_quality,
+        )
     audio_context = ""
     if scope == "full" and audio_wav:
         try:
@@ -209,7 +639,11 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
         stride=1,
         engine=engine,
         denoise=denoise,
-        context=f"single:{scope}:frames:{frame_format}{audio_context}",
+        context=(
+            f"single:{scope}:frames:{frame_format}:"
+            f"{RENDER_CONTRACT_VERSION}:identity:{render_identity}"
+            f"{audio_context}"
+        ),
     )
     cached_video = cache_dir / f"{cache_key}.mp4"
     output_video = media_dir / "edited.mp4"
@@ -227,38 +661,14 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
         )
         return True
 
-    requested_workers = (
-        max(1, int(os.environ.get("AGENTLODGE_FULL_RENDER_WORKERS", "6")))
-        if scope == "full"
-        else 1
-    )
-    coordinator = None
-    render_workers = []
-    daemon_ids = []
-    if distributed:
-        from server.distributed import FileTaskCoordinator, WorkerRegistry
-
-        registry = WorkerRegistry.from_env()
-        render_workers = registry.require(
-            "render.frames",
-            max_age_seconds=float(
-                os.environ.get("AGENTLODGE_WORKER_HEARTBEAT_MAX_AGE", "30")
-            ),
-        )[:requested_workers]
-        coordinator = FileTaskCoordinator(
-            registry,
-            heartbeat_max_age=float(
-                os.environ.get("AGENTLODGE_WORKER_HEARTBEAT_MAX_AGE", "30")
-            ),
-        )
-        worker_count = min(len(render_workers), int(motion.shape[0]))
-        render_workers = render_workers[:worker_count]
-        worker_ids = [worker.worker_id for worker in render_workers]
-    else:
+    if not distributed:
         wr.ensure_pool(
             width=width,
             height=height,
             samples=samples,
+            engine=engine,
+            denoise=denoise,
+            frame_format=frame_format,
             wait_ready=60,
         )
         daemon_ids = wr.ready_daemons()[:requested_workers]
@@ -269,7 +679,7 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
         return False
 
     duration = motion.shape[0] / 30.0
-    if distributed:
+    if distributed and transport == "filesystem":
         shared_temp = (
             os.environ.get("AGENTLODGE_DISTRIBUTED_TMP", "").strip()
             or os.environ.get("AGENTLODGE_SHARED_ROOT", "").strip()
@@ -280,12 +690,21 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
                 "or AGENTLODGE_DISTRIBUTED_TMP"
             )
         temp_parent = Path(shared_temp)
+    elif distributed:
+        assert coordinator is not None
+        temp_parent = coordinator.scratch_root
     else:
         temp_parent = Path(
             os.environ.get("AGENTLODGE_RENDER_TMP", tempfile.gettempdir())
         )
     temp_parent.mkdir(parents=True, exist_ok=True)
-    render_root = Path(tempfile.mkdtemp(prefix=f"maestro-{sid}-", dir=temp_parent))
+    if distributed and transport == "http":
+        assert coordinator is not None
+        render_root = coordinator.create_scratch_dir(prefix=f"maestro-{sid}")
+    else:
+        render_root = Path(
+            tempfile.mkdtemp(prefix=f"maestro-{sid}-", dir=temp_parent)
+        )
     poses_path = render_root / "poses.npz"
     frames_dir = render_root / "frames"
     frames_dir.mkdir()
@@ -295,6 +714,7 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
     try:
         fk.save_poses_npz(motion, poses_path)
         ranges = _render_ranges(int(motion.shape[0]), worker_count)
+        _validate_render_ranges(ranges, int(motion.shape[0]))
         _set(
             sid,
             status="rendering",
@@ -313,6 +733,8 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
         result_lock = threading.Lock()
         distributed_progress = []
         distributed_results = []
+        expected_artifacts = {}
+        expected_provenances = {}
 
         def _record_progress() -> None:
             if distributed:
@@ -321,7 +743,7 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
                     sum(
                         end - start
                         for handle, start, end in distributed_progress
-                        if handle.result_path.is_file()
+                        if coordinator.is_complete(handle)
                     ),
                 )
             else:
@@ -375,33 +797,93 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
         if distributed:
             handles = []
             assert coordinator is not None
+            poses_artifact = None
+            if transport == "http":
+                poses_sha256, poses_size = _file_sha256(poses_path)
+                poses_artifact = coordinator.upload_input(
+                    poses_path,
+                    artifact_key=(
+                        f"render-source:{poses_sha256}:{poses_size}"
+                    ),
+                )
             for worker, (start, end) in zip(render_workers, ranges):
+                render_provenance = selected_render_provenance
                 shard_duration = (end - start) / 30.0
+                shard_path = (
+                    shards_dir / f"shard_{start:06d}_{end:06d}.mkv"
+                ).resolve()
+                payload = {
+                    "frame_start": start,
+                    "frame_end": end,
+                    "width": width,
+                    "height": height,
+                    "samples": samples,
+                    "engine": engine,
+                    "denoise": denoise,
+                    "frame_format": frame_format,
+                    "fps": 30,
+                    "timeout": max(900.0, shard_duration * 45),
+                    "render_contract_version": RENDER_CONTRACT_VERSION,
+                    "render_provenance": render_provenance,
+                    "render_identity_digest": render_identity,
+                }
+                task_id = None
+                if transport == "http":
+                    from server.distributed import (
+                        ARTIFACT_TRANSPORT,
+                        PROTOCOL_VERSION,
+                        deterministic_task_id,
+                    )
+
+                    assert poses_artifact is not None
+                    logical_payload = {
+                        **payload,
+                        "task_protocol_version": PROTOCOL_VERSION,
+                        "artifact_transport": ARTIFACT_TRANSPORT,
+                        "poses_sha256": poses_artifact.sha256,
+                        "poses_size": poses_artifact.size,
+                    }
+                    task_id = deterministic_task_id(
+                        "render.frames",
+                        logical_payload,
+                    )
+                    output_artifact = coordinator.reserve_output(
+                        artifact_key=f"render-shard:{task_id}",
+                        task_id=task_id,
+                    )
+                    payload.update(
+                        {
+                            "task_protocol_version": PROTOCOL_VERSION,
+                            "artifact_transport": ARTIFACT_TRANSPORT,
+                            "poses_artifact": poses_artifact.to_dict(),
+                            "shard_artifact": output_artifact.to_dict(),
+                        }
+                    )
+                    expected_artifacts[task_id] = output_artifact
+                else:
+                    payload.update(
+                        {
+                            "poses": str(poses_path.resolve()),
+                            "shard_output": str(shard_path),
+                        }
+                    )
+                submit_options = {
+                    "worker": worker,
+                    "task_id": task_id,
+                    "eligible_worker_ids": eligible_worker_ids,
+                }
+                if transport == "http":
+                    submit_options["retry_failed"] = True
                 handles.append(
                     coordinator.submit(
                         "render.frames",
-                        {
-                            "poses": str(poses_path.resolve()),
-                            "shard_output": str(
-                                (
-                                    shards_dir
-                                    / f"shard_{start:06d}_{end:06d}.mkv"
-                                ).resolve()
-                            ),
-                            "frame_start": start,
-                            "frame_end": end,
-                            "width": width,
-                            "height": height,
-                            "samples": samples,
-                            "engine": engine,
-                            "denoise": denoise,
-                            "frame_format": frame_format,
-                            "fps": 30,
-                            "timeout": max(900.0, shard_duration * 45),
-                        },
-                        worker=worker,
+                        payload,
+                        **submit_options,
                     )
                 )
+                expected_provenances[
+                    handles[-1].request.task_id
+                ] = render_provenance
                 distributed_progress.append((handles[-1], start, end))
             try:
                 distributed_results = coordinator.wait_many(
@@ -467,37 +949,100 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
             return False
         shard_paths = []
         source_frame_hashes = []
+        decoded_rgb_hashes = []
         shard_hashes = []
         if distributed:
+            if len(distributed_results) != len(ranges):
+                raise RuntimeError(
+                    "distributed render returned the wrong number of shards"
+                )
             for result, (start, end) in zip(distributed_results, ranges):
                 output = result.output
-                if (
-                    int(output.get("frame_start", -1)) != start
-                    or int(output.get("frame_end", -1)) != end
-                    or int(output.get("frames", -1)) != end - start
-                    or output.get("transport") != "ffv1"
-                ):
+                render_provenance = expected_provenances.get(result.task_id)
+                if render_provenance is None:
                     raise RuntimeError(
-                        f"distributed render returned invalid range metadata: {output}"
+                        "distributed render returned an unknown task provenance"
                     )
-                shard_path = Path(str(output.get("shard_output") or ""))
+                source_hash, shard_hash, decoded_rgb_hash = _validate_render_output(
+                    output,
+                    start=start,
+                    end=end,
+                    width=width,
+                    height=height,
+                    samples=samples,
+                    engine=engine,
+                    denoise=denoise,
+                    frame_format=frame_format,
+                    fps=30,
+                    render_provenance=render_provenance,
+                )
+                shard_path = (
+                    shards_dir / f"shard_{start:06d}_{end:06d}.mkv"
+                ).resolve()
+                if transport == "http":
+                    from server.distributed import (
+                        ARTIFACT_TRANSPORT,
+                        ArtifactRef,
+                    )
+
+                    artifact = ArtifactRef.from_dict(
+                        output.get("shard_artifact") or {},
+                        require_complete=True,
+                    )
+                    expected_artifact = expected_artifacts.get(
+                        result.task_id
+                    )
+                    if (
+                        expected_artifact is None
+                        or artifact.artifact_id
+                        != expected_artifact.artifact_id
+                        or artifact.sha256 != shard_hash
+                        or output.get("artifact_transport")
+                        != ARTIFACT_TRANSPORT
+                    ):
+                        raise RuntimeError(
+                            "distributed render returned a mismatched shard artifact"
+                        )
+                    coordinator.download_output(artifact, shard_path)
+                else:
+                    reported_path = Path(
+                        str(output.get("shard_output") or "")
+                    ).resolve()
+                    if reported_path != shard_path:
+                        raise RuntimeError(
+                            "distributed render returned an unexpected shard path"
+                        )
                 if not shard_path.is_file() or shard_path.stat().st_size == 0:
                     raise RuntimeError(
                         f"distributed render shard is missing: {shard_path}"
                     )
-                source_hash = str(output.get("source_frames_sha256") or "")
-                shard_hash = str(output.get("shard_sha256") or "")
-                if len(source_hash) != 64 or len(shard_hash) != 64:
+                actual_hash, _actual_size = _file_sha256(shard_path)
+                if actual_hash != shard_hash:
                     raise RuntimeError(
-                        f"distributed render shard hashes are invalid: {output}"
+                        f"distributed render shard hash mismatch: {shard_path}"
+                    )
+                actual_validation = inspect_ffv1_shard(
+                    shard_path,
+                    frame_start=start,
+                    frame_end=end,
+                    width=width,
+                    height=height,
+                    fps=30,
+                )
+                if actual_validation["decoded_rgb_sha256"] != decoded_rgb_hash:
+                    raise RuntimeError(
+                        "distributed render shard decoded RGB hash mismatch: "
+                        f"{shard_path}"
                     )
                 shard_paths.append(shard_path)
                 source_frame_hashes.append(source_hash)
+                decoded_rgb_hashes.append(decoded_rgb_hash)
                 shard_hashes.append(shard_hash)
             _set(
                 sid,
                 render_shards=[str(path) for path in shard_paths],
                 render_source_frame_hashes=source_frame_hashes,
+                render_decoded_rgb_sha256=decoded_rgb_hashes,
                 render_shard_sha256=shard_hashes,
             )
         else:
@@ -535,11 +1080,10 @@ def _render_warm_local(sid: str, motion: np.ndarray, media_dir: Path, scope: str
 
 def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
             a: int | None, b: int | None, *, audio_wav: str | None = None) -> None:
+    from server import filament_render
+
     cfg = pod_config()
-    if not cfg.host:
-        _set(sid, status="error", progress=0,
-             message="No GPU pod configured (set AGENTLODGE_POD_HOST). Rendering needs the pod's Blender.")
-        return
+    filament_required = filament_render.enabled(scope)
     # window render is fast + silent; full render carries the song audio.
     with_audio = scope == "full"
     if scope == "window" and a is not None and b is not None:
@@ -565,6 +1109,14 @@ def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
                 elapsed=round(time.time() - _RJOBS[sid].get("started", time.time())),
             )
             return
+        if filament_required:
+            _set(
+                sid,
+                status="error",
+                progress=0,
+                message="Filament render did not produce a validated final video",
+            )
+            return
         if _distributed_enabled() and scope == "full":
             _set(
                 sid,
@@ -574,6 +1126,15 @@ def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
             )
             return
     except Exception as exc:  # noqa: BLE001 - retain the proven cold-render fallback
+        if filament_required:
+            logger.exception("Filament full render failed")
+            _set(
+                sid,
+                status="error",
+                progress=0,
+                message=f"Filament render failed: {exc}",
+            )
+            return
         if _distributed_enabled() and scope == "full":
             _set(
                 sid,
@@ -583,6 +1144,17 @@ def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
             )
             return
         logger.warning("accelerated local render failed (%s); using the cold path", exc)
+    if not cfg.host:
+        _set(
+            sid,
+            status="error",
+            progress=0,
+            message=(
+                "No GPU pod configured (set AGENTLODGE_POD_HOST). "
+                "Rendering needs local Blender, HTTP render workers, or an SSH pod."
+            ),
+        )
+        return
     try:
         _set(sid, status="rendering", progress=8, message="checking the GPU pod\u2026")
         # the pod's SSH occasionally has a slow banner exchange; retry the reachability probe

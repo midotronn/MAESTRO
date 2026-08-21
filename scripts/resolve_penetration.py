@@ -12,13 +12,15 @@ Usage:
                                   [--max-deg 30] [--report-only]
 Env: WORKSPACE (default /workspace), LODGE at $WORKSPACE/LODGE.
 """
+from __future__ import annotations
+
 import argparse
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
-import torch
 
 WORKSPACE = os.environ.get("WORKSPACE", "/workspace")
 sys.path.insert(0, f"{WORKSPACE}/AgentLODGE")
@@ -34,14 +36,17 @@ ARMS = [("L", L_SH, L_WR, 18), ("R", R_SH, R_WR, 19)]  # name, shoulder, wrist, 
 _HAND = 0.11  # hand mesh reaches ~this far past the wrist joint (toward the fingertips)
 
 
-def _fk_module():
-    with use_code_paths(*lodge_import_paths(Path(LODGE))):
-        from dld.data.render_joints.smplfk import SMPLX_Skeleton, ax_from_6v, ax_to_6v
-    return SMPLX_Skeleton, ax_from_6v, ax_to_6v
+def _fk_module(lodge_root: Path | str = LODGE):
+    with use_code_paths(*lodge_import_paths(Path(lodge_root))):
+        from dld.data.render_joints import smplfk
+
+    return smplfk
 
 
 def _joints(fk, ax, trans):
     """ax (N,22,3) axis-angle, trans (N,3) -> joints (N,22,3)."""
+    import torch
+
     poses = torch.from_numpy(ax.reshape(-1, 66)).float()
     tr = torch.from_numpy(trans).float()
     with torch.no_grad():
@@ -58,7 +63,205 @@ def _dist_to_axis(w, a, b):
     return d, c
 
 
-def main():
+class PenetrationResolver:
+    """Resolve motions while keeping the LODGE FK runtime resident."""
+
+    def __init__(
+        self,
+        *,
+        workspace: Path | str = WORKSPACE,
+        fk_module: Any | None = None,
+    ):
+        self.workspace = Path(workspace)
+        self.lodge_root = self.workspace / "LODGE"
+        self.jpath = self.lodge_root / "data/smplx_neu_J_1.npy"
+        self._fk_module = fk_module
+        self._fk = None
+
+    def _runtime(self):
+        if self._fk_module is None:
+            self._fk_module = _fk_module(self.lodge_root)
+        if self._fk is None:
+            self._fk = self._fk_module.SMPLX_Skeleton(
+                device="cpu",
+                batch=1,
+                Jpath=str(self.jpath),
+            )
+        return self._fk_module, self._fk
+
+    def preload(self) -> "PenetrationResolver":
+        self._runtime()
+        return self
+
+    def resolve(
+        self,
+        motion: np.ndarray,
+        *,
+        radius: float = 0.11,
+        margin: float = 0.02,
+        max_deg: float = 30.0,
+        iters: int = 8,
+        step_deg: float = 4.0,
+        report_only: bool = False,
+    ) -> np.ndarray:
+        import torch
+
+        motion = np.asarray(motion).astype(np.float32)  # AgentLODGE 139
+        native = to_native_finedance139(motion)
+        trans = native[:, 4:7].astype(np.float32)
+        rot6d = native[:, 7:139].reshape(-1, 22, 6).astype(np.float32)
+        n = motion.shape[0]
+
+        smplfk, fk = self._runtime()
+        ax = (
+            smplfk.ax_from_6v(torch.from_numpy(rot6d).float())
+            .reshape(-1, 22, 3)
+            .numpy()
+            .astype(np.float32)
+        )
+        ax0 = ax.copy()
+
+        j = _joints(fk, ax, trans)
+        a, b = j[:, PELVIS], j[:, NECK]
+        thr = radius
+        target = thr + margin
+
+        def tipdist(jj, wr, el, aa, bb):
+            v = jj[:, wr] - jj[:, el]
+            v = v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-9)
+            d, _ = _dist_to_axis(jj[:, wr] + _HAND * v, aa, bb)
+            return d
+
+        for name, sh, wr, el in ARMS:
+            dt = tipdist(j, wr, el, a, b)
+            print(
+                f"[penetration] frames={n} r={thr:.3f} hand-inside before {name}: "
+                f"{(dt < thr).mean() * 100:.2f}%  (min {dt.min():.3f})",
+                flush=True,
+            )
+        if report_only:
+            print("REPORT_ONLY_DONE", flush=True)
+            return motion
+
+        step = np.radians(step_deg)
+        cap = np.radians(max_deg)
+        axes = np.array(
+            [
+                [1, 0, 0],
+                [-1, 0, 0],
+                [0, 1, 0],
+                [0, -1, 0],
+                [0, 0, 1],
+                [0, 0, -1],
+            ],
+            np.float32,
+        )
+
+        for name, sh, wr, el in ARMS:
+            d = tipdist(j, wr, el, a, b)
+            P = np.where(d < thr)[0]
+            if P.size == 0:
+                continue
+            cur = ax[P].copy()
+            trP, aP, bP = trans[P], a[P], b[P]
+            for _ in range(iters):
+                dl = tipdist(_joints(fk, cur, trP), wr, el, aP, bP)
+                need = dl < target
+                if not need.any():
+                    break
+                best_d = dl.copy()
+                best = cur[:, sh, :].copy()
+                for e in axes:
+                    trial = cur.copy()
+                    newv = trial[:, sh, :] + step * e
+                    over = (
+                        np.linalg.norm(
+                            newv - ax0[P][:, sh, :],
+                            axis=1,
+                        )
+                        > cap
+                    )
+                    newv[over] = trial[over, sh, :]
+                    trial[:, sh, :] = newv
+                    wd = tipdist(
+                        _joints(fk, trial, trP),
+                        wr,
+                        el,
+                        aP,
+                        bP,
+                    )
+                    take = need & (wd > best_d)
+                    best[take] = trial[take, sh, :]
+                    best_d[take] = wd[take]
+                cur[:, sh, :] = best
+            ax[P] = cur
+
+        # temporal smoothing of the shoulder corrections (keep the rest of the pose intact)
+        corr = ax - ax0
+        k = np.ones(5, np.float32) / 5
+        for jid in (L_SH, R_SH):
+            for c in range(3):
+                corr[:, jid, c] = np.convolve(
+                    np.pad(corr[:, jid, c], 2, mode="edge"),
+                    k,
+                    "valid",
+                )
+        ax = ax0 + corr
+
+        j2 = _joints(fk, ax, trans)
+        a2, b2 = j2[:, PELVIS], j2[:, NECK]
+        for name, sh, wr, el in ARMS:
+            dt2 = tipdist(j2, wr, el, a2, b2)
+            print(
+                f"[penetration] hand-inside after {name}: "
+                f"{(dt2 < thr).mean() * 100:.2f}%  "
+                f"(max shoulder correction "
+                f"{np.degrees(np.linalg.norm(ax[:, sh] - ax0[:, sh], axis=1).max()):.1f} deg)",
+                flush=True,
+            )
+
+        # write corrected shoulder rotations back into the AgentLODGE 139 (same joint order; rot at 3+j*6)
+        new6d = (
+            smplfk.ax_to_6v(torch.from_numpy(ax).float())
+            .reshape(-1, 22, 6)
+            .numpy()
+            .astype(np.float32)
+        )
+        out = motion.copy()
+        for jid in (L_SH, R_SH):
+            out[:, 3 + jid * 6 : 3 + jid * 6 + 6] = new6d[:, jid, :]
+        return out
+
+    def resolve_file(
+        self,
+        inp: Path | str,
+        out: Path | str,
+        *,
+        radius: float = 0.11,
+        margin: float = 0.02,
+        max_deg: float = 30.0,
+        iters: int = 8,
+        step_deg: float = 4.0,
+        report_only: bool = False,
+    ) -> np.ndarray:
+        motion = np.load(inp).astype(np.float32)
+        resolved = self.resolve(
+            motion,
+            radius=radius,
+            margin=margin,
+            max_deg=max_deg,
+            iters=iters,
+            step_deg=step_deg,
+            report_only=report_only,
+        )
+        if report_only:
+            return resolved
+        np.save(out, resolved)
+        print(f"RESOLVE_PENETRATION_DONE {out}", flush=True)
+        return resolved
+
+
+def main(argv: list[str] | None = None):
     ap = argparse.ArgumentParser()
     ap.add_argument("inp")
     ap.add_argument("out")
@@ -68,92 +271,18 @@ def main():
     ap.add_argument("--iters", type=int, default=8)
     ap.add_argument("--step-deg", type=float, default=4.0)
     ap.add_argument("--report-only", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
-    motion = np.load(args.inp).astype(np.float32)          # AgentLODGE 139
-    native = to_native_finedance139(motion)
-    trans = native[:, 4:7].astype(np.float32)
-    rot6d = native[:, 7:139].reshape(-1, 22, 6).astype(np.float32)
-    n = motion.shape[0]
-
-    SMPLX_Skeleton, ax_from_6v, ax_to_6v = _fk_module()
-    fk = SMPLX_Skeleton(device="cpu", batch=1, Jpath=JPATH)
-    ax = ax_from_6v(torch.from_numpy(rot6d).float()).reshape(-1, 22, 3).numpy().astype(np.float32)
-    ax0 = ax.copy()
-
-    j = _joints(fk, ax, trans)
-    a, b = j[:, PELVIS], j[:, NECK]
-    thr = args.radius
-    target = thr + args.margin
-
-    def tipdist(jj, wr, el, aa, bb):
-        v = jj[:, wr] - jj[:, el]
-        v = v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-9)
-        d, _ = _dist_to_axis(jj[:, wr] + _HAND * v, aa, bb)
-        return d
-
-    for name, sh, wr, el in ARMS:
-        dt = tipdist(j, wr, el, a, b)
-        print(f"[penetration] frames={n} r={thr:.3f} hand-inside before {name}: "
-              f"{(dt < thr).mean() * 100:.2f}%  (min {dt.min():.3f})", flush=True)
-    if args.report_only:
-        print("REPORT_ONLY_DONE", flush=True)
-        return
-
-    step = np.radians(args.step_deg)
-    cap = np.radians(args.max_deg)
-    axes = np.array([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], np.float32)
-
-    for name, sh, wr, el in ARMS:
-        d = tipdist(j, wr, el, a, b)
-        P = np.where(d < thr)[0]
-        if P.size == 0:
-            continue
-        cur = ax[P].copy()
-        trP, aP, bP = trans[P], a[P], b[P]
-        for _ in range(args.iters):
-            dl = tipdist(_joints(fk, cur, trP), wr, el, aP, bP)
-            need = dl < target
-            if not need.any():
-                break
-            best_d = dl.copy()
-            best = cur[:, sh, :].copy()
-            for e in axes:
-                trial = cur.copy()
-                newv = trial[:, sh, :] + step * e
-                over = np.linalg.norm(newv - ax0[P][:, sh, :], axis=1) > cap
-                newv[over] = trial[over, sh, :]
-                trial[:, sh, :] = newv
-                wd = tipdist(_joints(fk, trial, trP), wr, el, aP, bP)
-                take = need & (wd > best_d)
-                best[take] = trial[take, sh, :]
-                best_d[take] = wd[take]
-            cur[:, sh, :] = best
-        ax[P] = cur
-
-    # temporal smoothing of the shoulder corrections (keep the rest of the pose intact)
-    corr = ax - ax0
-    k = np.ones(5, np.float32) / 5
-    for jid in (L_SH, R_SH):
-        for c in range(3):
-            corr[:, jid, c] = np.convolve(np.pad(corr[:, jid, c], 2, mode="edge"), k, "valid")
-    ax = ax0 + corr
-
-    j2 = _joints(fk, ax, trans)
-    a2, b2 = j2[:, PELVIS], j2[:, NECK]
-    for name, sh, wr, el in ARMS:
-        dt2 = tipdist(j2, wr, el, a2, b2)
-        print(f"[penetration] hand-inside after {name}: {(dt2 < thr).mean() * 100:.2f}%  "
-              f"(max shoulder correction {np.degrees(np.linalg.norm(ax[:, sh] - ax0[:, sh], axis=1).max()):.1f} deg)",
-              flush=True)
-
-    # write corrected shoulder rotations back into the AgentLODGE 139 (same joint order; rot at 3+j*6)
-    new6d = ax_to_6v(torch.from_numpy(ax).float()).reshape(-1, 22, 6).numpy().astype(np.float32)
-    out = motion.copy()
-    for jid in (L_SH, R_SH):
-        out[:, 3 + jid * 6: 3 + jid * 6 + 6] = new6d[:, jid, :]
-    np.save(args.out, out)
-    print(f"RESOLVE_PENETRATION_DONE {args.out}", flush=True)
+    PenetrationResolver().resolve_file(
+        args.inp,
+        args.out,
+        radius=args.radius,
+        margin=args.margin,
+        max_deg=args.max_deg,
+        iters=args.iters,
+        step_deg=args.step_deg,
+        report_only=args.report_only,
+    )
 
 
 if __name__ == "__main__":

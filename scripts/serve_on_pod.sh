@@ -53,12 +53,15 @@ mkdir -p "$A/server/data"
 for pid in $(ss -ltnp 2>/dev/null | grep ":$PORT " | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u); do
   echo "stopping process on :$PORT (pid $pid)"; kill "$pid" 2>/dev/null || true
 done
-# Warm Blender daemons (server/warm_render.py) are started by the editor's prewarm and persist across
-# restarts as detached processes. Kill any from a previous editor + clear the pool dir so the new
-# editor's prewarm brings the pool back up with the CURRENT blender_daemon.py (a surviving pool would
-# keep running stale code and double-process requests).
-pkill -9 -f "scripts/blender_daemon.py" 2>/dev/null || true
-rm -rf "$WS/blend_daemon" 2>/dev/null || true
+# Stop only this editor's configured warm-render pool. Other render worker processes may share the
+# Pod and own independent daemon roots.
+RENDER_DAEMON_ROOT="${AGENTLODGE_RENDER_DAEMON_ROOT:-$WS/blend_daemon}"
+for pid_file in "$RENDER_DAEMON_ROOT"/d*/daemon.pid; do
+  [ -f "$pid_file" ] || continue
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+done
+rm -rf "$RENDER_DAEMON_ROOT" 2>/dev/null || true
 # Same for the warm LODGE generation daemon (server/warm_gen.py) so a redeploy restarts it with the
 # current gen_daemon.py + lodge.py (a surviving daemon would keep serving stale code).
 pkill -9 -f "scripts/gen_daemon.py" 2>/dev/null || true
