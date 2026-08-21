@@ -40,23 +40,30 @@ for source in filament_bench.cpp vulkan_device_selector.c; do
   fi
 done
 
-if ! ffmpeg -hide_banner -encoders 2>/dev/null | grep -F h264_nvenc >/dev/null; then
-  archive="$WORKSPACE/.cache/agentlodge/$FFMPEG_ARCHIVE_NAME"
-  mkdir -p "$(dirname "$archive")"
-  if [ ! -f "$archive" ] \
-    || ! echo "$FFMPEG_SHA256  $archive" | sha256sum -c - >/dev/null 2>&1; then
-    rm -f "$archive"
-    curl -fL --retry 10 --retry-delay 3 --retry-all-errors \
-      -o "$archive" "$FFMPEG_URL"
-  fi
-  echo "$FFMPEG_SHA256  $archive" | sha256sum -c -
+archive="$WORKSPACE/.cache/agentlodge/$FFMPEG_ARCHIVE_NAME"
+mkdir -p "$(dirname "$archive")"
+if [ ! -f "$archive" ] \
+  || ! echo "$FFMPEG_SHA256  $archive" | sha256sum -c - >/dev/null 2>&1; then
+  rm -f "$archive"
+  curl -fL --retry 10 --retry-delay 3 --retry-all-errors \
+    -o "$archive" "$FFMPEG_URL"
+fi
+echo "$FFMPEG_SHA256  $archive" | sha256sum -c -
+if [ ! -x "$FFMPEG_ROOT/bin/ffmpeg" ] \
+  || [ "$(cat "$FFMPEG_ROOT/.archive-sha256" 2>/dev/null || true)" != "$FFMPEG_SHA256" ]; then
   rm -rf "$FFMPEG_ROOT"
   mkdir -p "$FFMPEG_ROOT"
   tar --no-same-owner -xJf "$archive" -C "$FFMPEG_ROOT" --strip-components=1
-  ln -sfn "$FFMPEG_ROOT/bin/ffmpeg" /usr/local/bin/ffmpeg
-  ln -sfn "$FFMPEG_ROOT/bin/ffprobe" /usr/local/bin/ffprobe
-  hash -r
+  printf '%s\n' "$FFMPEG_SHA256" >"$FFMPEG_ROOT/.archive-sha256"
 fi
+ln -sfn "$FFMPEG_ROOT/bin/ffmpeg" /usr/local/bin/ffmpeg
+ln -sfn "$FFMPEG_ROOT/bin/ffprobe" /usr/local/bin/ffprobe
+hash -r
+"$FFMPEG_ROOT/bin/ffmpeg" -hide_banner -encoders 2>/dev/null |
+  grep -F h264_nvenc >/dev/null || {
+    echo "checksum-pinned FFmpeg is missing h264_nvenc" >&2
+    exit 1
+  }
 
 test -f "$SCRIPT_DIR/filament_glibc_compat.cpp" || {
   echo "missing Filament glibc compatibility source: $SCRIPT_DIR/filament_glibc_compat.cpp" >&2
