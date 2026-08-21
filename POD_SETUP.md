@@ -71,8 +71,10 @@ An opt-in staged path can start single-candidate LODGE generation as soon as LOD
 are ready, while EDGE/Jukebox preprocessing continues. Reuse requires matching SHA-256
 fingerprints for both the source features and generated motion; stale, incomplete, or failed early
 results automatically fall back to the normal generation path. Set
-`AGENTLODGE_EARLY_LODGE_GENERATION=1` to benchmark this overlap. It remains disabled by default
-until an exact live-pod comparison proves that GPU contention does not slow the full browser path.
+`AGENTLODGE_EARLY_LODGE_GENERATION=1` to benchmark this overlap. On the current four-GPU topology,
+the exact hot result was 77.391s versus a contemporaneous disabled control at 76.916s. LODGE and
+the final 5,400-frame story tensors remained byte-identical, but GPU-0 contention increased EDGE
+preprocessing from 18.156s to 22.586s. The path therefore remains disabled by default.
 
 To recheck a running pod without reinstalling anything:
 

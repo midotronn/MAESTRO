@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "commit": "afef15f4df5a1085fb7011705c9e0995aab82de7",
+  "pod_id": "hgzfi2k7qnpumg",
+  "gpu_count": 4,
+  "gpu_model": "NVIDIA RTX PRO 4500 Blackwell",
+  "audio_seconds": 180.0,
+  "expected_frames": 5400,
+  "configuration": {
+    "early_flag": "AGENTLODGE_EARLY_LODGE_GENERATION",
+    "early_lodge_gpu": 0,
+    "jukebox_workers": 4,
+    "jukebox_gpu_indices": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "best_of_k": 1
+  },
+  "warmup": {
+    "sid": "sla_song_01_90bpm_90180",
+    "browser_total_seconds": 120.332,
+    "structure_analysis_seconds": 44.257,
+    "note": "First request after restarting all resident workers; excluded from the hot comparison."
+  },
+  "hot_early_overlap": {
+    "sid": "sla_song_01_90bpm_90347",
+    "browser_total_seconds": 77.391,
+    "browser_upload_seconds": 0.878,
+    "preprocess_stage_seconds": 22.203,
+    "generation_stage_seconds": 12.102,
+    "render_stage_seconds": 38.418,
+    "remote_pipeline_seconds": 35.263,
+    "edge_preprocess_seconds": 22.586,
+    "early_lodge_seconds": 19.476,
+    "post_preprocess_generation_seconds": 11.672,
+    "rendered_frames": 5400
+  },
+  "hot_disabled_control": {
+    "sid": "sla_song_01_90bpm_90648",
+    "browser_total_seconds": 76.916,
+    "browser_upload_seconds": 0.836,
+    "preprocess_stage_seconds": 18.173,
+    "generation_stage_seconds": 12.122,
+    "render_stage_seconds": 39.759,
+    "remote_pipeline_seconds": 32.361,
+    "edge_preprocess_seconds": 18.156,
+    "lodge_generation_seconds": 8.0,
+    "post_preprocess_generation_seconds": 12.879,
+    "rendered_frames": 5400
+  },
+  "comparison": {
+    "browser_seconds_delta": 0.475,
+    "browser_percent_regression": 0.6176,
+    "remote_pipeline_seconds_delta": 2.902,
+    "remote_pipeline_percent_regression": 8.967,
+    "edge_preprocess_seconds_delta": 4.43,
+    "edge_preprocess_percent_regression": 24.3996,
+    "lodge_runtime_seconds_delta": 11.476,
+    "lodge_runtime_percent_regression": 143.45,
+    "post_preprocess_generation_seconds_saved": 1.207,
+    "post_preprocess_generation_percent_improvement": 9.3718,
+    "previous_best_browser_seconds": 76.265,
+    "seconds_slower_than_previous_best": 1.126
+  },
+  "exactness": {
+    "lodge_shape": [
+      5376,
+      139
+    ],
+    "lodge_array_equal": true,
+    "lodge_maximum_absolute_difference": 0.0,
+    "final_story_shape": [
+      5400,
+      139
+    ],
+    "final_story_array_equal": true,
+    "final_story_maximum_absolute_difference": 0.0
+  },
+  "decision": {
+    "enabled_by_default": false,
+    "live_server_restored_to_disabled": true,
+    "reason": "GPU-0 contention with its resident Jukebox worker more than erased the generation overlap benefit.",
+    "future_use": "Retain the guarded path for a topology that reserves a GPU for LODGE or dynamically schedules Jukebox work away from GPU 0."
+  }
+}
