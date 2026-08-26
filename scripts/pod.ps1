@@ -31,15 +31,21 @@ $User = if ($env:AGENTLODGE_POD_USER) { $env:AGENTLODGE_POD_USER } else { "root"
 if (-not $HostName) { throw "Set AGENTLODGE_POD_HOST (and _PORT/_KEY) or create scripts\pod.config.ps1" }
 $Repo = Split-Path $PSScriptRoot -Parent
 $Target = "$User@$HostName"
+$GitRefExitCode = 0
 $GitRef = if ($env:AGENTLODGE_GIT_REF) {
   $env:AGENTLODGE_GIT_REF
 } else {
-  (& git -C $Repo branch --show-current).Trim()
+  $value = & git -C $Repo branch --show-current
+  $GitRefExitCode = $LASTEXITCODE
+  $value
 }
+$GitRef = "$GitRef".Trim()
 if (-not $GitRef) {
-  $GitRef = (& git -C $Repo rev-parse HEAD).Trim()
+  $GitRef = & git -C $Repo rev-parse HEAD
+  $GitRefExitCode = $LASTEXITCODE
+  $GitRef = "$GitRef".Trim()
 }
-if ($LASTEXITCODE -ne 0 -or $GitRef -notmatch '^[A-Za-z0-9._/-]+$') {
+if ($GitRefExitCode -ne 0 -or $GitRef -notmatch '^[A-Za-z0-9._/-]+$') {
   throw "Could not determine a safe AGENTLODGE_GIT_REF"
 }
 $GitUrl = if ($env:AGENTLODGE_GIT_URL) {
@@ -49,6 +55,7 @@ $GitUrl = if ($env:AGENTLODGE_GIT_URL) {
 }
 
 function Pod-SSH([string]$cmd) {
+  $cmd = $cmd.Replace("`r", "")
   $output = & ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=20 `
     -p $Port -i $Key $Target $cmd
   if ($LASTEXITCODE -ne 0) { throw "pod SSH command failed with exit code $LASTEXITCODE" }
