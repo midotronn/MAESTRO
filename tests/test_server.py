@@ -1264,7 +1264,9 @@ def test_editor_review_actions_explain_the_user_flow():
     assert 'startRender("window")' not in js
     assert 'id="motionSuggestions"' in html
     assert 'id="motionPicker"' in html
-    assert "20 supported common motions" in html
+    assert "<strong>Common motions</strong>" in html
+    assert 'aria-label="Common motions"' in html
+    assert "20 supported common motions" not in html
     assert "/api/motions" in js
     assert "clap to the right" in js
     assert "insertion is unavailable until it has its own visual audit" in js
