@@ -3,9 +3,10 @@
 
 Two focused figures, emphasizing the agentic framework and de-emphasizing rendering:
   framework.svg     - deterministic music analysis -> Storyboard Agent (LLM or fallback)
-                      -> plan-aware realization from LODGE/EDGE/motifs -> inertialized assembly.
-  editing_loop.svg  - Planner -> routed tools -> final-window target dialing -> verification,
-                      with the refine cycle and checkpointed output.
+                      -> plan-aware realization from LODGE/EDGE/reuse plus named-motion cues
+                      -> inertialized assembly.
+  editing_loop.svg  - Planner -> routed tools -> final-window adaptation -> bounded verification,
+                      refinement, and the best safe checkpointed output.
 
 Run:  python docs/make_diagrams.py   (writes docs/static/images/*.svg)
 """
@@ -94,7 +95,7 @@ def framework():
     W, H = 1160, 330
     b = []
     b.append(txt(W / 2, 34, "The MAESTRO composition pipeline", 17, INK, 800))
-    b.append(txt(W / 2, 55, "detected musical form guides a plan-aware, motif-conscious whole-song composition",
+    b.append(txt(W / 2, 55, "musical form guides source selection, motif reuse, and planned named-motion cues",
                  12.5, MUTED, 500))
     yr = 92; h = 94
     b.append(node(20, yr + 17, 82, 60, "Song", ["audio"], fill=SOFT, title_size=14))
@@ -102,20 +103,30 @@ def framework():
                   ["chroma + MFCC + energy", "sections · repeats · downbeats"],
                   accent=ACCENT, title_size=14))
     b.append(node(338, yr, 204, h, "Storyboard Agent",
-                  ["role · intensity · vocabulary", "generator bias · motif reuse"],
+                  ["role · intensity · source bias", "motif reuse · named-motion cues"],
                   fill=AGENT, stroke=BRAND, accent=BRAND, title_fill=BRAND, badge="LLM AGENT"))
     b.append(node(568, yr, 244, h, "Plan-aware realization",
-                  ["score section candidates for", "plan alignment + coherence"],
+                  ["score LODGE · EDGE · reuse", "compose planned motion cues"],
                   accent=REUSE, title_size=14))
     b.append(node(838, yr, 168, h, "Inertialized assembly",
                   ["join chosen sections", "without hard source seams"], title_size=13.5))
     b.append(node(1032, yr + 11, 112, 72, "Structured", ["dance"], fill="url(#brandg)",
                   stroke=BRAND, title_fill="#ffffff", title_size=14, sub_fill="#ede9fb"))
-    # Candidate sources used by the realization stage.
-    for i, (lbl, col) in enumerate([("LODGE", LODGE), ("EDGE", EDGE), ("motif ↺", REUSE)]):
-        cx = 580 + i * 70
-        b.append(f'<rect x="{cx}" y="{yr + h + 13}" width="64" height="22" rx="11" fill="{CARD}" stroke="{col}"/>')
-        b.append(txt(cx + 32, yr + h + 28, lbl, 10.5, col, 700))
+    # Candidate sources plus the planned overlay applied by the realization stage.
+    pills = [
+        ("LODGE", LODGE, 54),
+        ("EDGE", EDGE, 54),
+        ("motif ↺", REUSE, 64),
+        ("bank cue +", ACCENT, 72),
+    ]
+    cx = 559
+    for lbl, col, width in pills:
+        b.append(
+            f'<rect x="{cx}" y="{yr + h + 13}" width="{width}" height="22" '
+            f'rx="11" fill="{CARD}" stroke="{col}"/>'
+        )
+        b.append(txt(cx + width / 2, yr + h + 28, lbl, 10.5, col, 700))
+        cx += width + 6
     b.append(txt(219, yr + h + 28, "deterministic, with a robust fallback", 10.5, FAINT, 500))
     b.append(txt(440, yr + h + 28, "strict section plan; rule fallback offline", 10.5, FAINT, 500))
     cy = yr + h / 2
@@ -132,7 +143,7 @@ def editing_loop():
     W, H = 1160, 410
     b = []
     b.append(txt(W / 2, 34, "The natural-language editing agent", 17, INK, 800))
-    b.append(txt(W / 2, 55, "metric edits use guaranteed levers; new-motion requests regenerate, then adapt to the same goals",
+    b.append(txt(W / 2, 55, "monotone levers, audited named actions, and generation share a bounded verified loop",
                  12.5, MUTED, 500))
     yr = 112; h = 96
     b.append(node(18, yr, 172, h, "You", ["select a window +", "describe the change"],
@@ -140,12 +151,14 @@ def editing_loop():
     b.append(node(216, yr, 190, h, "Planner", ["declare measurable goals", "+ choose a tool path"],
                   fill=AGENT, stroke=BRAND, accent=BRAND, title_fill=BRAND, badge="LLM"))
     b.append(node(432, yr, 228, h, "Routed executor",
-                  ["metric intent: monotone levers", "new motion: LODGE / EDGE"],
+                  ["metric intent: monotone levers", "named action: audited motion bank",
+                   "new motion: LODGE / EDGE"],
                   fill=CARD, stroke=LINE, accent=ACCENT, title_fill=INK))
     b.append(node(686, yr, 202, h, "Final-window adaptation",
-                  ["crossfade into the dance", "dial regenerated goals to target"],
+                  ["fit or crossfade into dance", "dial regenerated goals to target"],
                   accent=REUSE, title_size=13.5))
-    b.append(node(914, yr, 152, h, "Verify", ["goals + artifact", "guardrails"]))
+    b.append(node(914, yr, 152, h, "Verify",
+                  ["goals + semantics", "quality guardrails"]))
     b.append(node(968, 302, 174, 68, "Checkpointed result", ["undo · compare · branch"],
                   fill="url(#brandg)", stroke=BRAND, title_fill="#ffffff",
                   title_size=13.5, sub_fill="#ede9fb"))
@@ -154,13 +167,13 @@ def editing_loop():
     b.append(arrow(406, cy, 432, cy))
     b.append(arrow(660, cy, 686, cy))
     b.append(arrow(888, cy, 914, cy))
-    b.append(arrow(990, yr + h, 1055, 302, color=ACCENT, label="all goals met", cy=270))
+    b.append(arrow(990, yr + h, 1055, 302, color=ACCENT, label="best safe result", cy=270))
     # Refine loop feeds failed final-window checks back to the planner.
     b.append(arrow(990, yr, 311, yr, color=BRAND, dashed=True, cy=yr - 46))
-    b.append(txt(650, yr - 13, "unmet goal or artifact risk \u2192 refine with measured feedback",
+    b.append(txt(650, yr - 13, "unmet goal or artifact risk \u2192 bounded refine with measured feedback",
                  10.5, BRAND, 600))
     # Toolset and execution contracts.
-    tools = ["energy", "beat-align", "smooth", "sharpen", "mirror", "retrograde", "regenerate"]
+    tools = ["energy", "beat-align", "smooth", "sharpen", "mirror", "reverse", "regenerate"]
     tx = 270; ty = yr + h + 38
     b.append(txt(tx - 6, ty + 15, "tools", 10.5, FAINT, 700, anchor="end"))
     cx = tx + 12
@@ -170,7 +183,7 @@ def editing_loop():
         b.append(txt(cx + wdt / 2, ty + 18, t, 10.5, MUTED, 600))
         cx += wdt + 8
     b.append(txt(tx + 12, ty + 47,
-                 "verification measures the final spliced motion; new-motion requests never fall back to the untouched original",
+                 "verification measures the final spliced motion; recognized named actions receive semantic checks and failed steps stay visible",
                  10.5, FAINT, 500, anchor="start"))
     return svg(W, H, "".join(b))
 
