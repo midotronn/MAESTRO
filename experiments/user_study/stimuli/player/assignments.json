@@ -1,29 +1,29 @@
 {
-  "protocol": "maestro-expert-study-v14-llm-gpt4o-k10-front-facing",
+  "protocol": "maestro-expert-study-v15-llm-gpt4o-k10-front-facing-16s",
   "lane_encoding": "private numeric source lanes",
   "sequence": [
     {
-      "excerpt": "EX03",
+      "excerpt": "EX01",
       "lanes": [0, 2, 1]
     },
     {
-      "excerpt": "EX04",
+      "excerpt": "EX02",
       "lanes": [1, 2, 0]
     },
     {
-      "excerpt": "EX08",
+      "excerpt": "EX03",
       "lanes": [0, 1, 2]
     },
     {
-      "excerpt": "EX06",
+      "excerpt": "EX04",
       "lanes": [2, 0, 1]
     },
     {
-      "excerpt": "EX09",
+      "excerpt": "EX05",
       "lanes": [1, 0, 2]
     },
     {
-      "excerpt": "EX02",
+      "excerpt": "EX06",
       "lanes": [2, 1, 0]
     }
   ]

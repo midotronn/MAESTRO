@@ -4,7 +4,7 @@ import numpy as np
 
 from agentlodge.dance.transition import root_facing_yaw
 from scripts.build_song_comparisons import _prepare_motions
-from scripts.rank_interview_windows import _pose_difference
+from scripts.rank_interview_windows import _energy_percentiles, _pose_difference
 
 
 def _identity_rotations(frames: int) -> np.ndarray:
@@ -51,3 +51,7 @@ def test_pose_difference_rejects_identical_motion():
 
     assert identical["mean_rotation_degrees"] == 0
     assert identical["near_identical_rotation_ratio"] == 1
+
+
+def test_energy_percentiles_rank_windows_with_ties():
+    assert _energy_percentiles([2.0, 1.0, 2.0, 4.0]) == [0.75, 0.25, 0.75, 1.0]

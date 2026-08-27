@@ -1,5 +1,5 @@
 {
-  "protocol": "maestro-expert-study-v14-llm-gpt4o-k10-front-facing",
+  "protocol": "maestro-expert-study-v15-llm-gpt4o-k10-front-facing-16s",
   "selection_type": "capability-focused expert-elicitation",
   "blind_lane_order": [
     "LODGE",
@@ -10,162 +10,152 @@
     "width": 1440,
     "height": 400,
     "fps": 30,
-    "duration_seconds": 6
+    "duration_seconds": 16
   },
+  "fixed_sequence": [
+    {
+      "excerpt": "EX01",
+      "lanes": [
+        0,
+        2,
+        1
+      ]
+    },
+    {
+      "excerpt": "EX02",
+      "lanes": [
+        1,
+        2,
+        0
+      ]
+    },
+    {
+      "excerpt": "EX03",
+      "lanes": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "excerpt": "EX04",
+      "lanes": [
+        2,
+        0,
+        1
+      ]
+    },
+    {
+      "excerpt": "EX05",
+      "lanes": [
+        1,
+        0,
+        2
+      ]
+    },
+    {
+      "excerpt": "EX06",
+      "lanes": [
+        2,
+        1,
+        0
+      ]
+    }
+  ],
   "excerpts": [
     {
       "id": "EX01",
-      "source_song": "Can't Stop the Feeling!",
+      "source_song": "Dynamite",
       "source_video": "experiments/user_study/stimuli/sources/EX01.mp4",
       "start_seconds": 0,
-      "source_original_start_seconds": 117,
-      "duration_seconds": 6,
+      "source_original_start_seconds": 6,
+      "duration_seconds": 16,
       "diagnostics": {
-        "quality_margin": 0.0878,
-        "beat_margin": 0.1773,
-        "maestro_quality": 0.5823,
-        "lodge_quality": 0.4881,
-        "edge_quality": 0.4946,
-        "min_pose_difference_degrees": 7.724,
-        "max_near_identical_ratio": 0.8831
+        "quality_margin": 0.0707,
+        "beat_margin": 0.088,
+        "maestro_quality": 0.624,
+        "lodge_quality": 0.5518,
+        "edge_quality": 0.5533,
+        "energetic_score": 0.595,
+        "energy_percentile": 0.8817,
+        "audio_energy": 0.5349,
+        "onset_energy": 0.2574,
+        "maestro_visual_energy": 0.8111,
+        "min_pose_difference_degrees": 9.0911,
+        "max_near_identical_ratio": 0.6887
       },
-      "rationale": "The strongest quality and beat advantage for this song, with a pose-distinct chorus phrase, continuous footwork, and a clean front-facing silhouette.",
-      "source_sha256": "f30112609f88e40b0dfb23616547d61240e1ffde23d3ea405af93a877f3dc6aa",
-      "frames": 180,
+      "rationale": "A high-energy intro-to-drop handoff with the strongest full-window quality margin in the final set. MAESTRO carries the LLM-authored step-touch phrase through the structural transition with clearer beat alignment and sustained full-body motion.",
+      "source_sha256": "1b364b48664a04f5ab57b53c070c9bd80a848d7bb54e62b06fb8d0c5faebc079",
+      "frames": 480,
       "permutations": {
-        "012": {
-          "output_video": "player/videos/EX01/012.mp4",
-          "output_sha256": "a214b77c20291d79dbb8297d697eafe53189c6c79100ef6e6c6dbf181eaf5652",
-          "output_bytes": 460878
-        },
         "021": {
           "output_video": "player/videos/EX01/021.mp4",
-          "output_sha256": "eac61a35bac79af3bb5f1a01408660811c6b37d51708243c0b97c9bd9dbefe37",
-          "output_bytes": 460622
-        },
-        "102": {
-          "output_video": "player/videos/EX01/102.mp4",
-          "output_sha256": "35654b2971acc4b9217a2af6ad5e564aed6b624aacf60300f20776eaf935c20f",
-          "output_bytes": 460627
-        },
-        "120": {
-          "output_video": "player/videos/EX01/120.mp4",
-          "output_sha256": "5ee778d9b442428a51104c4e8cf60053db328e0e3ec96658f9dcc848a2e5894f",
-          "output_bytes": 461112
-        },
-        "201": {
-          "output_video": "player/videos/EX01/201.mp4",
-          "output_sha256": "b1b3ac619c4ff48ebfccfd97c2f3934282455a80cc391c7ff38a706d25100a4d",
-          "output_bytes": 460854
-        },
-        "210": {
-          "output_video": "player/videos/EX01/210.mp4",
-          "output_sha256": "24ce96b8b517895292e669dd14b7b62e2384c958c2d2535a4708018a80daa98c",
-          "output_bytes": 460679
+          "output_sha256": "738f3fe13099fa65886d727703adaa19d67df8037a5a97b85303700dd3964ecd",
+          "output_bytes": 1336136
         }
       }
     },
     {
       "id": "EX02",
-      "source_song": "Can't Stop the Feeling!",
+      "source_song": "Uptown Funk",
       "source_video": "experiments/user_study/stimuli/sources/EX02.mp4",
       "start_seconds": 0,
-      "source_original_start_seconds": 85,
-      "duration_seconds": 6,
+      "source_original_start_seconds": 125,
+      "duration_seconds": 16,
       "diagnostics": {
-        "quality_margin": 0.0439,
-        "beat_margin": 0.0624,
-        "maestro_quality": 0.7341,
-        "lodge_quality": 0.6903,
-        "edge_quality": 0.6006,
-        "min_pose_difference_degrees": 6.3916,
-        "max_near_identical_ratio": 0.7194
+        "quality_margin": 0.0168,
+        "beat_margin": 0.0266,
+        "maestro_quality": 0.5833,
+        "lodge_quality": 0.5665,
+        "edge_quality": 0.5221,
+        "energetic_score": 0.5313,
+        "energy_percentile": 0.8956,
+        "audio_energy": 0.4472,
+        "onset_energy": 0.2088,
+        "maestro_visual_energy": 0.7533,
+        "min_pose_difference_degrees": 16.8739,
+        "max_near_identical_ratio": 0.273
       },
-      "rationale": "The LLM-authored step-touch verse enters through a clean section transition with clear pose separation and positive timing and quality margins.",
-      "source_sha256": "26fd3ba32dc7655a9c0e4c3e22523c6f4ba8d5b17d3025e332a94467540453b6",
-      "frames": 180,
+      "rationale": "A sustained recurring chorus motif with clap variation, broad rhythmic phrasing, and large pose separation from both baselines. The full phrase remains energetic and front-facing without clipping.",
+      "source_sha256": "bf6a4b24eaf5852d1076fc772394853c93698ecac36e97e4abeba1053d9b0b53",
+      "frames": 480,
       "permutations": {
-        "012": {
-          "output_video": "player/videos/EX02/012.mp4",
-          "output_sha256": "1d5499d4e423f7666e0515f7ccbb39b29869de4ca8786817e787f8dc3e9d6cde",
-          "output_bytes": 449251
-        },
-        "021": {
-          "output_video": "player/videos/EX02/021.mp4",
-          "output_sha256": "cf6e4e7f13fb1f9a144d22c6ee0c5297184903b16b83327144f8e9cacc97abcd",
-          "output_bytes": 449075
-        },
-        "102": {
-          "output_video": "player/videos/EX02/102.mp4",
-          "output_sha256": "4796df9d9e7a969eeb7255d772a06306c727fa07752d673f56d4010d7e4a4bdb",
-          "output_bytes": 450550
-        },
         "120": {
           "output_video": "player/videos/EX02/120.mp4",
-          "output_sha256": "1b3c418e4bb15098b486226cc93dc21db66485d398d082746323c11aa8b992dc",
-          "output_bytes": 448678
-        },
-        "201": {
-          "output_video": "player/videos/EX02/201.mp4",
-          "output_sha256": "d3e693d7d915b5bd7413ea8a3ef37c255441cf1d545c91eeadd0b187de06c5d7",
-          "output_bytes": 449235
-        },
-        "210": {
-          "output_video": "player/videos/EX02/210.mp4",
-          "output_sha256": "c659c3e1e22dc3b0bb8cd2f0004f15444773936657042c391dc43922a82d8bf0",
-          "output_bytes": 449345
+          "output_sha256": "2db1841b8e21f5904a476e7c9731fd564b86acfc9c23cf756262c9a139de4492",
+          "output_bytes": 1236301
         }
       }
     },
     {
       "id": "EX03",
-      "source_song": "Can't Stop the Feeling!",
+      "source_song": "Dynamite",
       "source_video": "experiments/user_study/stimuli/sources/EX03.mp4",
       "start_seconds": 0,
-      "source_original_start_seconds": 176,
-      "duration_seconds": 6,
+      "source_original_start_seconds": 117,
+      "duration_seconds": 16,
       "diagnostics": {
-        "quality_margin": 0.0111,
-        "beat_margin": 0.0363,
-        "maestro_quality": 0.6329,
-        "lodge_quality": 0.6219,
-        "edge_quality": 0.6017,
-        "min_pose_difference_degrees": 2.412,
-        "max_near_identical_ratio": 0.9495
+        "quality_margin": 0.0033,
+        "beat_margin": 0.0121,
+        "maestro_quality": 0.6407,
+        "lodge_quality": 0.6374,
+        "edge_quality": 0.6117,
+        "energetic_score": 0.5686,
+        "energy_percentile": 0.4247,
+        "audio_energy": 0.6907,
+        "onset_energy": 0.1922,
+        "maestro_visual_energy": 0.4832,
+        "min_pose_difference_degrees": 7.8369,
+        "max_near_identical_ratio": 0.7718
       },
-      "rationale": "A percussive drop phrase adds broad arm articulation while remaining stable, front-facing, and measurably stronger than both baselines.",
-      "source_sha256": "2a22a6c758dc860755be41d537d739e08dc0707cdd1a3b1b09b628e0cb487fd0",
-      "frames": 180,
+      "rationale": "The final arm-punch phrase of a long drop resolves into the chest-pop section over the set's highest normalized audio energy. Dense frame review confirmed a smooth handoff, positive full-window timing margins, and clear pose separation.",
+      "source_sha256": "28e685345cf9c94e9d2f19da53408920b88d24bc4eaa63558ba2b987533fbc91",
+      "frames": 480,
       "permutations": {
         "012": {
           "output_video": "player/videos/EX03/012.mp4",
-          "output_sha256": "cdbae2203bc25e826ebba74d040e7ea611683da85d7792bd3b7748fd240eb394",
-          "output_bytes": 435098
-        },
-        "021": {
-          "output_video": "player/videos/EX03/021.mp4",
-          "output_sha256": "9eb814c5cf733b8790f7fceeb5afd4e046e0edfa706d35b70721be8f88dfe38a",
-          "output_bytes": 436745
-        },
-        "102": {
-          "output_video": "player/videos/EX03/102.mp4",
-          "output_sha256": "c09db13446e4fbc55a41696a50ee663611dd02811527fe62fec08ce5f9b552fd",
-          "output_bytes": 436141
-        },
-        "120": {
-          "output_video": "player/videos/EX03/120.mp4",
-          "output_sha256": "7676bd41d83005c388964a6fd7020372f1bb1b8e23d067db0cae269dae684d52",
-          "output_bytes": 436806
-        },
-        "201": {
-          "output_video": "player/videos/EX03/201.mp4",
-          "output_sha256": "1ee9b0a35687417d3b722cb8e2adf889c354dfe945871e6e20be90c7b71f6ef4",
-          "output_bytes": 435497
-        },
-        "210": {
-          "output_video": "player/videos/EX03/210.mp4",
-          "output_sha256": "3f12a76391cd34e1b717ee56525c579063da9c6e5a55506c0cb471d8193dcf38",
-          "output_bytes": 436541
+          "output_sha256": "a00a7f70111610d8c579b265e134df175ab71905afa238c20e4fe1ec5b0eb66f",
+          "output_bytes": 1320278
         }
       }
     },
@@ -174,50 +164,30 @@
       "source_song": "Uptown Funk",
       "source_video": "experiments/user_study/stimuli/sources/EX04.mp4",
       "start_seconds": 0,
-      "source_original_start_seconds": 133,
-      "duration_seconds": 6,
+      "source_original_start_seconds": 150,
+      "duration_seconds": 16,
       "diagnostics": {
-        "quality_margin": 0.0465,
-        "beat_margin": 0.1407,
-        "maestro_quality": 0.6084,
-        "lodge_quality": 0.5619,
-        "edge_quality": 0.5562,
-        "min_pose_difference_degrees": 17.1603,
-        "max_near_identical_ratio": 0.2548
+        "quality_margin": 0.0221,
+        "beat_margin": 0.0076,
+        "maestro_quality": 0.6279,
+        "lodge_quality": 0.568,
+        "edge_quality": 0.6058,
+        "energetic_score": 0.534,
+        "energy_percentile": 0.9076,
+        "audio_energy": 0.5563,
+        "onset_energy": 0.1428,
+        "maestro_visual_energy": 0.6203,
+        "min_pose_difference_degrees": 10.7611,
+        "max_near_identical_ratio": 0.6163
       },
-      "rationale": "The LLM-authored recurring chorus motif produces a broad rhythmic phrase with strong beat alignment and large pose separation from both baselines.",
-      "source_sha256": "953d07cbb8eb8f851626dab78419b07d05e1281911f8f00987413d541c9e84f7",
-      "frames": 180,
+      "rationale": "A recurring chorus resolves into the jump-arms-up drop. The clip exposes phrase-level preparation and recovery around a section boundary while retaining high energy, positive timing margins, and distinct choreography.",
+      "source_sha256": "2a8915bbc7e04bfef89365254ce7752aa484fdc495bd84ebf41538a64dd98baf",
+      "frames": 480,
       "permutations": {
-        "012": {
-          "output_video": "player/videos/EX04/012.mp4",
-          "output_sha256": "ed2353652303509a67c7838319059511e577070ba088b671707c2c4598e0acd1",
-          "output_bytes": 466553
-        },
-        "021": {
-          "output_video": "player/videos/EX04/021.mp4",
-          "output_sha256": "6abdbe3f19f473a54eb958d6b11429d046ad1bfd6bcc0d43c37818fd19cbed17",
-          "output_bytes": 466346
-        },
-        "102": {
-          "output_video": "player/videos/EX04/102.mp4",
-          "output_sha256": "9c03dc8fc3c22b0ebd3884c44c37ee2795cc82fd87421d6cbfebe10d29c64728",
-          "output_bytes": 467168
-        },
-        "120": {
-          "output_video": "player/videos/EX04/120.mp4",
-          "output_sha256": "5c6a1dd104ce88334ba56d82bb96de72b129a2ddeb3a42a6b64003f16c7ca2ce",
-          "output_bytes": 466619
-        },
         "201": {
           "output_video": "player/videos/EX04/201.mp4",
-          "output_sha256": "40f58c6de26b23a64d9026ba8f7e86c181029f81f9d435bd45d0c1f18d960cd5",
-          "output_bytes": 466372
-        },
-        "210": {
-          "output_video": "player/videos/EX04/210.mp4",
-          "output_sha256": "11b7c4cee7e25a97a170b104dd0ef82c9d5bd35426d909a3253828aa028d8367",
-          "output_bytes": 466477
+          "output_sha256": "467a4d0219c0fd30f875acbce21da17d4e8fb00b54c03c304e8fa13924b4ebe9",
+          "output_bytes": 1207441
         }
       }
     },
@@ -226,50 +196,30 @@
       "source_song": "Uptown Funk",
       "source_video": "experiments/user_study/stimuli/sources/EX05.mp4",
       "start_seconds": 0,
-      "source_original_start_seconds": 192,
-      "duration_seconds": 6,
+      "source_original_start_seconds": 203,
+      "duration_seconds": 16,
       "diagnostics": {
-        "quality_margin": 0.0607,
-        "beat_margin": 0.0992,
-        "maestro_quality": 0.6694,
-        "lodge_quality": 0.6087,
-        "edge_quality": 0.5907,
-        "min_pose_difference_degrees": 11.9911,
-        "max_near_identical_ratio": 0.4374
+        "quality_margin": 0.0354,
+        "beat_margin": 0.1104,
+        "maestro_quality": 0.6095,
+        "lodge_quality": 0.559,
+        "edge_quality": 0.5741,
+        "energetic_score": 0.5568,
+        "energy_percentile": 0.9558,
+        "audio_energy": 0.5392,
+        "onset_energy": 0.1399,
+        "maestro_visual_energy": 0.7447,
+        "min_pose_difference_degrees": 17.8124,
+        "max_near_identical_ratio": 0.2703
       },
-      "rationale": "The drop-to-chorus handoff moves from a chest-pop section into a recurring motif with strong quality, timing, and pose-distinction margins.",
-      "source_sha256": "a24e4b313e861bebee0999b880f9d72c1e6f974d4ccc73f2142ef9967a896c13",
-      "frames": 180,
+      "rationale": "A sustained reprise of the earlier chorus motif with one of the strongest beat margins and the largest pose separation in the study. MAESTRO remains visibly distinct across the full high-energy phrase.",
+      "source_sha256": "e52e9c5d6a69f2d6ab9758a497822e4c2a35d12ea1a7f4bf2f10b33e83956b0e",
+      "frames": 480,
       "permutations": {
-        "012": {
-          "output_video": "player/videos/EX05/012.mp4",
-          "output_sha256": "830f5d8a55b711dbda2747f72620844f75f32a427e4fb2b232181be283c71f07",
-          "output_bytes": 444190
-        },
-        "021": {
-          "output_video": "player/videos/EX05/021.mp4",
-          "output_sha256": "65c4b623a08b34b7a600eccbc781093a2cf795a9c5cafebc5589a264f0932d91",
-          "output_bytes": 443807
-        },
         "102": {
           "output_video": "player/videos/EX05/102.mp4",
-          "output_sha256": "b9940a05fa9374138b2ad80c955f81c33bc035784bc9847ea467557566d15ed1",
-          "output_bytes": 443968
-        },
-        "120": {
-          "output_video": "player/videos/EX05/120.mp4",
-          "output_sha256": "36d481f9b166823641d8cfd1d190da247e7465b2c7419f6aec38f830cd481015",
-          "output_bytes": 444364
-        },
-        "201": {
-          "output_video": "player/videos/EX05/201.mp4",
-          "output_sha256": "3afe4c20f9b0a3aeace5d3dfb2c69cdc0361a013edf5a9d9b6608b1306765bc4",
-          "output_bytes": 444264
-        },
-        "210": {
-          "output_video": "player/videos/EX05/210.mp4",
-          "output_sha256": "f2d1a2f01e7ddecd64ab5b309b66c29ff0aefbf9df89bd5d8fe01e0961c5302d",
-          "output_bytes": 444404
+          "output_sha256": "695abf0c291efdef334ce023a96752043c88e8e4d28ce272dfb29c2931357b86",
+          "output_bytes": 1226924
         }
       }
     },
@@ -278,362 +228,30 @@
       "source_song": "Uptown Funk",
       "source_video": "experiments/user_study/stimuli/sources/EX06.mp4",
       "start_seconds": 0,
-      "source_original_start_seconds": 226,
-      "duration_seconds": 6,
+      "source_original_start_seconds": 219,
+      "duration_seconds": 16,
       "diagnostics": {
-        "quality_margin": 0.0518,
-        "beat_margin": 0.0951,
-        "maestro_quality": 0.6069,
-        "lodge_quality": 0.5306,
-        "edge_quality": 0.5551,
-        "min_pose_difference_degrees": 15.6367,
-        "max_near_identical_ratio": 0.3404
+        "quality_margin": 0.0087,
+        "beat_margin": 0.0051,
+        "maestro_quality": 0.5975,
+        "lodge_quality": 0.5691,
+        "edge_quality": 0.5888,
+        "energetic_score": 0.5116,
+        "energy_percentile": 0.755,
+        "audio_energy": 0.6076,
+        "onset_energy": 0.1315,
+        "maestro_visual_energy": 0.459,
+        "min_pose_difference_degrees": 15.5599,
+        "max_near_identical_ratio": 0.3592
       },
-      "rationale": "The recurring chorus resolves into the closing drop with readable structural contrast, smooth continuity, and substantial pose separation.",
-      "source_sha256": "ca1b60ea0dc1dd99469366e0e431ae27e72ab686f3c8fdad0c2709708a488722",
-      "frames": 180,
+      "rationale": "The closing chorus phrase flows into the final drop with strong audio energy and substantial pose separation. The selected endpoint captures the transition without extending into the later near-identical baseline segment.",
+      "source_sha256": "66bd30daa7f448b1bd27822929f9b2ec4bee98a1c95d4d0de86b4cc52053d53f",
+      "frames": 480,
       "permutations": {
-        "012": {
-          "output_video": "player/videos/EX06/012.mp4",
-          "output_sha256": "235eebbd2096e8e169d498d1175bde73114b6b3a928f666af11f3dc7f981b128",
-          "output_bytes": 453000
-        },
-        "021": {
-          "output_video": "player/videos/EX06/021.mp4",
-          "output_sha256": "9b1f0f27892a714d497d5ce4eab01ea47d6ad008c7165fc2cdb0fc27baa2b283",
-          "output_bytes": 452467
-        },
-        "102": {
-          "output_video": "player/videos/EX06/102.mp4",
-          "output_sha256": "e17fa3cc19a4e71888d6f39486503053eee4a18bd1e1107927770d298caa193c",
-          "output_bytes": 451503
-        },
-        "120": {
-          "output_video": "player/videos/EX06/120.mp4",
-          "output_sha256": "efc311e973c9e713fa7290ac080d775f2b069360ded4fea5c78e6300c0003388",
-          "output_bytes": 452365
-        },
-        "201": {
-          "output_video": "player/videos/EX06/201.mp4",
-          "output_sha256": "c820d1332a432f3c61d22853bbba4eb917cfed45ecb0615598b457de164ecb4e",
-          "output_bytes": 452801
-        },
         "210": {
           "output_video": "player/videos/EX06/210.mp4",
-          "output_sha256": "aec658dc9b632672b333f58d205a98953138ec498ee84e11210c432209f8c5d0",
-          "output_bytes": 453220
-        }
-      }
-    },
-    {
-      "id": "EX07",
-      "source_song": "Levitating",
-      "source_video": "experiments/user_study/stimuli/sources/EX07.mp4",
-      "start_seconds": 0,
-      "source_original_start_seconds": 138,
-      "duration_seconds": 6,
-      "diagnostics": {
-        "quality_margin": 0.0517,
-        "beat_margin": 0.1359,
-        "maestro_quality": 0.599,
-        "lodge_quality": 0.5358,
-        "edge_quality": 0.5473,
-        "min_pose_difference_degrees": 5.6444,
-        "max_near_identical_ratio": 0.899
-      },
-      "rationale": "The LLM-authored arm-punch drop delivers the song's strongest beat margin with clean, unclipped upper-body articulation.",
-      "source_sha256": "8d440f0b23fcdc1800f24fd7376ccaf51f573960afe755460eb1912f1826143e",
-      "frames": 180,
-      "permutations": {
-        "012": {
-          "output_video": "player/videos/EX07/012.mp4",
-          "output_sha256": "227768a40e1aa1ee9c03b577d2e700fc45ce6382f4bdce8bd06ddcfc3663f35b",
-          "output_bytes": 473307
-        },
-        "021": {
-          "output_video": "player/videos/EX07/021.mp4",
-          "output_sha256": "913723330354aa5a26ae6a4f132130c5ee5fac4c3855c02e6c42a54610652839",
-          "output_bytes": 472389
-        },
-        "102": {
-          "output_video": "player/videos/EX07/102.mp4",
-          "output_sha256": "08a46798b416ac095ccc3f63a022a34b219d988f0e9ca3ba1d5ac327be9cef68",
-          "output_bytes": 472432
-        },
-        "120": {
-          "output_video": "player/videos/EX07/120.mp4",
-          "output_sha256": "0206cf8fcfb7b79fb9cebd4bb2b257d459ae23283aff6c0dcc28c4c0d17e0e00",
-          "output_bytes": 473923
-        },
-        "201": {
-          "output_video": "player/videos/EX07/201.mp4",
-          "output_sha256": "aa0d97300f5db2214514fc3cfee1d2c74e65e274653fbabf8b4c983378e1ad47",
-          "output_bytes": 478026
-        },
-        "210": {
-          "output_video": "player/videos/EX07/210.mp4",
-          "output_sha256": "2feeec19681243cf77975927d3fec68eccda7fd531b89c52ff1b2b8a672727d1",
-          "output_bytes": 472933
-        }
-      }
-    },
-    {
-      "id": "EX08",
-      "source_song": "Levitating",
-      "source_video": "experiments/user_study/stimuli/sources/EX08.mp4",
-      "start_seconds": 0,
-      "source_original_start_seconds": 60,
-      "duration_seconds": 6,
-      "diagnostics": {
-        "quality_margin": 0.037,
-        "beat_margin": 0.0357,
-        "maestro_quality": 0.6212,
-        "lodge_quality": 0.5631,
-        "edge_quality": 0.5842,
-        "min_pose_difference_degrees": 3.8424,
-        "max_near_identical_ratio": 0.8904
-      },
-      "rationale": "The chest-pop drop provides a compact rhythmic accent with positive quality and timing margins and clear separation from both baselines.",
-      "source_sha256": "981917354c4d159fd44540eb995a0d761a19cece59a93231957eaf4bd544be82",
-      "frames": 180,
-      "permutations": {
-        "012": {
-          "output_video": "player/videos/EX08/012.mp4",
-          "output_sha256": "a67dd683de16c69d0826ab59e071a34ae0e92e81a6d44e8a59311f23b3bb8494",
-          "output_bytes": 482877
-        },
-        "021": {
-          "output_video": "player/videos/EX08/021.mp4",
-          "output_sha256": "b524401011773b055c980fe429317e87da5193b3f7fc0f093b9bd7a780f685ed",
-          "output_bytes": 483325
-        },
-        "102": {
-          "output_video": "player/videos/EX08/102.mp4",
-          "output_sha256": "c302ff4e38ed6b6b9561bd5d4de610bde98e6afc82709ed9fff072ed40f1d9f5",
-          "output_bytes": 483786
-        },
-        "120": {
-          "output_video": "player/videos/EX08/120.mp4",
-          "output_sha256": "9fa65c1871f602da421227d2baea522533bed8cf1ea29e23e2b24c3eae838fcf",
-          "output_bytes": 485615
-        },
-        "201": {
-          "output_video": "player/videos/EX08/201.mp4",
-          "output_sha256": "1f5089db25fc088a37dd1f03cbe3b5851bc10a621987de51cfa9f3f3e147ec9a",
-          "output_bytes": 486486
-        },
-        "210": {
-          "output_video": "player/videos/EX08/210.mp4",
-          "output_sha256": "c9333dae201317774f24f624634a103d9cffbf927782bb098e9d378a84854d65",
-          "output_bytes": 483042
-        }
-      }
-    },
-    {
-      "id": "EX09",
-      "source_song": "Levitating",
-      "source_video": "experiments/user_study/stimuli/sources/EX09.mp4",
-      "start_seconds": 0,
-      "source_original_start_seconds": 153,
-      "duration_seconds": 6,
-      "diagnostics": {
-        "quality_margin": 0.0121,
-        "beat_margin": 0.0122,
-        "maestro_quality": 0.6593,
-        "lodge_quality": 0.6471,
-        "edge_quality": 0.5626,
-        "min_pose_difference_degrees": 7.5861,
-        "max_near_identical_ratio": 0.6942
-      },
-      "rationale": "The drop-to-bridge transition introduces the LLM-authored wave while preserving stable orientation, continuity, and distinct motion.",
-      "source_sha256": "21e77927c84b53afcba095b38df3fd493748c5cb7b836b0fed95206e35f91a13",
-      "frames": 180,
-      "permutations": {
-        "012": {
-          "output_video": "player/videos/EX09/012.mp4",
-          "output_sha256": "17e90ec5dae11e82212eaf5be62388e9469dc5d6f5da3d79f3432ba1784b2b10",
-          "output_bytes": 475009
-        },
-        "021": {
-          "output_video": "player/videos/EX09/021.mp4",
-          "output_sha256": "4405e9e263fecae0480e1cb236185628b1c59899dc3f298a3da5249f726babb1",
-          "output_bytes": 474984
-        },
-        "102": {
-          "output_video": "player/videos/EX09/102.mp4",
-          "output_sha256": "5226128dd553a30b2fb994360b418ce7b05c220ae94a935fee46e505b66fb020",
-          "output_bytes": 476331
-        },
-        "120": {
-          "output_video": "player/videos/EX09/120.mp4",
-          "output_sha256": "e72a4fd032cffec16a7b05c2967a92917c2b5415f9fb5708948e5e7a9bd5f751",
-          "output_bytes": 477336
-        },
-        "201": {
-          "output_video": "player/videos/EX09/201.mp4",
-          "output_sha256": "4940578261fc158582c114e5f7e1a4c221e891270962993eeeebb915497d92ad",
-          "output_bytes": 475879
-        },
-        "210": {
-          "output_video": "player/videos/EX09/210.mp4",
-          "output_sha256": "92fc438376a2a2c80f39a5b3400b760fbf6407be7950a4b92fdec4efb0716a25",
-          "output_bytes": 476096
-        }
-      }
-    },
-    {
-      "id": "EX10",
-      "source_song": "Dynamite",
-      "source_video": "experiments/user_study/stimuli/sources/EX10.mp4",
-      "start_seconds": 0,
-      "source_original_start_seconds": 14,
-      "duration_seconds": 6,
-      "diagnostics": {
-        "quality_margin": 0.0746,
-        "beat_margin": 0.1412,
-        "maestro_quality": 0.6756,
-        "lodge_quality": 0.5142,
-        "edge_quality": 0.601,
-        "min_pose_difference_degrees": 9.35,
-        "max_near_identical_ratio": 0.675
-      },
-      "rationale": "The LLM-authored step-touch and wave phrase gives Dynamite its strongest quality and beat advantage with broad, readable movement.",
-      "source_sha256": "a5f824880f2fb73a483159acad3238d3afe3455758d0e8079c1a832f40df4b22",
-      "frames": 180,
-      "permutations": {
-        "012": {
-          "output_video": "player/videos/EX10/012.mp4",
-          "output_sha256": "c5cf7fc1b4c39607e80a306781200dcd519207b2f5e83c446a3fae9c45563def",
-          "output_bytes": 508992
-        },
-        "021": {
-          "output_video": "player/videos/EX10/021.mp4",
-          "output_sha256": "d5c27d1fc708bf239a59b7f22887c4353219f3488c166eedbbb0ccbac20a3c38",
-          "output_bytes": 509256
-        },
-        "102": {
-          "output_video": "player/videos/EX10/102.mp4",
-          "output_sha256": "363d4afaaebf692087037fcb9d972a6ff21a3b027b06897bf887676add38c6dc",
-          "output_bytes": 505474
-        },
-        "120": {
-          "output_video": "player/videos/EX10/120.mp4",
-          "output_sha256": "8cf6763b7e03b6a3705c024c6200bddab21414f6aa6dc0b4c79204cd61bd9fae",
-          "output_bytes": 505508
-        },
-        "201": {
-          "output_video": "player/videos/EX10/201.mp4",
-          "output_sha256": "faa3853a689de2eb8986e036bab8453b327bf84d1933cfb1ff07886c252735e7",
-          "output_bytes": 503873
-        },
-        "210": {
-          "output_video": "player/videos/EX10/210.mp4",
-          "output_sha256": "589690b877fc0a3b3d5a1059290e07679c7f2e291357856b9a0c7abb9289f324",
-          "output_bytes": 504660
-        }
-      }
-    },
-    {
-      "id": "EX11",
-      "source_song": "Dynamite",
-      "source_video": "experiments/user_study/stimuli/sources/EX11.mp4",
-      "start_seconds": 0,
-      "source_original_start_seconds": 127,
-      "duration_seconds": 6,
-      "diagnostics": {
-        "quality_margin": 0.0406,
-        "beat_margin": 0.0758,
-        "maestro_quality": 0.68,
-        "lodge_quality": 0.6383,
-        "edge_quality": 0.6394,
-        "min_pose_difference_degrees": 14.4533,
-        "max_near_identical_ratio": 0.5245
-      },
-      "rationale": "A long-form drop hands off into the chest-pop section with the song's largest pose separation and a clean rhythmic transition.",
-      "source_sha256": "e75375435ecd1e044ff8318078037a213f584d2a9f0234661e3d692b02e59944",
-      "frames": 180,
-      "permutations": {
-        "012": {
-          "output_video": "player/videos/EX11/012.mp4",
-          "output_sha256": "b9a38f64e59b90db2e635bf1601d80ff26f45da5445574620389521d5a49c84e",
-          "output_bytes": 472838
-        },
-        "021": {
-          "output_video": "player/videos/EX11/021.mp4",
-          "output_sha256": "e0c57614f5158602dfb184d151b272f633540b522b490f6dfdefc1a55afe3efc",
-          "output_bytes": 472025
-        },
-        "102": {
-          "output_video": "player/videos/EX11/102.mp4",
-          "output_sha256": "13b1a80573655af98a2e3b7842d861fb1797b4d7b32b65c6a33bc57a3e82222d",
-          "output_bytes": 472927
-        },
-        "120": {
-          "output_video": "player/videos/EX11/120.mp4",
-          "output_sha256": "b043a07b8737285742c6b5aa7bb673c6551bb6562ee0cd99215f9ea0a30d8a9c",
-          "output_bytes": 471893
-        },
-        "201": {
-          "output_video": "player/videos/EX11/201.mp4",
-          "output_sha256": "dcacf1bf48b335548a3bbc06fb3378e97d9227f452bb46cb1d6cfa83cb45c9cc",
-          "output_bytes": 472844
-        },
-        "210": {
-          "output_video": "player/videos/EX11/210.mp4",
-          "output_sha256": "06d1489ad94452ff7f36777265e6dd1523399abe68a7ec1bfeb41b7e35f587f5",
-          "output_bytes": 471913
-        }
-      }
-    },
-    {
-      "id": "EX12",
-      "source_song": "Dynamite",
-      "source_video": "experiments/user_study/stimuli/sources/EX12.mp4",
-      "start_seconds": 0,
-      "source_original_start_seconds": 180,
-      "duration_seconds": 6,
-      "diagnostics": {
-        "quality_margin": 0.0206,
-        "beat_margin": 0.0473,
-        "maestro_quality": 0.6234,
-        "lodge_quality": 0.5863,
-        "edge_quality": 0.6028,
-        "min_pose_difference_degrees": 1.0824,
-        "max_near_identical_ratio": 0.9394
-      },
-      "rationale": "A subtle but clean side-step and half-turn phrase preserves continuous flow and positive quality and beat margins over both baselines.",
-      "source_sha256": "3afb53e46acd435044c1d75ae8fbafa39e8444c33109b450381058a37b6e1792",
-      "frames": 180,
-      "permutations": {
-        "012": {
-          "output_video": "player/videos/EX12/012.mp4",
-          "output_sha256": "18a0eab015aacc02c5ea69f37def7a2667550ab6b4f56241ed1619ca63eb6eeb",
-          "output_bytes": 465290
-        },
-        "021": {
-          "output_video": "player/videos/EX12/021.mp4",
-          "output_sha256": "3076d3a7d35908cea7767cfa563a4a70642b361d7d1168b511aadabeceaedd9e",
-          "output_bytes": 464995
-        },
-        "102": {
-          "output_video": "player/videos/EX12/102.mp4",
-          "output_sha256": "eb9fd9707c955763c8dfb0664a94f1ca5cc1285e9e8b1fb82f99937fd8ab247b",
-          "output_bytes": 466081
-        },
-        "120": {
-          "output_video": "player/videos/EX12/120.mp4",
-          "output_sha256": "5af0463f4de236d4ad812d7452bd2d848c947377419874f0c6d86fe076627db1",
-          "output_bytes": 465684
-        },
-        "201": {
-          "output_video": "player/videos/EX12/201.mp4",
-          "output_sha256": "a1415f61588af714a3dd7bfd55b32f614c7f276e740b7a84ed3d0ece59d0c988",
-          "output_bytes": 464945
-        },
-        "210": {
-          "output_video": "player/videos/EX12/210.mp4",
-          "output_sha256": "32ea0279d780f779649f27a72269a42a2516b020338e58fde372311c1a8e40d4",
-          "output_bytes": 466408
+          "output_sha256": "86be448f1cb1846169d0dea85bd8b060fc4aafc400d5fa33e903458d0e81a6c4",
+          "output_bytes": 1249597
         }
       }
     }

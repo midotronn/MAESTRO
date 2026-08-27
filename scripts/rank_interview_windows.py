@@ -30,7 +30,17 @@ CROP_BOTTOM = 440
 ANALYSIS_FPS = 15.0
 
 
-def _audio_features(video: Path, frame_count: int) -> tuple[np.ndarray, np.ndarray]:
+def _fit_length(values: np.ndarray, frame_count: int) -> np.ndarray:
+    values = np.asarray(values[:frame_count], dtype=np.float64)
+    if len(values) < frame_count:
+        values = np.pad(values, (0, frame_count - len(values)))
+    return values
+
+
+def _audio_features(
+    video: Path,
+    frame_count: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     with tempfile.TemporaryDirectory() as tmp:
         wav = Path(tmp) / "audio.wav"
@@ -63,10 +73,16 @@ def _audio_features(video: Path, frame_count: int) -> tuple[np.ndarray, np.ndarr
         hop_length=hop_length,
         aggregate=np.median,
     )
-    onset = np.asarray(onset[:frame_count], dtype=np.float64)
-    if len(onset) < frame_count:
-        onset = np.pad(onset, (0, frame_count - len(onset)))
+    onset = _fit_length(onset, frame_count)
     onset = onset / (np.percentile(onset, 95) + 1e-8)
+    rms = librosa.feature.rms(
+        y=audio,
+        frame_length=2048,
+        hop_length=hop_length,
+        center=True,
+    )[0]
+    rms = _fit_length(rms, frame_count)
+    rms = rms / (np.percentile(rms, 95) + 1e-8)
 
     _, beat_frames = librosa.beat.beat_track(
         onset_envelope=onset,
@@ -78,7 +94,7 @@ def _audio_features(video: Path, frame_count: int) -> tuple[np.ndarray, np.ndarr
     beat_frames = np.asarray(beat_frames, dtype=int)
     beat_frames = beat_frames[(beat_frames >= 0) & (beat_frames < frame_count)]
     beat_mask[beat_frames] = 1.0
-    return onset, beat_mask
+    return onset, beat_mask, rms
 
 
 def _motion_features(video: Path) -> tuple[dict[str, np.ndarray], float]:
@@ -176,6 +192,7 @@ def _window_metrics(
     coverage: np.ndarray,
     onset: np.ndarray,
     beat_mask: np.ndarray,
+    motion_reference: float,
 ) -> dict[str, float]:
     scale = float(np.percentile(motion, 75) + 1e-8)
     normalized = motion / scale
@@ -204,7 +221,13 @@ def _window_metrics(
         "spike_ratio": spike_ratio,
         "coverage": coverage_mean,
         "motion": float(np.mean(normalized)),
+        "visual_energy": float(np.mean(motion) / (motion_reference + 1e-8)),
     }
+
+
+def _energy_percentiles(values: list[float]) -> list[float]:
+    scores = np.asarray(values, dtype=np.float64)
+    return [float(np.mean(scores <= score)) for score in scores]
 
 
 def _sixd_to_matrix(values: np.ndarray) -> np.ndarray:
@@ -288,7 +311,11 @@ def analyze_video(
 ) -> dict[str, object]:
     features, duration = _motion_features(video)
     frame_count = min(len(features[f"{method}.motion"]) for method in METHODS)
-    onset, beat_mask = _audio_features(video, frame_count)
+    onset, beat_mask, rms = _audio_features(video, frame_count)
+    motion_references = {
+        method: float(np.percentile(features[f"{method}.motion"], 95))
+        for method in METHODS
+    }
     window_frames = round(window_seconds * ANALYSIS_FPS)
     stride_frames = round(stride_seconds * ANALYSIS_FPS)
     edge_frames = round(edge_seconds * ANALYSIS_FPS)
@@ -303,6 +330,7 @@ def analyze_video(
                 features[f"{method}.coverage"][start:stop],
                 onset[start:stop],
                 beat_mask[start:stop],
+                motion_references[method],
             )
 
         baseline_quality = max(
@@ -322,6 +350,15 @@ def analyze_video(
             method_metrics["LODGE"]["jerk"],
             method_metrics["EDGE"]["jerk"],
         ) - method_metrics["MAESTRO"]["jerk"]
+        audio_energy = float(np.mean(rms[start:stop]))
+        onset_energy = float(np.mean(onset[start:stop]))
+        visual_energy = method_metrics["MAESTRO"]["visual_energy"]
+        energetic_score = (
+            0.45 * audio_energy
+            + 0.20 * onset_energy
+            + 0.25 * visual_energy
+            + 0.10 * min(method_metrics["MAESTRO"]["coverage"] / 0.18, 1.0)
+        )
         rows.append(
             {
                 "start_seconds": round(start / ANALYSIS_FPS, 3),
@@ -330,10 +367,19 @@ def analyze_video(
                 "beat_margin": beat_margin,
                 "freeze_margin": freeze_margin,
                 "jerk_margin": jerk_margin,
+                "audio_energy": audio_energy,
+                "onset_energy": onset_energy,
+                "maestro_visual_energy": visual_energy,
+                "energetic_score": energetic_score,
                 "methods": method_metrics,
             }
         )
 
+    energy_percentiles = _energy_percentiles(
+        [float(row["energetic_score"]) for row in rows]
+    )
+    for row, percentile in zip(rows, energy_percentiles, strict=True):
+        row["energy_percentile"] = percentile
     rows.sort(key=lambda row: float(row["quality_margin"]), reverse=True)
     return {
         "source": video.name,

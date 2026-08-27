@@ -2,15 +2,14 @@
 
 The source videos are synchronized LODGE/EDGE/MAESTRO composites. This script extracts the
 capability-focused windows recorded in ``experiments/user_study/stimuli/selection.json``, removes
-the source labels and story timeline, and preserves the canonical three-lane order. The study
-player reorders those lanes according to the private participant assignment.
+the source labels and story timeline, and renders the one fixed balanced lane order assigned to
+each excerpt in ``player/assignments.json``.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
-import itertools
 import json
 import os
 import shutil
@@ -75,12 +74,50 @@ def _decode_video(ffmpeg: str, path: Path, expected_frames: int) -> None:
         )
 
 
+def _fixed_orders(
+    selection_path: Path,
+    selection: dict,
+) -> tuple[dict[str, tuple[int, ...]], list[dict[str, object]]]:
+    assignments_path = selection_path.parent / "player" / "assignments.json"
+    assignments = json.loads(assignments_path.read_text(encoding="utf-8"))
+    if assignments.get("protocol") != selection.get("protocol"):
+        raise ValueError("selection and assignment protocols do not match")
+
+    sequence = assignments.get("sequence")
+    if not isinstance(sequence, list):
+        raise ValueError("assignments sequence must be a list")
+
+    orders = {}
+    for comparison in sequence:
+        if not isinstance(comparison, dict):
+            raise ValueError(f"invalid fixed-sequence entry: {comparison}")
+        excerpt_id = comparison.get("excerpt")
+        raw_lanes = comparison.get("lanes")
+        if not isinstance(excerpt_id, str) or not isinstance(raw_lanes, list):
+            raise ValueError(f"invalid fixed-sequence entry: {comparison}")
+        lanes = tuple(raw_lanes)
+        if excerpt_id in orders:
+            raise ValueError(f"duplicate assignment for {excerpt_id}")
+        if (
+            any(isinstance(lane, bool) or not isinstance(lane, int) for lane in lanes)
+            or sorted(lanes) != [0, 1, 2]
+        ):
+            raise ValueError(f"invalid lane order for {excerpt_id}: {lanes}")
+        orders[excerpt_id] = lanes
+
+    excerpt_ids = [excerpt["id"] for excerpt in selection["excerpts"]]
+    if set(orders) != set(excerpt_ids) or len(sequence) != len(excerpt_ids):
+        raise ValueError("fixed sequence must assign every selected excerpt exactly once")
+    return orders, sequence
+
+
 def build(repo: Path, selection_path: Path) -> dict:
     selection = json.loads(selection_path.read_text(encoding="utf-8"))
     player = selection_path.parent / "player"
     output_dir = player / "videos"
     output_dir.mkdir(parents=True, exist_ok=True)
     ffmpeg = _ffmpeg()
+    fixed_orders, sequence = _fixed_orders(selection_path, selection)
     generated = []
 
     for excerpt in selection["excerpts"]:
@@ -89,60 +126,63 @@ def build(repo: Path, selection_path: Path) -> dict:
         excerpt_dir.mkdir(parents=True, exist_ok=True)
         duration = float(excerpt["duration_seconds"])
         expected_frames = round(duration * float(selection["output"]["fps"]))
-        permutations = {}
-        for order in itertools.permutations(range(3)):
-            code = "".join(str(lane) for lane in order)
-            output = excerpt_dir / f"{code}.mp4"
-            filters = "".join(
-                f"[0:v]crop=480:400:{lane * 480}:40,setsar=1[lane{lane}];"
-                for lane in range(3)
-            )
-            filters += "".join(f"[lane{lane}]" for lane in order) + "hstack=inputs=3[video]"
-            subprocess.run(
-                [
-                    ffmpeg,
-                    "-hide_banner",
-                    "-loglevel",
-                    "error",
-                    "-i",
-                    str(source),
-                    "-ss",
-                    str(excerpt["start_seconds"]),
-                    "-t",
-                    str(duration),
-                    "-filter_complex",
-                    filters,
-                    "-map",
-                    "[video]",
-                    "-map",
-                    "0:a:0",
-                    "-r",
-                    str(selection["output"]["fps"]),
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "medium",
-                    "-crf",
-                    "20",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "192k",
-                    "-movflags",
-                    "+faststart",
-                    "-y",
-                    str(output),
-                ],
-                check=True,
-            )
-            _decode_video(ffmpeg, output, expected_frames)
-            permutations[code] = {
-                "output_video": str(output.relative_to(selection_path.parent)).replace("\\", "/"),
+        order = fixed_orders[excerpt["id"]]
+        code = "".join(str(lane) for lane in order)
+        output = excerpt_dir / f"{code}.mp4"
+        filters = "".join(
+            f"[0:v]crop=480:400:{lane * 480}:40,setsar=1[lane{lane}];"
+            for lane in range(3)
+        )
+        filters += "".join(f"[lane{lane}]" for lane in order) + "hstack=inputs=3[video]"
+        subprocess.run(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source),
+                "-ss",
+                str(excerpt["start_seconds"]),
+                "-t",
+                str(duration),
+                "-filter_complex",
+                filters,
+                "-map",
+                "[video]",
+                "-map",
+                "0:a:0",
+                "-r",
+                str(selection["output"]["fps"]),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "medium",
+                "-crf",
+                "20",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-movflags",
+                "+faststart",
+                "-y",
+                str(output),
+            ],
+            check=True,
+        )
+        _decode_video(ffmpeg, output, expected_frames)
+        permutations = {
+            code: {
+                "output_video": str(
+                    output.relative_to(selection_path.parent)
+                ).replace("\\", "/"),
                 "output_sha256": _sha256(output),
                 "output_bytes": output.stat().st_size,
             }
+        }
         stale = output_dir / f"{excerpt['id']}.mp4"
         if stale.exists():
             stale.unlink()
@@ -154,14 +194,28 @@ def build(repo: Path, selection_path: Path) -> dict:
                 "permutations": permutations,
             }
         )
-        total_bytes = sum(item["output_bytes"] for item in permutations.values())
-        print(f"{excerpt['id']}: 6 orders ({total_bytes / 1024 / 1024:.1f} MiB)")
+        print(
+            f"{excerpt['id']}: order {code} "
+            f"({output.stat().st_size / 1024 / 1024:.1f} MiB)"
+        )
+
+    selected_ids = {excerpt["id"] for excerpt in selection["excerpts"]}
+    for excerpt_dir in output_dir.iterdir():
+        if excerpt_dir.is_dir() and excerpt_dir.name not in selected_ids:
+            shutil.rmtree(excerpt_dir)
+            continue
+        if excerpt_dir.is_dir():
+            selected_code = "".join(str(lane) for lane in fixed_orders[excerpt_dir.name])
+            for stale in excerpt_dir.glob("*.mp4"):
+                if stale.name != f"{selected_code}.mp4":
+                    stale.unlink()
 
     manifest = {
         "protocol": selection["protocol"],
         "selection_type": selection["selection_type"],
         "blind_lane_order": selection["source_layout"]["lanes"],
         "output": selection["output"],
+        "fixed_sequence": sequence,
         "excerpts": generated,
     }
     manifest_path = selection_path.parent / "manifest.json"

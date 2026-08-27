@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const video = $("comparison");
 let study = null;
-let excerptDuration = 6;
+let excerptDuration = 16;
 
 function formatTime(seconds) {
   const safe = Number.isFinite(seconds) ? seconds : 0;

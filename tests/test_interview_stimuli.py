@@ -19,11 +19,14 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def test_frozen_stimulus_manifest_has_twelve_verified_positive_windows():
+def test_frozen_stimulus_manifest_has_six_verified_high_energy_phrase_windows():
     selection = json.loads((STIMULI / "selection.json").read_text(encoding="utf-8"))
     manifest = json.loads((STIMULI / "manifest.json").read_text(encoding="utf-8"))
 
-    assert selection["protocol"] == "maestro-expert-study-v14-llm-gpt4o-k10-front-facing"
+    assert (
+        selection["protocol"]
+        == "maestro-expert-study-v15-llm-gpt4o-k10-front-facing-16s"
+    )
     assert selection["selection_type"] == "capability-focused expert-elicitation"
     assert selection["generation_evidence"] == {
         "storyboard_model": "gpt-4o",
@@ -35,22 +38,29 @@ def test_frozen_stimulus_manifest_has_twelve_verified_positive_windows():
         "edge_candidates_completed_per_song": 10,
     }
     assert selection["source_layout"]["lanes"] == ["LODGE", "EDGE", "MAESTRO"]
-    assert selection["output"]["duration_seconds"] == 6
+    assert selection["output"]["duration_seconds"] == 16
     assert [item["id"] for item in selection["excerpts"]] == [
-        f"EX{index:02d}" for index in range(1, 13)
+        f"EX{index:02d}" for index in range(1, 7)
     ]
     assert [item["id"] for item in manifest["excerpts"]] == [
-        f"EX{index:02d}" for index in range(1, 13)
+        f"EX{index:02d}" for index in range(1, 7)
     ]
+    assert manifest["protocol"] == selection["protocol"]
+    assert manifest["output"] == selection["output"]
     assert {
         song: sum(item["source_song"] == song for item in selection["excerpts"])
         for song in selection["sources"]
     } == {
-        "Can't Stop the Feeling!": 3,
-        "Uptown Funk": 3,
-        "Levitating": 3,
-        "Dynamite": 3,
+        "Can't Stop the Feeling!": 0,
+        "Dynamite": 2,
+        "Levitating": 0,
+        "Uptown Funk": 4,
     }
+    assert {
+        song
+        for song, source in selection["sources"].items()
+        if source["selected_for_long_study"]
+    } == {"Dynamite", "Uptown Funk"}
 
     for source in selection["sources"].values():
         report_path = (
@@ -70,18 +80,25 @@ def test_frozen_stimulus_manifest_has_twelve_verified_positive_windows():
 
     for excerpt in manifest["excerpts"]:
         source = ROOT / excerpt["source_video"]
-        assert excerpt["duration_seconds"] == 6
-        assert excerpt["frames"] == 180
+        assert excerpt["duration_seconds"] == 16
+        assert excerpt["frames"] == 480
         assert excerpt["diagnostics"]["quality_margin"] > 0
         assert excerpt["diagnostics"]["beat_margin"] > 0
-        assert excerpt["diagnostics"]["min_pose_difference_degrees"] > 0
+        assert excerpt["diagnostics"]["energetic_score"] >= 0.5
+        assert excerpt["diagnostics"]["min_pose_difference_degrees"] > 4
+        assert excerpt["diagnostics"]["max_near_identical_ratio"] < 0.85
         assert excerpt["source_sha256"] == _sha256(source)
+        assignment = next(
+            comparison
+            for comparison in manifest["fixed_sequence"]
+            if comparison["excerpt"] == excerpt["id"]
+        )
         assert set(excerpt["permutations"]) == {
-            "012", "021", "102", "120", "201", "210"
+            "".join(str(lane) for lane in assignment["lanes"])
         }
         for permutation in excerpt["permutations"].values():
             output = STIMULI / permutation["output_video"]
-            assert output.stat().st_size > 250_000
+            assert output.stat().st_size > 500_000
             with output.open("rb") as stream:
                 assert stream.read(12).find(b"ftyp") >= 0
             assert permutation["output_sha256"] == _sha256(output)
@@ -91,19 +108,22 @@ def test_blind_player_uses_one_fixed_balanced_sequence():
     assignment_path = STIMULI / "player" / "assignments.json"
     assignments = json.loads(assignment_path.read_text(encoding="utf-8"))
     config = json.loads((STIMULI / "player" / "config.json").read_text(encoding="utf-8"))
-    valid_excerpts = {f"EX{index:02d}" for index in range(1, 13)}
+    valid_excerpts = {f"EX{index:02d}" for index in range(1, 7)}
     sequence = assignments["sequence"]
 
-    assert assignments["protocol"] == "maestro-expert-study-v14-llm-gpt4o-k10-front-facing"
+    assert (
+        assignments["protocol"]
+        == "maestro-expert-study-v15-llm-gpt4o-k10-front-facing-16s"
+    )
     assert config["protocol"] == assignments["protocol"]
-    assert config["excerpt_duration_seconds"] == 6
+    assert config["excerpt_duration_seconds"] == 16
     assert sequence == [
-        {"excerpt": "EX03", "lanes": [0, 2, 1]},
-        {"excerpt": "EX04", "lanes": [1, 2, 0]},
-        {"excerpt": "EX08", "lanes": [0, 1, 2]},
-        {"excerpt": "EX06", "lanes": [2, 0, 1]},
-        {"excerpt": "EX09", "lanes": [1, 0, 2]},
-        {"excerpt": "EX02", "lanes": [2, 1, 0]},
+        {"excerpt": "EX01", "lanes": [0, 2, 1]},
+        {"excerpt": "EX02", "lanes": [1, 2, 0]},
+        {"excerpt": "EX03", "lanes": [0, 1, 2]},
+        {"excerpt": "EX04", "lanes": [2, 0, 1]},
+        {"excerpt": "EX05", "lanes": [1, 0, 2]},
+        {"excerpt": "EX06", "lanes": [2, 1, 0]},
     ]
     assert "LODGE" not in assignment_path.read_text(encoding="utf-8")
     assert "EDGE" not in assignment_path.read_text(encoding="utf-8")
@@ -144,3 +164,5 @@ def test_blind_player_has_no_phase_or_participant_state():
     assert "phase=" not in app
     assert "participant=" not in app
     assert "triplet=" not in app
+    assert 'max="16"' in page
+    assert "0:00 / 0:16" in page
