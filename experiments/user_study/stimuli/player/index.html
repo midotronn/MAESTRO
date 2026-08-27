@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MAESTRO Blind Comparison Player</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <span class="eyebrow">MAESTRO expert study</span>
+        <h1>Blind comparison player</h1>
+      </div>
+      <a id="formLink" class="button secondary" target="_blank" rel="noreferrer">Open response form ↗</a>
+    </header>
+
+    <section class="controls" aria-label="Assignment controls">
+      <label>Phase<select id="phase"><option value="pilot">Pilot</option><option value="main">Main study</option></select></label>
+      <label>Participant<select id="participant"></select></label>
+      <label>Triplet<select id="triplet"></select></label>
+      <div class="assignment"><strong id="assignmentCode"></strong><span id="excerptLabel"></span></div>
+    </section>
+
+    <section class="stage">
+      <div class="blind-labels" aria-hidden="true"><span>A</span><span>B</span><span>C</span></div>
+      <video id="comparison" playsinline preload="auto" aria-label="Three synchronized blind dance videos labeled A, B, and C"></video>
+    </section>
+
+    <section class="transport" aria-label="Playback controls">
+      <button id="previous" class="button secondary" type="button">← Previous</button>
+      <button id="play" class="button primary" type="button">▶ Play</button>
+      <button id="restart" class="button secondary" type="button">↺ Restart</button>
+      <input id="scrub" type="range" min="0" max="10" step="0.01" value="0" aria-label="Video position" />
+      <output id="time">0:00 / 0:10</output>
+      <button id="fullscreen" class="button secondary" type="button">Full screen</button>
+      <button id="next" class="button secondary" type="button">Next →</button>
+    </section>
+
+    <p class="note">Method identities are hidden. Play all three views together and use “No clear difference” rather than guessing.</p>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

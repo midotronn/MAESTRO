@@ -60,6 +60,46 @@ def test_retime_changes_length_binary_contacts_and_is_identity_at_same_length():
     assert np.array_equal(T.retime(m, 40), m)
 
 
+def test_story_accepts_small_model_length_quantization_but_rejects_large_mismatch(monkeypatch):
+    structure = _structure()
+    board = SB.Storyboard(
+        arc="test",
+        plans=[
+            SB.SectionPlan(i, section.role, float(section.energy), "test", "auto")
+            for i, section in enumerate(structure.sections)
+        ],
+    )
+    metadata = type("Metadata", (), {"beat_frames": np.arange(0, 300, 15)})()
+    monkeypatch.setattr(
+        ST,
+        "assemble_story",
+        lambda decisions, **_kwargs: np.concatenate(
+            [decision["clip"] for decision in decisions],
+            axis=0,
+        ),
+    )
+
+    result = ST.build_story_dance(
+        _valid_motion(288, seed=30),
+        _valid_motion(288, seed=31),
+        structure,
+        board,
+        metadata,
+        target_frames=300,
+    )
+    assert result.motion.shape[0] == 300
+
+    with np.testing.assert_raises_regex(ValueError, "too far"):
+        ST.build_story_dance(
+            _valid_motion(284, seed=32),
+            _valid_motion(300, seed=33),
+            structure,
+            board,
+            metadata,
+            target_frames=300,
+        )
+
+
 def test_reuse_fit_preserves_tempo_by_selecting_a_centered_excerpt():
     source = _valid_motion(96, seed=31)
     fitted, fit = ST._fit_reuse_clip(source, 36, requested_time_scale=1.0)

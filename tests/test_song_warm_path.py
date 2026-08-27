@@ -181,6 +181,25 @@ def test_dance_generation_handler_emits_exact_seed_zero_bank(
     )
 
 
+def test_window_bank_retimes_every_take_to_the_story_length(tmp_path, monkeypatch):
+    import scripts.build_window_bank as bank
+
+    sid = "long_song"
+    np.save(tmp_path / f"lodge_fd_{sid}_full.npy", np.zeros((96, 139), dtype=np.float32))
+    np.save(tmp_path / f"edge_fd_{sid}_full.npy", np.zeros((104, 139), dtype=np.float32))
+    np.save(tmp_path / f"lodge_fd_{sid}_feats.npy", np.zeros((2, 35), dtype=np.float32))
+    np.save(tmp_path / f"edge{sid}_slices.npy", np.zeros((2, 3), dtype=np.float32))
+    np.save(tmp_path / f"fd_{sid}_STORY_bestofk.npy", np.zeros((100, 139), dtype=np.float32))
+    monkeypatch.setattr(bank, "to_lodge_zup", lambda motion: motion)
+    monkeypatch.setattr(bank, "to_edge_zup", lambda motion: motion)
+
+    result = bank.build_bank(sid, 1, workspace=tmp_path)
+
+    assert len(result["files"]) == 2
+    assert np.load(tmp_path / f"bank_{sid}_lodge_seed0.npy").shape == (100, 139)
+    assert np.load(tmp_path / f"bank_{sid}_edge_seed0.npy").shape == (100, 139)
+
+
 def test_dance_generation_handler_cleans_before_bank_and_marks_success(
     tmp_path,
 ):

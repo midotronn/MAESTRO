@@ -796,6 +796,36 @@ def test_lists_songs_and_opens_session(client):
     assert st["head"] and len(st["timeline"]) == 1
 
 
+def test_interview_mode_lists_only_curated_songs_in_order(client, monkeypatch):
+    import server.app as A
+
+    for sid, name, order, interview in (
+        ("curated_b", "Second choice", 2, True),
+        ("curated_a", "First choice", 1, True),
+        ("internal", "Calibration", 0, False),
+    ):
+        song = A.MEDIA / sid
+        song.mkdir()
+        np.save(song / "base_motion.npy", np.zeros((30, 139), dtype=np.float32))
+        (song / "meta.json").write_text(
+            json.dumps({"name": name, "order": order, "interview": interview}),
+            encoding="utf-8",
+        )
+    monkeypatch.setenv("MAESTRO_INTERVIEW_MODE", "1")
+
+    songs = client.get("/api/songs").json()["songs"]
+
+    assert [song["sid"] for song in songs] == ["curated_a", "curated_b"]
+    assert [song["name"] for song in songs] == ["First choice", "Second choice"]
+
+
+def test_study_player_is_mounted_and_linked_from_editor(client):
+    study = client.get("/study/")
+    assert study.status_code == 200
+    assert "Blind comparison player" in study.text
+    assert 'href="/study/"' in client.get("/").text
+
+
 def test_song_lookup_resolves_the_media_root(tmp_path, monkeypatch):
     import server.app as A
 

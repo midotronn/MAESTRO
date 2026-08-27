@@ -1,0 +1,208 @@
+{
+  "protocol": "maestro-expert-study-v11-background-refinement",
+  "selection_type": "capability-focused expert-elicitation",
+  "selection_note": "These windows intentionally show cases where MAESTRO is stronger than both baselines. They are demonstration and expert-elicitation stimuli, not a random or representative benchmark sample.",
+  "source_layout": {
+    "width": 1440,
+    "height": 480,
+    "lanes": [
+      "LODGE",
+      "EDGE",
+      "MAESTRO"
+    ],
+    "lane_width": 480,
+    "crop": {
+      "top": 40,
+      "bottom": 440
+    }
+  },
+  "output": {
+    "width": 1440,
+    "height": 400,
+    "fps": 30,
+    "duration_seconds": 10
+  },
+  "diagnostic_method": "Sliding 10-second windows at one-second stride. Optical-flow motion timing was compared with audio onset and beat timing; contact sheets were then reviewed for distinct motion, clipping, stalls, and transition artifacts.",
+  "excerpts": [
+    {
+      "id": "EX01",
+      "source_song": "FineDance 002",
+      "source_video": "docs/static/videos/story_002_3way.mp4",
+      "start_seconds": 63,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0658,
+        "beat_margin": 0.1389,
+        "maestro_quality": 0.6195,
+        "lodge_quality": 0.5537,
+        "edge_quality": 0.5338
+      },
+      "rationale": "Clear MAESTRO timing advantage with distinct poses and no visible clipping."
+    },
+    {
+      "id": "EX02",
+      "source_song": "FineDance 037",
+      "source_video": "docs/static/videos/story_037_3way.mp4",
+      "start_seconds": 2,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0206,
+        "beat_margin": 0.0692,
+        "maestro_quality": 0.629,
+        "lodge_quality": 0.6085,
+        "edge_quality": 0.5632
+      },
+      "rationale": "Early phrase with three visibly distinct interpretations and a positive MAESTRO timing margin."
+    },
+    {
+      "id": "EX03",
+      "source_song": "FineDance 037",
+      "source_video": "docs/static/videos/story_037_3way.mp4",
+      "start_seconds": 34,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.1229,
+        "beat_margin": 0.2455,
+        "maestro_quality": 0.7149,
+        "lodge_quality": 0.5921,
+        "edge_quality": 0.5558
+      },
+      "rationale": "Largest FineDance 037 margin, with expressive full-body accents and clean travel."
+    },
+    {
+      "id": "EX04",
+      "source_song": "FineDance 037",
+      "source_video": "docs/static/videos/story_037_3way.mp4",
+      "start_seconds": 46,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0401,
+        "beat_margin": 0.1484,
+        "maestro_quality": 0.6042,
+        "lodge_quality": 0.5642,
+        "edge_quality": 0.5401
+      },
+      "rationale": "A separate high-energy phrase with stronger MAESTRO beat accents and pose variety."
+    },
+    {
+      "id": "EX05",
+      "source_song": "FineDance 150",
+      "source_video": "docs/static/videos/story_150_3way.mp4",
+      "start_seconds": 12,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0743,
+        "beat_margin": 0.1561,
+        "maestro_quality": 0.6323,
+        "lodge_quality": 0.558,
+        "edge_quality": 0.5366
+      },
+      "rationale": "MAESTRO adds clearer upper-body phrasing without stalls or boundary artifacts."
+    },
+    {
+      "id": "EX06",
+      "source_song": "FineDance 150",
+      "source_video": "docs/static/videos/story_150_3way.mp4",
+      "start_seconds": 70,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0882,
+        "beat_margin": 0.083,
+        "maestro_quality": 0.6398,
+        "lodge_quality": 0.5517,
+        "edge_quality": 0.5464
+      },
+      "rationale": "Build-to-climax region with strong level changes and a clean MAESTRO transition."
+    },
+    {
+      "id": "EX07",
+      "source_song": "FineDance 150",
+      "source_video": "docs/static/videos/story_150_3way.mp4",
+      "start_seconds": 86,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0794,
+        "beat_margin": 0.1734,
+        "maestro_quality": 0.6506,
+        "lodge_quality": 0.52,
+        "edge_quality": 0.5713
+      },
+      "rationale": "Late climax phrase where MAESTRO maintains energy and coherent footwork."
+    },
+    {
+      "id": "EX08",
+      "source_song": "FineDance 195",
+      "source_video": "docs/static/videos/story_195_3way.mp4",
+      "start_seconds": 3,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0946,
+        "beat_margin": 0.2459,
+        "maestro_quality": 0.5522,
+        "lodge_quality": 0.4576,
+        "edge_quality": 0.4457
+      },
+      "rationale": "Strong opening advantage with stable rhythm and distinct full-body movement."
+    },
+    {
+      "id": "EX09",
+      "source_song": "FineDance 195",
+      "source_video": "docs/static/videos/story_195_3way.mp4",
+      "start_seconds": 28,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0529,
+        "beat_margin": 0.1266,
+        "maestro_quality": 0.6351,
+        "lodge_quality": 0.5821,
+        "edge_quality": 0.5739
+      },
+      "rationale": "Mid-song phrase with clearer MAESTRO accents and broader expressive range."
+    },
+    {
+      "id": "EX10",
+      "source_song": "FineDance 208",
+      "source_video": "docs/static/videos/story_208_3way.mp4",
+      "start_seconds": 12,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0428,
+        "beat_margin": 0.077,
+        "maestro_quality": 0.6115,
+        "lodge_quality": 0.5686,
+        "edge_quality": 0.5663
+      },
+      "rationale": "The strongest audited FineDance 208 window, retained for source-song diversity."
+    },
+    {
+      "id": "EX11",
+      "source_song": "Treasure",
+      "source_video": "docs/static/videos/story_trs_3way.mp4",
+      "start_seconds": 110,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0696,
+        "beat_margin": 0.1594,
+        "maestro_quality": 0.6421,
+        "lodge_quality": 0.5725,
+        "edge_quality": 0.5566
+      },
+      "rationale": "Reprised chorus material with coherent MAESTRO reuse and stronger beat timing."
+    },
+    {
+      "id": "EX12",
+      "source_song": "Treasure",
+      "source_video": "docs/static/videos/story_trs_3way.mp4",
+      "start_seconds": 131,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.1164,
+        "beat_margin": 0.2699,
+        "maestro_quality": 0.6822,
+        "lodge_quality": 0.5658,
+        "edge_quality": 0.5642
+      },
+      "rationale": "The strongest Treasure window, with a pronounced MAESTRO timing and flow advantage."
+    }
+  ]
+}

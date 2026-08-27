@@ -1,0 +1,605 @@
+{
+  "protocol": "maestro-expert-study-v11-background-refinement",
+  "selection_type": "capability-focused expert-elicitation",
+  "blind_lane_order": [
+    "LODGE",
+    "EDGE",
+    "MAESTRO"
+  ],
+  "output": {
+    "width": 1440,
+    "height": 400,
+    "fps": 30,
+    "duration_seconds": 10
+  },
+  "excerpts": [
+    {
+      "id": "EX01",
+      "source_song": "FineDance 002",
+      "source_video": "docs/static/videos/story_002_3way.mp4",
+      "start_seconds": 63,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0658,
+        "beat_margin": 0.1389,
+        "maestro_quality": 0.6195,
+        "lodge_quality": 0.5537,
+        "edge_quality": 0.5338
+      },
+      "rationale": "Clear MAESTRO timing advantage with distinct poses and no visible clipping.",
+      "source_sha256": "c6593df80d7bbdab2c4c6819647f7308ed4582a77ba7f09a35f56065e150a9f7",
+      "frames": 300,
+      "permutations": {
+        "012": {
+          "output_video": "player/videos/EX01/012.mp4",
+          "output_sha256": "8a57b9cdb5f2d8ce9d75745ee894bba8807e39430dfb91e84ca9e238cd647860",
+          "output_bytes": 1180628
+        },
+        "021": {
+          "output_video": "player/videos/EX01/021.mp4",
+          "output_sha256": "a24cb1a4428f51aca2f03eecb6aa1a70051db393a38bb70658297d64f69d36d6",
+          "output_bytes": 1182202
+        },
+        "102": {
+          "output_video": "player/videos/EX01/102.mp4",
+          "output_sha256": "2503ba625025e5849a4cb581fb4fb6f9918bbf9c01777b56d8ce198d8160e5f4",
+          "output_bytes": 1182229
+        },
+        "120": {
+          "output_video": "player/videos/EX01/120.mp4",
+          "output_sha256": "717802a406787abfd4ecf5ca6b4b0a78ea2d0c2125178ea8ac84169529257b97",
+          "output_bytes": 1181917
+        },
+        "201": {
+          "output_video": "player/videos/EX01/201.mp4",
+          "output_sha256": "7dceaa9fa955c6696208ac1fd925066e1868938dafd32abc2870fe9219982382",
+          "output_bytes": 1181600
+        },
+        "210": {
+          "output_video": "player/videos/EX01/210.mp4",
+          "output_sha256": "ce201ee2bff9858d65bec4f7a56109daaf7bac3ba1915de5aaee74c71e62c6ba",
+          "output_bytes": 1181887
+        }
+      }
+    },
+    {
+      "id": "EX02",
+      "source_song": "FineDance 037",
+      "source_video": "docs/static/videos/story_037_3way.mp4",
+      "start_seconds": 2,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0206,
+        "beat_margin": 0.0692,
+        "maestro_quality": 0.629,
+        "lodge_quality": 0.6085,
+        "edge_quality": 0.5632
+      },
+      "rationale": "Early phrase with three visibly distinct interpretations and a positive MAESTRO timing margin.",
+      "source_sha256": "f1f6f75a21d16738f22b12a2ad7f18335b937938961436cf99ba4a85a45a3b4b",
+      "frames": 300,
+      "permutations": {
+        "012": {
+          "output_video": "player/videos/EX02/012.mp4",
+          "output_sha256": "9de9814ce7109c70989e9234089f7a54b5139176f8209509e8cf8b93eb04b9fd",
+          "output_bytes": 1181562
+        },
+        "021": {
+          "output_video": "player/videos/EX02/021.mp4",
+          "output_sha256": "211af2cab374310a0686454ee63b60c7489dd126c0720dce45bab344799fd298",
+          "output_bytes": 1181369
+        },
+        "102": {
+          "output_video": "player/videos/EX02/102.mp4",
+          "output_sha256": "ebe349cdfd71b3fd7ee1188c7efa3f1248f77942d5aa37cc689d88de7ef28a39",
+          "output_bytes": 1180897
+        },
+        "120": {
+          "output_video": "player/videos/EX02/120.mp4",
+          "output_sha256": "66e2c60b7a33280191dfba701f49c483d666f0952fbbd7a07b8804684311ff93",
+          "output_bytes": 1179084
+        },
+        "201": {
+          "output_video": "player/videos/EX02/201.mp4",
+          "output_sha256": "6907718308d07f350d4de3d8d9bde84df3e87cfb2781d8c4cfdc2001ffbcf6e5",
+          "output_bytes": 1180552
+        },
+        "210": {
+          "output_video": "player/videos/EX02/210.mp4",
+          "output_sha256": "e1961f5705334a745e4a484dc94bf860fccfa7b480bc6a7a03cd06abad5afc10",
+          "output_bytes": 1182576
+        }
+      }
+    },
+    {
+      "id": "EX03",
+      "source_song": "FineDance 037",
+      "source_video": "docs/static/videos/story_037_3way.mp4",
+      "start_seconds": 34,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.1229,
+        "beat_margin": 0.2455,
+        "maestro_quality": 0.7149,
+        "lodge_quality": 0.5921,
+        "edge_quality": 0.5558
+      },
+      "rationale": "Largest FineDance 037 margin, with expressive full-body accents and clean travel.",
+      "source_sha256": "f1f6f75a21d16738f22b12a2ad7f18335b937938961436cf99ba4a85a45a3b4b",
+      "frames": 300,
+      "permutations": {
+        "012": {
+          "output_video": "player/videos/EX03/012.mp4",
+          "output_sha256": "4357ab6ce6a665b01697bfc755653fd306c690c06048e9cf397f75161b55e9b8",
+          "output_bytes": 1215880
+        },
+        "021": {
+          "output_video": "player/videos/EX03/021.mp4",
+          "output_sha256": "1413bf9b73e6ce21a6227babd8d4cec6a7cfda98f75943de959cfd2f82fa7a92",
+          "output_bytes": 1216616
+        },
+        "102": {
+          "output_video": "player/videos/EX03/102.mp4",
+          "output_sha256": "70a2b78810f8a145cd7889b7b1a3973d90b667cfc0fb1685ec5642b8cdeb57d5",
+          "output_bytes": 1217219
+        },
+        "120": {
+          "output_video": "player/videos/EX03/120.mp4",
+          "output_sha256": "39660b3056461e14a89b1ee0bdec30de1fb94661b4c9fd68152c82f4190bfceb",
+          "output_bytes": 1217658
+        },
+        "201": {
+          "output_video": "player/videos/EX03/201.mp4",
+          "output_sha256": "66680f69f1269f3abea9a7d72659510e3fc38da3d2c7c383d42b8775bb511e9f",
+          "output_bytes": 1217896
+        },
+        "210": {
+          "output_video": "player/videos/EX03/210.mp4",
+          "output_sha256": "3ad716c3d1ff3af7e63be6d6eb2c06ed4c0dd37749afe3478cf95219c634bbcd",
+          "output_bytes": 1216179
+        }
+      }
+    },
+    {
+      "id": "EX04",
+      "source_song": "FineDance 037",
+      "source_video": "docs/static/videos/story_037_3way.mp4",
+      "start_seconds": 46,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0401,
+        "beat_margin": 0.1484,
+        "maestro_quality": 0.6042,
+        "lodge_quality": 0.5642,
+        "edge_quality": 0.5401
+      },
+      "rationale": "A separate high-energy phrase with stronger MAESTRO beat accents and pose variety.",
+      "source_sha256": "f1f6f75a21d16738f22b12a2ad7f18335b937938961436cf99ba4a85a45a3b4b",
+      "frames": 300,
+      "permutations": {
+        "012": {
+          "output_video": "player/videos/EX04/012.mp4",
+          "output_sha256": "9a37141534106667bb032c2ff74ce3775e240433724b7613bcbf4fa7e4ca01e2",
+          "output_bytes": 1204065
+        },
+        "021": {
+          "output_video": "player/videos/EX04/021.mp4",
+          "output_sha256": "7d2fb020ccd535df94c67bebee52b3275d588b2220747062ed0998fa7f350bbe",
+          "output_bytes": 1204017
+        },
+        "102": {
+          "output_video": "player/videos/EX04/102.mp4",
+          "output_sha256": "b03cd3ee2cf8a429c3d3c40a14ef01c07826d0dc4b84177310b768a506057d46",
+          "output_bytes": 1204685
+        },
+        "120": {
+          "output_video": "player/videos/EX04/120.mp4",
+          "output_sha256": "01af37edb47b20076545093f266050e03c8a576fbe180784851f5aebc7fbeea3",
+          "output_bytes": 1204118
+        },
+        "201": {
+          "output_video": "player/videos/EX04/201.mp4",
+          "output_sha256": "7c141111ce81531129359fd90f03c0aaf82a4b5daadb37ca692d99bef27a780a",
+          "output_bytes": 1204812
+        },
+        "210": {
+          "output_video": "player/videos/EX04/210.mp4",
+          "output_sha256": "967c970cd46a560153ff47c26125b3a19cd966d55cef8703c9a66d589bd1cfb4",
+          "output_bytes": 1204672
+        }
+      }
+    },
+    {
+      "id": "EX05",
+      "source_song": "FineDance 150",
+      "source_video": "docs/static/videos/story_150_3way.mp4",
+      "start_seconds": 12,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0743,
+        "beat_margin": 0.1561,
+        "maestro_quality": 0.6323,
+        "lodge_quality": 0.558,
+        "edge_quality": 0.5366
+      },
+      "rationale": "MAESTRO adds clearer upper-body phrasing without stalls or boundary artifacts.",
+      "source_sha256": "f1c82d0f36dc13fb9f22babf2993f6c303010ab4f7a325e8cfeac30411bb17f5",
+      "frames": 300,
+      "permutations": {
+        "012": {
+          "output_video": "player/videos/EX05/012.mp4",
+          "output_sha256": "154d083df5ebc1bad43e1825bfb466a2fa8e3473176fa9a417eb6c723cdec04e",
+          "output_bytes": 1066305
+        },
+        "021": {
+          "output_video": "player/videos/EX05/021.mp4",
+          "output_sha256": "a1817254b4f5e2549f89a67dd45f07aaab16136b5e0c62331621a4de66aa52cd",
+          "output_bytes": 1065080
+        },
+        "102": {
+          "output_video": "player/videos/EX05/102.mp4",
+          "output_sha256": "cfd739f74073c4ad4139c734d2de5d57888f69c66c58439bc099c02912549b7b",
+          "output_bytes": 1065106
+        },
+        "120": {
+          "output_video": "player/videos/EX05/120.mp4",
+          "output_sha256": "5fc47a79441f1912dbe548796e111786c733d8265d398d66fe47e25e3fb432cc",
+          "output_bytes": 1065604
+        },
+        "201": {
+          "output_video": "player/videos/EX05/201.mp4",
+          "output_sha256": "9b9a360076a3a7daa374b82cee05fcff3352a1b0647da6fd6fd83bc79477b2cb",
+          "output_bytes": 1066269
+        },
+        "210": {
+          "output_video": "player/videos/EX05/210.mp4",
+          "output_sha256": "7a3c2ffb52ab570513fc993f304304a03a1b54fb50d82fc88f4eb1e2df15cc6a",
+          "output_bytes": 1065647
+        }
+      }
+    },
+    {
+      "id": "EX06",
+      "source_song": "FineDance 150",
+      "source_video": "docs/static/videos/story_150_3way.mp4",
+      "start_seconds": 70,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0882,
+        "beat_margin": 0.083,
+        "maestro_quality": 0.6398,
+        "lodge_quality": 0.5517,
+        "edge_quality": 0.5464
+      },
+      "rationale": "Build-to-climax region with strong level changes and a clean MAESTRO transition.",
+      "source_sha256": "f1c82d0f36dc13fb9f22babf2993f6c303010ab4f7a325e8cfeac30411bb17f5",
+      "frames": 300,
+      "permutations": {
+        "012": {
+          "output_video": "player/videos/EX06/012.mp4",
+          "output_sha256": "f2a351447a1af8ad67c19dafb12a8d647318602651a107d1d8bdce38989b9d09",
+          "output_bytes": 1248145
+        },
+        "021": {
+          "output_video": "player/videos/EX06/021.mp4",
+          "output_sha256": "ae06232febb3824edc170d93f9ac707e9c5f8d098d8239ba0c499233e8c6b480",
+          "output_bytes": 1246105
+        },
+        "102": {
+          "output_video": "player/videos/EX06/102.mp4",
+          "output_sha256": "4c212890c0760c1c6b142cdf48cdcac9f4778cc55c8498fbf9301eae18534c98",
+          "output_bytes": 1249779
+        },
+        "120": {
+          "output_video": "player/videos/EX06/120.mp4",
+          "output_sha256": "91e681c07a62ba344e6ac45e89bcad2cac65be611ed5b3cb1a4b0478f3727460",
+          "output_bytes": 1249423
+        },
+        "201": {
+          "output_video": "player/videos/EX06/201.mp4",
+          "output_sha256": "217431793a9b06c607520f01293bd8f592dedb2cf2eadb59affe441de8517dc3",
+          "output_bytes": 1247485
+        },
+        "210": {
+          "output_video": "player/videos/EX06/210.mp4",
+          "output_sha256": "4d84d279ed8dc3bcd0b504274b28b4d4aea2575200b24d45709900f2d8606ea2",
+          "output_bytes": 1249847
+        }
+      }
+    },
+    {
+      "id": "EX07",
+      "source_song": "FineDance 150",
+      "source_video": "docs/static/videos/story_150_3way.mp4",
+      "start_seconds": 86,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0794,
+        "beat_margin": 0.1734,
+        "maestro_quality": 0.6506,
+        "lodge_quality": 0.52,
+        "edge_quality": 0.5713
+      },
+      "rationale": "Late climax phrase where MAESTRO maintains energy and coherent footwork.",
+      "source_sha256": "f1c82d0f36dc13fb9f22babf2993f6c303010ab4f7a325e8cfeac30411bb17f5",
+      "frames": 300,
+      "permutations": {
+        "012": {
+          "output_video": "player/videos/EX07/012.mp4",
+          "output_sha256": "8fbebbae6b48a48b0bb6bac6b17988d2da38f3bab5376179d4464a2089a95005",
+          "output_bytes": 1229162
+        },
+        "021": {
+          "output_video": "player/videos/EX07/021.mp4",
+          "output_sha256": "ac66b805600311f583510d1d1f21280ba629f0df16836dedc7eb679ecec4afd3",
+          "output_bytes": 1229474
+        },
+        "102": {
+          "output_video": "player/videos/EX07/102.mp4",
+          "output_sha256": "4830d8230596752a269f723f55234504c848cf6e86a4959c107ca02aba6f7220",
+          "output_bytes": 1231573
+        },
+        "120": {
+          "output_video": "player/videos/EX07/120.mp4",
+          "output_sha256": "d5eb86c466de94fff1a006b97e163090051af48eaeec04b74cbe1e56958b1528",
+          "output_bytes": 1231698
+        },
+        "201": {
+          "output_video": "player/videos/EX07/201.mp4",
+          "output_sha256": "f36ad796cccc983245dee2c88034863cc8127e621e110e885fd1288c8011dd67",
+          "output_bytes": 1231441
+        },
+        "210": {
+          "output_video": "player/videos/EX07/210.mp4",
+          "output_sha256": "b551ecb08698e01ea1f908353ceadfb4f9ae58ccd09f1e3798ce81d451fec62f",
+          "output_bytes": 1232005
+        }
+      }
+    },
+    {
+      "id": "EX08",
+      "source_song": "FineDance 195",
+      "source_video": "docs/static/videos/story_195_3way.mp4",
+      "start_seconds": 3,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0946,
+        "beat_margin": 0.2459,
+        "maestro_quality": 0.5522,
+        "lodge_quality": 0.4576,
+        "edge_quality": 0.4457
+      },
+      "rationale": "Strong opening advantage with stable rhythm and distinct full-body movement.",
+      "source_sha256": "f96b6e879440b2d1e33423f5b3fc37a217d8ccb65e3c337b35b10833b43cc88f",
+      "frames": 300,
+      "permutations": {
+        "012": {
+          "output_video": "player/videos/EX08/012.mp4",
+          "output_sha256": "9fc046639208303fe47ad49b31486faaed6df0e0c5744d52db13a048f44eee42",
+          "output_bytes": 1185366
+        },
+        "021": {
+          "output_video": "player/videos/EX08/021.mp4",
+          "output_sha256": "767053592903e5939507313ea3ed540e136958061dffe7683470bcd3c800ab2c",
+          "output_bytes": 1184316
+        },
+        "102": {
+          "output_video": "player/videos/EX08/102.mp4",
+          "output_sha256": "f0d8f27993d80ca6447d69cdd2fa4b2be560515dec6cf6c1d246900fc645eda1",
+          "output_bytes": 1185255
+        },
+        "120": {
+          "output_video": "player/videos/EX08/120.mp4",
+          "output_sha256": "a0088ab052d49738e29d115d661e7ab331844ef15f465608865b306bb35cbeed",
+          "output_bytes": 1184915
+        },
+        "201": {
+          "output_video": "player/videos/EX08/201.mp4",
+          "output_sha256": "a66cf774133d8a38e374ed554a11051c110d8a1890a9ff43ad861db89b03f6a1",
+          "output_bytes": 1185772
+        },
+        "210": {
+          "output_video": "player/videos/EX08/210.mp4",
+          "output_sha256": "ad4ebd4ab6a354b1cdf9a08fdd97cdc026a84743849956fe003e3b26aa8ff968",
+          "output_bytes": 1184444
+        }
+      }
+    },
+    {
+      "id": "EX09",
+      "source_song": "FineDance 195",
+      "source_video": "docs/static/videos/story_195_3way.mp4",
+      "start_seconds": 28,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0529,
+        "beat_margin": 0.1266,
+        "maestro_quality": 0.6351,
+        "lodge_quality": 0.5821,
+        "edge_quality": 0.5739
+      },
+      "rationale": "Mid-song phrase with clearer MAESTRO accents and broader expressive range.",
+      "source_sha256": "f96b6e879440b2d1e33423f5b3fc37a217d8ccb65e3c337b35b10833b43cc88f",
+      "frames": 300,
+      "permutations": {
+        "012": {
+          "output_video": "player/videos/EX09/012.mp4",
+          "output_sha256": "cf7e0cab8a984da0aef19a60cea4fbffc25aa0b6de92a54711a12af833f694ae",
+          "output_bytes": 1220430
+        },
+        "021": {
+          "output_video": "player/videos/EX09/021.mp4",
+          "output_sha256": "d58033a78c110909ed6f07291e175430b6155e50e93a912adca2e918e551d44a",
+          "output_bytes": 1219327
+        },
+        "102": {
+          "output_video": "player/videos/EX09/102.mp4",
+          "output_sha256": "1ff4d7a0aaf158c2f767f6288282040628087f3e295598aa44aec4df587b3e0d",
+          "output_bytes": 1217747
+        },
+        "120": {
+          "output_video": "player/videos/EX09/120.mp4",
+          "output_sha256": "42d74ba5d37ca471e8ba309b4a51ec8ef0ad8175497decef038f5523f519a917",
+          "output_bytes": 1217728
+        },
+        "201": {
+          "output_video": "player/videos/EX09/201.mp4",
+          "output_sha256": "8a1ee453144846dd64915e5d3daf941ea96e77aac022ab8b66f7e680d280421f",
+          "output_bytes": 1219071
+        },
+        "210": {
+          "output_video": "player/videos/EX09/210.mp4",
+          "output_sha256": "c5e21bb555f06fc1dad843e36fe9b5ce29e82f6dfcc3787b73409e965be60b12",
+          "output_bytes": 1217556
+        }
+      }
+    },
+    {
+      "id": "EX10",
+      "source_song": "FineDance 208",
+      "source_video": "docs/static/videos/story_208_3way.mp4",
+      "start_seconds": 12,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0428,
+        "beat_margin": 0.077,
+        "maestro_quality": 0.6115,
+        "lodge_quality": 0.5686,
+        "edge_quality": 0.5663
+      },
+      "rationale": "The strongest audited FineDance 208 window, retained for source-song diversity.",
+      "source_sha256": "e239a1e5e8ec6c4ca71826d9785aae1dd6860dfcc74d6545b0e17df1e91065c1",
+      "frames": 300,
+      "permutations": {
+        "012": {
+          "output_video": "player/videos/EX10/012.mp4",
+          "output_sha256": "c6c4a4e845afaf7e8701ba34200a86de7ac8382f0fe12b1adcca135faa04c5a5",
+          "output_bytes": 1226151
+        },
+        "021": {
+          "output_video": "player/videos/EX10/021.mp4",
+          "output_sha256": "bd9a1ac7942e1d4b40d5fbb538dd469ca0aa2c90d2a92fa3188a4570df6dc25d",
+          "output_bytes": 1225846
+        },
+        "102": {
+          "output_video": "player/videos/EX10/102.mp4",
+          "output_sha256": "654a3629df72bbcae7a46d7d36cd25f97f28a63b50f507e6b3e28546f9707dce",
+          "output_bytes": 1226063
+        },
+        "120": {
+          "output_video": "player/videos/EX10/120.mp4",
+          "output_sha256": "6b24dccf846adb13e44585da14ca570b75ed4cfa5549e06da69b423226bc0e0b",
+          "output_bytes": 1227197
+        },
+        "201": {
+          "output_video": "player/videos/EX10/201.mp4",
+          "output_sha256": "29fd68642ce7bee9ee1da98b9ddb7b1368c2c0240054b553a5e5de4f983b0023",
+          "output_bytes": 1226164
+        },
+        "210": {
+          "output_video": "player/videos/EX10/210.mp4",
+          "output_sha256": "1f474e4df9ee54eab259de9f958f58b172447069c45feb0b61ddbed0cbef8f4f",
+          "output_bytes": 1225961
+        }
+      }
+    },
+    {
+      "id": "EX11",
+      "source_song": "Treasure",
+      "source_video": "docs/static/videos/story_trs_3way.mp4",
+      "start_seconds": 110,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.0696,
+        "beat_margin": 0.1594,
+        "maestro_quality": 0.6421,
+        "lodge_quality": 0.5725,
+        "edge_quality": 0.5566
+      },
+      "rationale": "Reprised chorus material with coherent MAESTRO reuse and stronger beat timing.",
+      "source_sha256": "7e40b2d518c228ca61e891e2d956155db97bc51c1432dbda816b67395837fcb2",
+      "frames": 300,
+      "permutations": {
+        "012": {
+          "output_video": "player/videos/EX11/012.mp4",
+          "output_sha256": "a6fe77c060e1597b5558e33630264aeeff930dd190de8b4a8c5cf12d4e347eaa",
+          "output_bytes": 1167560
+        },
+        "021": {
+          "output_video": "player/videos/EX11/021.mp4",
+          "output_sha256": "c86918cd6e669b3147c95792825861432b50333a104a8d2d1b6f42c525da00c6",
+          "output_bytes": 1166607
+        },
+        "102": {
+          "output_video": "player/videos/EX11/102.mp4",
+          "output_sha256": "e0da4bbf701307b83750fd8777d73c822b2a068b9ae5abde6f06803a1ac04ebf",
+          "output_bytes": 1165448
+        },
+        "120": {
+          "output_video": "player/videos/EX11/120.mp4",
+          "output_sha256": "a4a17f7eddf6948d8019401ae90933b4c65a4a8fa741f1e5ca6e806a670795bf",
+          "output_bytes": 1167122
+        },
+        "201": {
+          "output_video": "player/videos/EX11/201.mp4",
+          "output_sha256": "41fdfffabce5736c77360a5aba25a777e381434e86d3109cccd17dc977abe481",
+          "output_bytes": 1166508
+        },
+        "210": {
+          "output_video": "player/videos/EX11/210.mp4",
+          "output_sha256": "bf40ebef91e42c3b1a51b901811359c14eba4b2d76c216111ac6d164382fe9e4",
+          "output_bytes": 1166145
+        }
+      }
+    },
+    {
+      "id": "EX12",
+      "source_song": "Treasure",
+      "source_video": "docs/static/videos/story_trs_3way.mp4",
+      "start_seconds": 131,
+      "duration_seconds": 10,
+      "diagnostics": {
+        "quality_margin": 0.1164,
+        "beat_margin": 0.2699,
+        "maestro_quality": 0.6822,
+        "lodge_quality": 0.5658,
+        "edge_quality": 0.5642
+      },
+      "rationale": "The strongest Treasure window, with a pronounced MAESTRO timing and flow advantage.",
+      "source_sha256": "7e40b2d518c228ca61e891e2d956155db97bc51c1432dbda816b67395837fcb2",
+      "frames": 300,
+      "permutations": {
+        "012": {
+          "output_video": "player/videos/EX12/012.mp4",
+          "output_sha256": "19dae5b935c07274d57947cfaada1b3b5d0482c0ba2ae8de1e8a800ca3e4517c",
+          "output_bytes": 1174871
+        },
+        "021": {
+          "output_video": "player/videos/EX12/021.mp4",
+          "output_sha256": "096709e0bfd8a48377c1fc2f4e43d784cde1cfa20abee0ada80ee5fe33d19c97",
+          "output_bytes": 1174175
+        },
+        "102": {
+          "output_video": "player/videos/EX12/102.mp4",
+          "output_sha256": "0495be52e02169b65e53b4021f23ebb880545b3e3419cec46c26fbad34cfb5ee",
+          "output_bytes": 1175010
+        },
+        "120": {
+          "output_video": "player/videos/EX12/120.mp4",
+          "output_sha256": "1e63f9a874357c4b1bd792c01f4e852bbb38af3d3b1a0784b2f3cf8aeb568f14",
+          "output_bytes": 1173938
+        },
+        "201": {
+          "output_video": "player/videos/EX12/201.mp4",
+          "output_sha256": "b8c855b2b6da0c6ffdbf979fa9ad3212f1fa9cb4708e7c214a8b2e14acc15b50",
+          "output_bytes": 1176301
+        },
+        "210": {
+          "output_video": "player/videos/EX12/210.mp4",
+          "output_sha256": "cfaa119bbba16ce9bf12bbb4fc880cb98b453aa837ea7403eadfc682a57eb3b9",
+          "output_bytes": 1176006
+        }
+      }
+    }
+  ]
+}

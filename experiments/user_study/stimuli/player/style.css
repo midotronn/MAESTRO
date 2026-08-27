@@ -1,0 +1,42 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, "Segoe UI", sans-serif;
+  background: #111318;
+  color: #f5f7fb;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: radial-gradient(circle at top, #202733 0, #111318 42%); }
+.shell { width: min(1500px, 96vw); margin: 0 auto; padding: 24px 0 30px; }
+header, .controls, .transport { display: flex; align-items: center; gap: 14px; }
+header { justify-content: space-between; margin-bottom: 18px; }
+h1 { margin: 2px 0 0; font-size: clamp(24px, 3vw, 38px); }
+.eyebrow { color: #63d59b; font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.controls { flex-wrap: wrap; padding: 14px; background: #1a1f28; border: 1px solid #323946; border-radius: 12px; }
+label { display: grid; gap: 5px; color: #aeb7c6; font-size: 12px; font-weight: 700; }
+select { min-width: 150px; padding: 9px 34px 9px 10px; border: 1px solid #454f60; border-radius: 7px; background: #10141b; color: #fff; }
+.assignment { display: grid; gap: 4px; margin-left: auto; text-align: right; }
+.assignment span { color: #aeb7c6; font-size: 13px; }
+.stage { margin-top: 16px; overflow: hidden; border: 1px solid #3a4352; border-radius: 12px; background: #090b0e; box-shadow: 0 18px 50px #0008; }
+.blind-labels { display: grid; grid-template-columns: repeat(3, 1fr); height: 42px; font-size: 24px; font-weight: 800; text-align: center; line-height: 42px; }
+.blind-labels span:nth-child(1) { background: #315b89; }
+.blind-labels span:nth-child(2) { background: #8a5a25; }
+.blind-labels span:nth-child(3) { background: #317554; }
+#comparison { display: block; width: 100%; height: auto; aspect-ratio: 18 / 5; background: #090b0e; }
+.transport { margin-top: 14px; }
+.button { border: 1px solid transparent; border-radius: 8px; padding: 10px 14px; color: #fff; font-weight: 800; text-decoration: none; cursor: pointer; white-space: nowrap; }
+.button.primary { background: #238a57; }
+.button.secondary { border-color: #465164; background: #1a202a; }
+.button:hover { filter: brightness(1.15); }
+#scrub { width: 100%; accent-color: #39b976; }
+#time { min-width: 84px; color: #c4ccda; font-variant-numeric: tabular-nums; text-align: center; }
+.note { margin: 13px 2px 0; color: #aeb7c6; font-size: 14px; }
+
+@media (max-width: 800px) {
+  .shell { width: 100%; padding: 14px; }
+  header { align-items: flex-start; }
+  .assignment { width: 100%; margin-left: 0; text-align: left; }
+  .transport { flex-wrap: wrap; }
+  #scrub { order: 2; flex-basis: 100%; }
+  #time { order: 3; }
+}

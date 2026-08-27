@@ -55,6 +55,9 @@ _W_RECAP = 0.6   # decisive bonus for an enabled recapitulation (ABA) close
 MAX_REUSE_PLAYBACK_SPEED = 1.2
 MIN_REUSE_TIME_SCALE = 1.0 / MAX_REUSE_PLAYBACK_SPEED
 MAX_REUSE_TIME_SCALE = 1.25
+# LODGE quantizes long outputs to model chunk boundaries. A bounded 5% retime keeps those takes
+# usable and synchronized without accepting a materially wrong generation length.
+MAX_SOURCE_RETIME_FRACTION = 0.05
 
 
 @dataclass
@@ -592,7 +595,7 @@ def build_story_dance(lodge_motion: np.ndarray, edge_motion: np.ndarray,
             raise ValueError(f"target_frames must be at least 2, got {target}")
         for label, motion in (("LODGE", lodge), ("EDGE", edge)):
             relative_change = abs(motion.shape[0] - target) / target
-            if relative_change > 0.02:
+            if relative_change > MAX_SOURCE_RETIME_FRACTION:
                 raise ValueError(
                     f"{label} length {motion.shape[0]} is too far from "
                     f"the requested {target} frames"

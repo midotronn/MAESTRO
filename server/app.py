@@ -464,24 +464,52 @@ def index() -> HTMLResponse:
     return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
-def _display_name(d: Path) -> str:
+def _song_metadata(d: Path) -> dict:
     meta = d / "meta.json"
     if meta.exists():
         try:
-            return str(json.loads(meta.read_text()).get("name") or d.name)
-        except Exception:
-            pass
-    return d.name
+            payload = json.loads(meta.read_text(encoding="utf-8"))
+            return payload if isinstance(payload, dict) else {}
+        except (OSError, json.JSONDecodeError) as exc:
+            logging.getLogger("uvicorn.error").warning(
+                "Ignoring invalid song metadata %s: %s",
+                meta,
+                exc,
+            )
+    return {}
 
 
 @app.get("/api/songs")
 def songs() -> dict:
     if not MEDIA.is_dir():
         return {"songs": []}
+    interview_mode = os.environ.get("MAESTRO_INTERVIEW_MODE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     out = []
     for d in sorted(MEDIA.iterdir()):
         if d.is_dir() and (d / "base_motion.npy").exists():
-            out.append({"sid": d.name, "name": _display_name(d), "has_bank": (d / "bank").is_dir()})
+            metadata = _song_metadata(d)
+            if interview_mode and metadata.get("interview") is not True:
+                continue
+            try:
+                order = float(metadata.get("order", 1000))
+            except (TypeError, ValueError):
+                order = 1000
+            out.append(
+                {
+                    "sid": d.name,
+                    "name": str(metadata.get("name") or d.name),
+                    "has_bank": (d / "bank").is_dir(),
+                    "_order": order,
+                }
+            )
+    out.sort(key=lambda song: (song["_order"], song["name"].casefold(), song["sid"]))
+    for song in out:
+        song.pop("_order", None)
     return {"songs": out}
 
 
@@ -792,6 +820,10 @@ async def edit_ws(ws: WebSocket, sid: str) -> None:
 
 if STATIC.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+
+STUDY = HERE.parent / "experiments" / "user_study" / "stimuli" / "player"
+if STUDY.is_dir():
+    app.mount("/study", StaticFiles(directory=str(STUDY), html=True), name="study")
 
 DOCS = HERE.parent / "docs"
 if DOCS.is_dir():

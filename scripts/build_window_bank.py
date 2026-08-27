@@ -24,7 +24,7 @@ AGENTLODGE_ROOT = os.environ.get("AGENTLODGE_ROOT", f"{WORKSPACE}/AgentLODGE")
 sys.path.insert(0, AGENTLODGE_ROOT)
 
 from agentlodge.dance.format import ensure_lodge139, to_agentlodge139
-from agentlodge.dance.transition import to_zup
+from agentlodge.dance.transition import retime, to_zup
 
 
 def to_lodge_zup(raw):
@@ -35,10 +35,11 @@ def to_edge_zup(raw):
     return to_agentlodge139(ensure_lodge139(np.asarray(raw, dtype=np.float32)))
 
 
-def save(workspace: Path, sid: str, backbone: str, seed: int, motion):
+def save(workspace: Path, sid: str, backbone: str, seed: int, motion, *, target_frames: int):
     p = workspace / f"bank_{sid}_{backbone}_seed{seed}.npy"
-    np.save(p, np.asarray(motion, dtype=np.float32))
-    print(f"  saved {p.name}  {np.asarray(motion).shape}", flush=True)
+    aligned = retime(np.asarray(motion, dtype=np.float32), target_frames)
+    np.save(p, aligned)
+    print(f"  saved {p.name}  {aligned.shape}", flush=True)
 
 
 def build_bank(
@@ -59,15 +60,17 @@ def build_bank(
     edge_best = ws / f"edge_fd_{sid}_full.npy"
     lodge_features_path = ws / f"lodge_fd_{sid}_feats.npy"
     edge_slices_path = ws / f"edge{sid}_slices.npy"
-    for path in (lodge_best, edge_best, lodge_features_path, edge_slices_path):
+    story_path = ws / f"fd_{sid}_STORY_bestofk.npy"
+    for path in (lodge_best, edge_best, lodge_features_path, edge_slices_path, story_path):
         if not path.is_file():
             raise FileNotFoundError(path)
 
     lodge_raw = np.load(lodge_best).astype(np.float32)
     edge_raw = np.load(edge_best).astype(np.float32)
+    target_frames = int(np.load(story_path, mmap_mode="r").shape[0])
     print(f"[{sid}] seed 0 from best takes", flush=True)
-    save(ws, sid, "lodge", 0, to_lodge_zup(lodge_raw))
-    save(ws, sid, "edge", 0, to_edge_zup(edge_raw))
+    save(ws, sid, "lodge", 0, to_lodge_zup(lodge_raw), target_frames=target_frames)
+    save(ws, sid, "edge", 0, to_edge_zup(edge_raw), target_frames=target_frames)
 
     if k > 1 and distributed:
         from scripts.make_song_bestofk import _distributed_generation_job
@@ -104,8 +107,22 @@ def build_bank(
                 raise RuntimeError(f"LODGE seed {seed} failed: {lj['error'][:500]}")
             if ej.get("error") is not None:
                 raise RuntimeError(f"EDGE seed {seed} failed: {ej['error'][:500]}")
-            save(ws, sid, "lodge", seed, to_lodge_zup(lj["motion"]))
-            save(ws, sid, "edge", seed, to_edge_zup(ej["motion"]))
+            save(
+                ws,
+                sid,
+                "lodge",
+                seed,
+                to_lodge_zup(lj["motion"]),
+                target_frames=target_frames,
+            )
+            save(
+                ws,
+                sid,
+                "edge",
+                seed,
+                to_edge_zup(ej["motion"]),
+                target_frames=target_frames,
+            )
     elif k > 1:
         from agentlodge.config import Settings
         from agentlodge.pipeline import _run_lodge_job, _run_edge_job, _settings_to_dict
@@ -129,12 +146,26 @@ def build_bank(
             print(f"[{sid}] generating seed {seed} (real LODGE + EDGE diffusion)...", flush=True)
             lj = _run_lodge_job(lodge_feats, sd, work, seed=seed)
             if lj.get("error") is None:
-                save(ws, sid, "lodge", seed, to_lodge_zup(lj["motion"]))
+                save(
+                    ws,
+                    sid,
+                    "lodge",
+                    seed,
+                    to_lodge_zup(lj["motion"]),
+                    target_frames=target_frames,
+                )
             else:
                 print(f"  LODGE seed {seed} failed: {lj['error'][:200]}", flush=True)
             ej = _run_edge_job(wav, edge_slices, sd, work, seed=seed)
             if ej.get("error") is None:
-                save(ws, sid, "edge", seed, to_edge_zup(ej["motion"]))
+                save(
+                    ws,
+                    sid,
+                    "edge",
+                    seed,
+                    to_edge_zup(ej["motion"]),
+                    target_frames=target_frames,
+                )
             else:
                 print(f"  EDGE seed {seed} failed: {ej['error'][:200]}", flush=True)
 
