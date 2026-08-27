@@ -1,0 +1,3 @@
+# Requires the CUDA 12.8 PyTorch installed by scripts/setup_four_gpu_pod.sh.
+sentencepiece>=0.2,<1
+transformers>=4.46,<5

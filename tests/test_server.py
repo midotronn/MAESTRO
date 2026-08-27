@@ -817,6 +817,7 @@ def test_interview_mode_lists_only_curated_songs_in_order(client, monkeypatch):
 
     assert [song["sid"] for song in songs] == ["curated_a", "curated_b"]
     assert [song["name"] for song in songs] == ["First choice", "Second choice"]
+    assert [song["front_facing"] for song in songs] == [False, False]
 
 
 def test_study_player_is_mounted_and_linked_from_editor(client):
@@ -904,6 +905,7 @@ def test_uploaded_song_pipeline_uses_configured_pod_python(tmp_path, monkeypatch
     assert "AGENTLODGE_SHARED_ROOT=/workspace" in process_command
     assert "AGENTLODGE_EARLY_LODGE_GENERATION=1" in process_command
     assert "AGENTLODGE_EARLY_LODGE_WAIT_SECONDS=120" in process_command
+    assert "MAESTRO_FRONT_FACING=0" in process_command
     assert P.get_job("test_song")["status"] == "done"
 
 
@@ -964,8 +966,88 @@ def test_hosted_upload_uses_warm_full_render(tmp_path, monkeypatch):
     }
     assert (media / "preview.mp4").read_bytes() == b"video"
     assert (media / "bank" / "bank_hosted_song_lodge_seed0.npy").exists()
-    assert json.loads((media / "meta.json").read_text()) == {"name": 'Hosted "song"'}
+    assert json.loads((media / "meta.json").read_text()) == {
+        "name": 'Hosted "song"',
+        "front_facing": False,
+    }
     assert job["status"] == "done"
+
+
+def test_front_facing_file_normalization_is_atomic(tmp_path, monkeypatch):
+    import server.processing as processing
+    from agentlodge.dance.transition import _matrix_to_sixd, _sixd_to_matrix
+
+    yaw = np.linspace(-1.2, 1.4, 60, dtype=np.float32)
+    cos, sin = np.cos(yaw), np.sin(yaw)
+    roots = np.stack(
+        [
+            cos, -sin, np.zeros_like(cos),
+            sin, cos, np.zeros_like(cos),
+            np.zeros_like(cos), np.zeros_like(cos), np.ones_like(cos),
+        ],
+        axis=-1,
+    ).reshape(-1, 3, 3)
+    motion = np.zeros((len(yaw), 139), dtype=np.float32)
+    motion[:, 3:9] = _matrix_to_sixd(roots)
+    motion[:, :3] = np.arange(len(yaw) * 3, dtype=np.float32).reshape(-1, 3)
+    path = tmp_path / "motion.npy"
+    np.save(path, motion)
+
+    monkeypatch.setenv("MAESTRO_FRONT_FACING", "1")
+    canonical_yaw = processing._normalize_front_facing_file(path)
+    assert canonical_yaw is not None
+
+    normalized = np.load(path)
+    normalized_roots = _sixd_to_matrix(normalized[:, 3:9])
+    normalized_yaw = np.arctan2(normalized_roots[:, 1, 0], normalized_roots[:, 0, 0])
+    assert np.max(np.abs(normalized_yaw - normalized_yaw[0])) < 1e-5
+    np.testing.assert_array_equal(normalized[:, :3], motion[:, :3])
+    assert not list(tmp_path.glob("*.front-facing.tmp"))
+
+
+def test_cached_live_take_uses_the_song_canonical_heading(tmp_path, monkeypatch):
+    import server.processing as processing
+    from agentlodge.dance.transition import _matrix_to_sixd, _sixd_to_matrix
+
+    song_dir = tmp_path / "song"
+    bank_dir = song_dir / "bank"
+    bank_dir.mkdir(parents=True)
+    (song_dir / "meta.json").write_text(
+        json.dumps(
+            {
+                "name": "Song",
+                "front_facing": True,
+                "front_facing_yaw": 0.6,
+            }
+        ),
+        encoding="utf-8",
+    )
+    yaw = np.linspace(-1.0, 1.0, 30, dtype=np.float32)
+    cos, sin = np.cos(yaw), np.sin(yaw)
+    roots = np.stack(
+        [
+            cos, -sin, np.zeros_like(cos),
+            sin, cos, np.zeros_like(cos),
+            np.zeros_like(cos), np.zeros_like(cos), np.ones_like(cos),
+        ],
+        axis=-1,
+    ).reshape(-1, 3, 3)
+    motion = np.zeros((len(yaw), 139), dtype=np.float32)
+    motion[:, 3:9] = _matrix_to_sixd(roots)
+    provider = processing.PodTakeProvider(
+        "song",
+        bank_dir,
+        cfg=processing.PodConfig(host=None),
+    )
+    cached = provider._local_path("lodge", 7, (30, 60))
+    np.save(cached, motion)
+    monkeypatch.setenv("MAESTRO_FRONT_FACING", "0")
+
+    normalized = provider("lodge", 7, 30, 60)
+
+    normalized_roots = _sixd_to_matrix(normalized[:, 3:9])
+    normalized_yaw = np.arctan2(normalized_roots[:, 1, 0], normalized_roots[:, 0, 0])
+    np.testing.assert_allclose(normalized_yaw, 0.6, atol=1e-5)
 
 
 def test_uploaded_song_pipeline_scripts_are_packaged():
@@ -976,6 +1058,7 @@ def test_uploaded_song_pipeline_scripts_are_packaged():
         "dispatch_backbone_generation.py",
         "dispatch_bank_generation.py",
         "build_window_bank.py",
+        "normalize_front_facing.py",
         "process_song.sh",
         "runpod_worker.py",
     }

@@ -84,6 +84,84 @@ def slugify(name: str) -> str:
     return f"{slug}_{int(time.time()) % 100000}"
 
 
+def _front_facing_enabled() -> bool:
+    return os.environ.get("MAESTRO_FRONT_FACING", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _front_face_motion(motion, *, enabled: bool | None = None, target_yaw: float | None = None):
+    import numpy as np
+
+    array = np.asarray(motion, dtype=np.float32)
+    active = _front_facing_enabled() if enabled is None else bool(enabled)
+    if not active:
+        return array
+    from agentlodge.dance.transition import stabilize_root_facing
+
+    return stabilize_root_facing(array, target_yaw=target_yaw)
+
+
+def _normalize_front_facing_file(
+    path: str | Path,
+    *,
+    enabled: bool | None = None,
+    target_yaw: float | None = None,
+) -> float | None:
+    active = _front_facing_enabled() if enabled is None else bool(enabled)
+    if not active:
+        return None
+    import numpy as np
+    from agentlodge.dance.transition import root_facing_yaw
+
+    source = Path(path)
+    motion = np.load(source)
+    canonical_yaw = (
+        root_facing_yaw(motion)
+        if target_yaw is None
+        else float(target_yaw)
+    )
+    normalized = _front_face_motion(
+        motion,
+        enabled=True,
+        target_yaw=canonical_yaw,
+    )
+    temporary = source.with_name(source.name + ".front-facing.tmp")
+    with temporary.open("wb") as handle:
+        np.save(handle, normalized)
+    os.replace(temporary, source)
+    return canonical_yaw
+
+
+def _media_front_facing_settings(media_dir: str | Path) -> tuple[bool, float | None]:
+    import numpy as np
+    from agentlodge.dance.transition import root_facing_yaw
+
+    directory = Path(media_dir)
+    metadata = {}
+    try:
+        metadata = json.loads((directory / "meta.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+    enabled = (
+        metadata.get("front_facing") is True
+        if "front_facing" in metadata
+        else _front_facing_enabled()
+    )
+    target = metadata.get("front_facing_yaw")
+    try:
+        target_yaw = float(target) if target is not None else None
+    except (TypeError, ValueError):
+        target_yaw = None
+    base_motion = directory / "base_motion.npy"
+    if enabled and target_yaw is None and base_motion.is_file():
+        target_yaw = root_facing_yaw(np.load(base_motion, mmap_mode="r"))
+    return enabled, target_yaw
+
+
 # --------------------------------------------------------------------------- job state
 def _public_job(job: dict) -> dict:
     return {
@@ -555,9 +633,15 @@ class PodTakeProvider:
 
         window = (int(a), int(b)) if (a is not None and b is not None) else None
         local = self._local_path(backbone, int(seed), window)
+        front_facing, target_yaw = _media_front_facing_settings(self.bank_dir.parent)
         # a full-song seed already on disk (the base bank) also serves as the source when no window
         if local.exists():                                   # already have it (bank or prior live pull)
             try:
+                _normalize_front_facing_file(
+                    local,
+                    enabled=front_facing,
+                    target_yaw=target_yaw,
+                )
                 return np.load(local).astype(np.float32)
             except Exception:                                # noqa: BLE001 - corrupt cache: regenerate
                 local.unlink(missing_ok=True)
@@ -572,7 +656,11 @@ class PodTakeProvider:
                 wp = warm_gen.warm_generate(self.sid, backbone, int(seed), window[0], window[1],
                                             timeout=self.gen_timeout)
                 if wp is not None:
-                    arr = np.load(wp).astype(np.float32)
+                    arr = _front_face_motion(
+                        np.load(wp),
+                        enabled=front_facing,
+                        target_yaw=target_yaw,
+                    )
                     try:
                         np.save(local, arr)                  # cache into the song bank too
                     except Exception:                        # noqa: BLE001
@@ -598,6 +686,11 @@ class PodTakeProvider:
                 return None
             if _scp_from(self.cfg, remote, str(local), timeout=300).returncode != 0:
                 return None
+            _normalize_front_facing_file(
+                local,
+                enabled=front_facing,
+                target_yaw=target_yaw,
+            )
             return np.load(local).astype(np.float32)
         except subprocess.TimeoutExpired:
             return None
@@ -779,6 +872,26 @@ def _start_bank_sync(sid: str, cfg: PodConfig, out: str, bank_dir: Path) -> None
                         pull.returncode == 0
                         and len(list(bank_dir.glob(f"bank_{sid}_*.npy"))) >= expected_files
                     )
+                if copied:
+                    try:
+                        front_facing, target_yaw = _media_front_facing_settings(
+                            bank_dir.parent
+                        )
+                        for bank_file in bank_dir.glob(f"bank_{sid}_*.npy"):
+                            _normalize_front_facing_file(
+                                bank_file,
+                                enabled=front_facing,
+                                target_yaw=target_yaw,
+                            )
+                    except Exception as exc:  # noqa: BLE001
+                        _set(
+                            sid,
+                            bank_status="error",
+                            bank_progress=bank_progress,
+                            bank_message="front-facing bank normalization failed",
+                            bank_error=str(exc),
+                        )
+                        return
                 _set(
                     sid,
                     bank_status="ready" if copied else "error",
@@ -935,6 +1048,7 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
                 "dispatch_bank_generation.py",
                 "build_window_bank.py",
                 "render_one_ybot.sh",
+                "normalize_front_facing.py",
                 "process_song.sh",
             ):
                 copied = _scp_to(
@@ -969,6 +1083,7 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
                 "dispatch_bank_generation.py",
                 "build_window_bank.py",
                 "render_one_ybot.sh",
+                "normalize_front_facing.py",
                 "process_song.sh",
             )
         )
@@ -999,6 +1114,7 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
             f"AL_PY={shlex.quote(pod_python)} "
             f"MAESTRO_TIMING_FILE={shlex.quote(out + '/timings.tsv')} "
             f"AGENTLODGE_BANK_K={shlex.quote(str(cfg.bank_k))} "
+            f"MAESTRO_FRONT_FACING={'1' if _front_facing_enabled() else '0'} "
             f"AGENTLODGE_SKIP_RENDER={'1' if hosted else '0'} "
             f"bash {shlex.quote(remote_scripts + '/process_song.sh')} {shlex.quote(sid)}"
         )
@@ -1056,6 +1172,14 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
                 shutil.copy2(source, bank_dir / source.name)
         else:
             _scp_from(cfg, f"{out}/bank_{sid}_*.npy", str(bank_dir) + "/")
+        front_facing_yaw = _normalize_front_facing_file(
+            media_dir / "base_motion.npy"
+        )
+        for bank_file in bank_dir.glob(f"bank_{sid}_*.npy"):
+            _normalize_front_facing_file(
+                bank_file,
+                target_yaw=front_facing_yaw,
+            )
         _set(sid, progress=86, stage_progress=100, message="generated assets are ready")
 
         if hosted:
@@ -1169,8 +1293,14 @@ def _process(sid: str, wav_path: Path, media_dir: Path, display_name: str) -> No
             progress=99,
             message="finalizing the song in the editor…",
         )
+        metadata = {
+            "name": display_name,
+            "front_facing": _front_facing_enabled(),
+        }
+        if front_facing_yaw is not None:
+            metadata["front_facing_yaw"] = front_facing_yaw
         (media_dir / "meta.json").write_text(
-            json.dumps({"name": display_name}, ensure_ascii=False),
+            json.dumps(metadata, ensure_ascii=False),
             encoding="utf-8",
         )
         bank_started = _launch_background_bank(

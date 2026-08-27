@@ -92,6 +92,10 @@ ssh -p $env:AGENTLODGE_POD_PORT -i $env:AGENTLODGE_POD_KEY `
   -L 18001:127.0.0.1:8011 "root@$env:AGENTLODGE_POD_HOST"
 ```
 
+The interview launcher defaults `MAESTRO_FRONT_FACING=1`. Generated base motions, cached editing
+banks, and live edit takes retain their opening camera-facing heading for the full clip before any
+preview or comparison render. Set it to `0` only when unrestricted world-space turns are desired.
+
 ### Secure planner provisioning
 
 Never put an OpenAI credential in Git, chat, a process argument, or a setup script. Rotate any

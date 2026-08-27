@@ -504,6 +504,7 @@ def songs() -> dict:
                     "sid": d.name,
                     "name": str(metadata.get("name") or d.name),
                     "has_bank": (d / "bank").is_dir(),
+                    "front_facing": metadata.get("front_facing") is True,
                     "_order": order,
                 }
             )

@@ -430,6 +430,59 @@ def _matrix_to_sixd(R: np.ndarray) -> np.ndarray:
     return R[..., :2, :].reshape(*R.shape[:-2], 6)
 
 
+def root_facing_yaw(motion139: np.ndarray, *, anchor_frames: int = 20) -> float:
+    """Return the circular-mean root yaw over a clip's opening frames."""
+    motion = np.asarray(motion139)
+    if motion.ndim != 2 or motion.shape[1] != 139:
+        raise ValueError(f"expected motion shape (frames, 139), got {motion.shape}")
+    if motion.shape[0] == 0:
+        raise ValueError("cannot measure facing from an empty motion")
+
+    roots = _sixd_to_matrix(motion[:, _ROOT].reshape(-1, 6))
+    yaw = np.arctan2(roots[:, 1, 0], roots[:, 0, 0])
+    count = max(1, min(int(anchor_frames), len(yaw)))
+    return float(np.arctan2(np.sin(yaw[:count]).mean(), np.cos(yaw[:count]).mean()))
+
+
+def stabilize_root_facing(
+    motion139: np.ndarray,
+    *,
+    target_yaw: float | None = None,
+    anchor_frames: int = 20,
+) -> np.ndarray:
+    """Keep the dancer's root facing one world-space heading for the full clip.
+
+    The opening frames are already aligned to the presentation camera by the hybrid builder. When
+    ``target_yaw`` is omitted, their circular-mean root yaw becomes the fixed heading. Only the root
+    orientation is changed; translation, local joint rotations, and contacts remain untouched.
+    """
+    motion = np.asarray(motion139)
+    if motion.ndim != 2 or motion.shape[1] != 139:
+        raise ValueError(f"expected motion shape (frames, 139), got {motion.shape}")
+    if motion.shape[0] == 0:
+        return motion.astype(np.float32, copy=True)
+
+    out = motion.astype(np.float32, copy=True)
+    roots = _sixd_to_matrix(out[:, _ROOT].reshape(-1, 6))
+    yaw = np.arctan2(roots[:, 1, 0], roots[:, 0, 0])
+    if target_yaw is None:
+        target_yaw = root_facing_yaw(out, anchor_frames=anchor_frames)
+    delta = np.arctan2(np.sin(float(target_yaw) - yaw), np.cos(float(target_yaw) - yaw))
+    cos, sin = np.cos(delta), np.sin(delta)
+    zeros = np.zeros_like(cos)
+    ones = np.ones_like(cos)
+    spin = np.stack(
+        [
+            cos, -sin, zeros,
+            sin, cos, zeros,
+            zeros, zeros, ones,
+        ],
+        axis=-1,
+    ).reshape(-1, 3, 3)
+    out[:, _ROOT] = _matrix_to_sixd(spin @ roots).reshape(-1, 6)
+    return out
+
+
 def _matrix_to_axis_angle(R: np.ndarray) -> np.ndarray:
     """(..., 3, 3) -> (..., 3): rotation vector (axis * angle)."""
     tr = np.trace(R, axis1=-2, axis2=-1)

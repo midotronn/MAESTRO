@@ -247,6 +247,11 @@ else
 fi
 timing seed_bank end "rc=$BANK_RC"
 [ "$BANK_RC" -eq 0 ] || fail "seed-0 bank build failed"
+if [ "${MAESTRO_FRONT_FACING:-0}" = "1" ]; then
+  FRONT="$(find_script normalize_front_facing.py)" || fail "normalize_front_facing.py not found"
+  "$PY" "$FRONT" "fd_${SID}_STORY_bestofk.npy" bank_${SID}_*_seed0.npy \
+    || fail "front-facing normalization failed"
+fi
 
 progress beats 76 "Tracking beats and musical accents"
 echo "### [4/6] beats"
