@@ -93,18 +93,18 @@ ssh -p $env:AGENTLODGE_POD_PORT -i $env:AGENTLODGE_POD_KEY `
 ### Secure planner provisioning
 
 Never put an OpenAI credential in Git, chat, a process argument, or a setup script. Rotate any
-credential exposed through those channels. Place a replacement credential in a local file, upload
-it outside the repository, and restrict it before setup:
+credential exposed through those channels. Keep the replacement in a private local file outside the
+repository and point the gitignored pod config at that file:
 
 ```powershell
-.\scripts\pod.ps1 push C:\secure\maestro-openai-key.txt /workspace/.oai_key
-.\scripts\pod.ps1 ssh "chmod 600 /workspace/.oai_key"
+$env:AGENTLODGE_OAI_KEY_FILE = "C:\secure\maestro-openai-key.txt"
 .\scripts\pod.ps1 setup4
 ```
 
-When `OPENAI_API_KEY` or `/workspace/.oai_key` is present, server startup makes a real planner call
-and fails closed unless it succeeds. Set `AGENTLODGE_REQUIRE_LLM_PLANNER=1` on the pod to reject
-startup when no credential is configured. `GET /api/planner/status` reports both `configured` and
+`setup4` uploads the credential through a transient staging file, installs it as
+`/root/.oai_key` with mode `0600`, deletes the staging copy, and requires a successful live planner
+probe before declaring the Pod ready. This avoids relying on shared-volume Unix permissions, which
+some RunPod volumes do not preserve. `GET /api/planner/status` reports both `configured` and
 `verified`; the four-GPU verifier rejects the configured-but-unverified state.
 
 The full-song path exports one animated GLB through the warm Blender daemon, splits all source frames

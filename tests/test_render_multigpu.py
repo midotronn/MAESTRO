@@ -661,6 +661,10 @@ def test_setup_and_launcher_wire_selector_without_global_preload():
     assert 'AGENTLODGE_FILAMENT_FAST_GROUNDING:-0' in four_gpu_server
     assert 'AGENTLODGE_FILAMENT_FOOT_GROUNDING:-1' in four_gpu_server
     assert "egl_cuda_device_selector.c" in pod_helper
+    assert "AGENTLODGE_OAI_KEY_FILE" in pod_helper
+    assert ".oai_key.upload" in pod_helper
+    assert "/root/.oai_key" in pod_helper
+    assert "AGENTLODGE_REQUIRE_LLM_PLANNER" in pod_helper
 
 
 def test_selector_builds_when_linux_gcc_is_available(tmp_path):
