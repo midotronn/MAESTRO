@@ -1,0 +1,46 @@
+{
+  "rights_status": "Study team confirmed full-song approval on 2026-08-27",
+  "audio_format": {
+    "sample_rate": 22050,
+    "channels": 1,
+    "codec": "pcm_s16le"
+  },
+  "songs": [
+    {
+      "name": "Can't Stop the Feeling!",
+      "artist": "Justin Timberlake",
+      "order": 1,
+      "study_pod_sid": "can_t_stop_the_feeling_43322",
+      "duration_seconds": 236.12371882086168,
+      "motion_frames_30fps": 7084,
+      "sha256": "8537953f61685695870d349a829be3a61edb80c7344980d2c3455604e32eb3d5"
+    },
+    {
+      "name": "Uptown Funk",
+      "artist": "Mark Ronson feat. Bruno Mars",
+      "order": 2,
+      "study_pod_sid": "uptown_funk_43352",
+      "duration_seconds": 268.1904761904762,
+      "motion_frames_30fps": 8046,
+      "sha256": "a1b53bbf216c264a2aef91bda1f4c6d91a7db701303c563209971d0ef78c525c"
+    },
+    {
+      "name": "Levitating",
+      "artist": "Dua Lipa",
+      "order": 3,
+      "study_pod_sid": "levitating_43228",
+      "duration_seconds": 202.08326530612246,
+      "motion_frames_30fps": 6062,
+      "sha256": "e2410ae7317cf03958042e21fde60ec74a82b0dec44cb610ffdd1459175f5116"
+    },
+    {
+      "name": "Dynamite",
+      "artist": "BTS",
+      "order": 4,
+      "study_pod_sid": "dynamite_43089",
+      "duration_seconds": 205.7752380952381,
+      "motion_frames_30fps": 6173,
+      "sha256": "505f55500a7a3923662b6f8f6808d8cc206da644237ba3ba3ba0f4fd8546ff5a"
+    }
+  ]
+}

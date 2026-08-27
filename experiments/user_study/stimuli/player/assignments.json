@@ -1,5 +1,5 @@
 {
-  "protocol": "maestro-expert-study-v11-background-refinement",
+  "protocol": "maestro-expert-study-v13-approved-pop-front-facing",
   "lane_encoding": "private numeric source lanes",
   "phases": {
     "pilot": [

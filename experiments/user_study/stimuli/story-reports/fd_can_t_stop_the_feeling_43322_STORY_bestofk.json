@@ -1,0 +1,1044 @@
+{
+  "sid": "can_t_stop_the_feeling_43322",
+  "best_of_k": 1,
+  "frames": 7084,
+  "target_frames": 7084,
+  "source_frames": {
+    "lodge": 6912,
+    "edge": 7050
+  },
+  "lodge_summary": "LODGE two-stage pipeline (global choreography + PDDM) with genre=Hiphop; 7 global segments, 27 local windows.",
+  "edge_summary": "EDGE long-form pipeline with 93 chained 5s clips and 2.5s overlap; output length 7050 frames.",
+  "generation_workers": {
+    "lodge": "lodge-gpu0",
+    "edge": "edge-gpu1"
+  },
+  "reasoning": "story assembly: 8 sections (3 LODGE, 5 EDGE, 0 motif-reuse); storyboard bias honored in 8/8 explicitly-biased sections; 8 common-motion cues applied across 8 sections; schedule: 0.0-25.2s:lodge[intro], 25.2-85.4s:edge[chorus], 85.4-101.3s:lodge[verse], 101.3-136.4s:edge[chorus], 136.4-170.4s:edge[chorus], 170.4-187.1s:edge[drop], 187.1-223.4s:edge[chorus], 223.4-236.1s:lodge[outro]",
+  "schedule": [
+    [
+      0,
+      755,
+      "lodge",
+      "intro"
+    ],
+    [
+      755,
+      2563,
+      "edge",
+      "chorus"
+    ],
+    [
+      2563,
+      3038,
+      "lodge",
+      "verse"
+    ],
+    [
+      3038,
+      4092,
+      "edge",
+      "chorus"
+    ],
+    [
+      4092,
+      5112,
+      "edge",
+      "chorus"
+    ],
+    [
+      5112,
+      5614,
+      "edge",
+      "drop"
+    ],
+    [
+      5614,
+      6701,
+      "edge",
+      "chorus"
+    ],
+    [
+      6701,
+      7084,
+      "lodge",
+      "outro"
+    ]
+  ],
+  "storyboard": {
+    "arc": "8 sections building toward the chorus at section 4, then resolving: intro -> chorus -> verse -> chorus -> chorus -> drop -> chorus -> outro",
+    "reasoning": "rule-based storyboard from detected structure",
+    "used_fallback": true,
+    "plans": [
+      {
+        "section_index": 0,
+        "role": "intro",
+        "target_intensity": 0.0,
+        "vocabulary": "grounded_minimal",
+        "generator_bias": "lodge",
+        "reuse_of": null,
+        "variation": {
+          "mirror": false,
+          "retime": 1.0,
+          "amplitude": 1.0
+        },
+        "common_motions": [
+          {
+            "motion_id": "rise_reach",
+            "position": 0.68,
+            "anchor": "beat",
+            "intensity": 0.42,
+            "direction": null,
+            "mirror": false,
+            "repeats": 1,
+            "motif": "label_0_rise_reach",
+            "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif"
+          }
+        ]
+      },
+      {
+        "section_index": 1,
+        "role": "chorus",
+        "target_intensity": 0.914,
+        "vocabulary": "explosive_fast",
+        "generator_bias": "edge",
+        "reuse_of": null,
+        "variation": {
+          "mirror": false,
+          "retime": 1.0,
+          "amplitude": 1.0
+        },
+        "common_motions": [
+          {
+            "motion_id": "side_step",
+            "position": 0.5,
+            "anchor": "center",
+            "intensity": 0.877,
+            "direction": "auto",
+            "mirror": false,
+            "repeats": 1,
+            "motif": "label_1_side_step",
+            "rationale": "chorus signature selected for section label 1; repeat-label returns inherit the same composed motif"
+          }
+        ]
+      },
+      {
+        "section_index": 2,
+        "role": "verse",
+        "target_intensity": 0.525,
+        "vocabulary": "expansive_traveling",
+        "generator_bias": "lodge",
+        "reuse_of": 0,
+        "variation": {
+          "mirror": false,
+          "retime": 0.6291,
+          "amplitude": 1.4
+        },
+        "common_motions": []
+      },
+      {
+        "section_index": 3,
+        "role": "chorus",
+        "target_intensity": 0.865,
+        "vocabulary": "explosive_fast",
+        "generator_bias": "edge",
+        "reuse_of": 1,
+        "variation": {
+          "mirror": false,
+          "retime": 0.583,
+          "amplitude": 0.946
+        },
+        "common_motions": []
+      },
+      {
+        "section_index": 4,
+        "role": "chorus",
+        "target_intensity": 1.0,
+        "vocabulary": "explosive_fast",
+        "generator_bias": "edge",
+        "reuse_of": null,
+        "variation": {
+          "mirror": false,
+          "retime": 1.0,
+          "amplitude": 1.0
+        },
+        "common_motions": [
+          {
+            "motion_id": "side_step",
+            "position": 0.5,
+            "anchor": "center",
+            "intensity": 0.92,
+            "direction": "auto",
+            "mirror": false,
+            "repeats": 1,
+            "motif": "label_2_side_step",
+            "rationale": "chorus signature selected for section label 2; repeat-label returns inherit the same composed motif"
+          }
+        ]
+      },
+      {
+        "section_index": 5,
+        "role": "drop",
+        "target_intensity": 0.948,
+        "vocabulary": "explosive_fast",
+        "generator_bias": "edge",
+        "reuse_of": null,
+        "variation": {
+          "mirror": false,
+          "retime": 1.0,
+          "amplitude": 1.0
+        },
+        "common_motions": [
+          {
+            "motion_id": "chest_pop",
+            "position": 0.46,
+            "anchor": "beat",
+            "intensity": 0.894,
+            "direction": null,
+            "mirror": false,
+            "repeats": 1,
+            "motif": "label_3_chest_pop",
+            "rationale": "drop signature selected for section label 3; repeat-label returns inherit the same composed motif"
+          }
+        ]
+      },
+      {
+        "section_index": 6,
+        "role": "chorus",
+        "target_intensity": 0.984,
+        "vocabulary": "explosive_fast",
+        "generator_bias": "edge",
+        "reuse_of": 4,
+        "variation": {
+          "mirror": false,
+          "retime": 1.0657,
+          "amplitude": 0.984
+        },
+        "common_motions": []
+      },
+      {
+        "section_index": 7,
+        "role": "outro",
+        "target_intensity": 0.04,
+        "vocabulary": "grounded_minimal",
+        "generator_bias": "lodge",
+        "reuse_of": 0,
+        "variation": {
+          "mirror": true,
+          "retime": 0.5073,
+          "amplitude": 1.4
+        },
+        "common_motions": []
+      }
+    ]
+  },
+  "section_scores": [
+    {
+      "a": 0,
+      "b": 755,
+      "source": "lodge",
+      "role": "intro",
+      "costs": {
+        "lodge": -0.5,
+        "edge": 1.0
+      },
+      "target_intensity": 0.0,
+      "plan_bias": "lodge",
+      "matched_bias": true,
+      "vocabulary": "grounded_minimal",
+      "energies": {
+        "lodge": 0.0796,
+        "edge": 0.1531
+      },
+      "chosen_cost": -0.5,
+      "caption": "A calm, building phrase with varied dynamics, on a regular pulse, mostly grounded, staying centered.",
+      "plan_alignment": 0.94,
+      "post_variation": [],
+      "planned_common_motions": [
+        {
+          "motion_id": "rise_reach",
+          "position": 0.68,
+          "anchor": "beat",
+          "intensity": 0.42,
+          "direction": null,
+          "mirror": false,
+          "repeats": 1,
+          "motif": "label_0_rise_reach",
+          "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif"
+        }
+      ],
+      "effective_common_motions": [
+        {
+          "motion_id": "rise_reach",
+          "position": 0.68,
+          "anchor": "beat",
+          "intensity": 0.42,
+          "direction": null,
+          "mirror": false,
+          "repeats": 1,
+          "motif": "label_0_rise_reach",
+          "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif"
+        }
+      ],
+      "common_motions": [
+        {
+          "id": "rise_reach",
+          "name": "Rise and reach",
+          "category": "level change",
+          "mode": "replace",
+          "anchor": "beat",
+          "event_frame": 50,
+          "action_range": [
+            12,
+            60
+          ],
+          "action_frames": 48,
+          "recommended_beats": 3.0,
+          "beat_error_frames": 0.0,
+          "mirror": false,
+          "direction_request": null,
+          "direction": null,
+          "direction_source": null,
+          "natural_direction": null,
+          "counterflow_turn_degrees": 0.0,
+          "counterflow_turn_joints": [],
+          "intensity": 0.42,
+          "repeats": 1,
+          "source": "MAESTRO procedural authoring",
+          "license": "MIT",
+          "attribution": "Created for MAESTRO",
+          "validation": {
+            "ok": true,
+            "type": "rise_phases",
+            "metric": 1.0,
+            "threshold": 1.0,
+            "detail": "low f16; high f42; rise 0.300; fully planted 1.000"
+          },
+          "status": "applied",
+          "position": 0.68,
+          "planned_intensity": 0.42,
+          "intensity_adjusted": false,
+          "beat_lock_relaxed": false,
+          "motif": "label_0_rise_reach",
+          "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif",
+          "section_action_range": [
+            487,
+            535
+          ],
+          "global_action_range": [
+            487,
+            535
+          ]
+        }
+      ],
+      "common_motion_ids": [
+        "rise_reach"
+      ],
+      "inherited_common_motion_ids": [],
+      "recalled_common_motion_ids": [],
+      "reuse_fit": null
+    },
+    {
+      "a": 755,
+      "b": 2563,
+      "source": "edge",
+      "role": "chorus",
+      "costs": {
+        "lodge": 0.5486,
+        "edge": -0.3018
+      },
+      "target_intensity": 0.9143914276918595,
+      "plan_bias": "edge",
+      "matched_bias": true,
+      "vocabulary": "explosive_fast",
+      "energies": {
+        "lodge": 0.1501,
+        "edge": 0.177
+      },
+      "chosen_cost": -0.3018,
+      "caption": "A explosive, steady phrase with even, sustained dynamics, on a regular pulse, often airborne, staying centered.",
+      "plan_alignment": 0.9072,
+      "post_variation": [],
+      "planned_common_motions": [
+        {
+          "motion_id": "side_step",
+          "position": 0.5,
+          "anchor": "center",
+          "intensity": 0.877,
+          "direction": "auto",
+          "mirror": false,
+          "repeats": 1,
+          "motif": "label_1_side_step",
+          "rationale": "chorus signature selected for section label 1; repeat-label returns inherit the same composed motif"
+        }
+      ],
+      "effective_common_motions": [
+        {
+          "motion_id": "side_step",
+          "position": 0.5,
+          "anchor": "center",
+          "intensity": 0.877,
+          "direction": "auto",
+          "mirror": false,
+          "repeats": 1,
+          "motif": "label_1_side_step",
+          "rationale": "chorus signature selected for section label 1; repeat-label returns inherit the same composed motif"
+        }
+      ],
+      "common_motions": [
+        {
+          "id": "side_step",
+          "name": "Side step",
+          "category": "locomotion",
+          "mode": "replace",
+          "anchor": "center",
+          "event_frame": 36,
+          "action_range": [
+            16,
+            48
+          ],
+          "action_frames": 32,
+          "recommended_beats": 2.0,
+          "beat_error_frames": 0.0,
+          "mirror": true,
+          "direction_request": "auto",
+          "direction": "right",
+          "direction_source": "dance_flow",
+          "natural_direction": "right",
+          "counterflow_turn_degrees": 0.0,
+          "counterflow_turn_joints": [],
+          "intensity": 0.8771957138459298,
+          "repeats": 1,
+          "source": "MAESTRO procedural authoring",
+          "license": "MIT",
+          "attribution": "Created for MAESTRO",
+          "validation": {
+            "ok": true,
+            "type": "root_displacement",
+            "metric": 0.32591426372528076,
+            "threshold": 0.18,
+            "detail": "root displacement 0.326"
+          },
+          "status": "applied",
+          "position": 0.5,
+          "planned_intensity": 0.877,
+          "intensity_adjusted": false,
+          "beat_lock_relaxed": false,
+          "motif": "label_1_side_step",
+          "rationale": "chorus signature selected for section label 1; repeat-label returns inherit the same composed motif",
+          "section_action_range": [
+            879,
+            911
+          ],
+          "global_action_range": [
+            1634,
+            1666
+          ]
+        }
+      ],
+      "common_motion_ids": [
+        "side_step"
+      ],
+      "inherited_common_motion_ids": [],
+      "recalled_common_motion_ids": [],
+      "reuse_fit": null
+    },
+    {
+      "a": 2563,
+      "b": 3038,
+      "source": "lodge",
+      "role": "verse",
+      "costs": {
+        "lodge": -0.444,
+        "edge": 0.4867,
+        "reuse:0": 0.0188
+      },
+      "target_intensity": 0.5247229839251885,
+      "plan_bias": "lodge",
+      "matched_bias": true,
+      "vocabulary": "expansive_traveling",
+      "energies": {
+        "lodge": 0.1324,
+        "edge": 0.1586,
+        "reuse:0": 0.1126
+      },
+      "chosen_cost": -0.444,
+      "caption": "A moderate, steady phrase with varied dynamics, on a regular pulse, mostly grounded, staying centered.",
+      "plan_alignment": 0.894,
+      "post_variation": [],
+      "planned_common_motions": [],
+      "effective_common_motions": [
+        {
+          "motion_id": "rise_reach",
+          "position": 0.68,
+          "anchor": "beat",
+          "intensity": 0.42,
+          "direction": null,
+          "mirror": false,
+          "repeats": 1,
+          "motif": "label_0_rise_reach",
+          "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif"
+        }
+      ],
+      "common_motions": [
+        {
+          "id": "rise_reach",
+          "name": "Rise and reach",
+          "category": "level change",
+          "mode": "replace",
+          "anchor": "beat",
+          "event_frame": 50,
+          "action_range": [
+            12,
+            60
+          ],
+          "action_frames": 48,
+          "recommended_beats": 3.0,
+          "beat_error_frames": 0.0,
+          "mirror": false,
+          "direction_request": null,
+          "direction": null,
+          "direction_source": null,
+          "natural_direction": null,
+          "counterflow_turn_degrees": 0.0,
+          "counterflow_turn_joints": [],
+          "intensity": 0.42,
+          "repeats": 1,
+          "source": "MAESTRO procedural authoring",
+          "license": "MIT",
+          "attribution": "Created for MAESTRO",
+          "validation": {
+            "ok": true,
+            "type": "rise_phases",
+            "metric": 1.0,
+            "threshold": 1.0,
+            "detail": "low f16; high f42; rise 0.300; fully planted 1.000"
+          },
+          "status": "applied",
+          "position": 0.68,
+          "planned_intensity": 0.42,
+          "intensity_adjusted": false,
+          "beat_lock_relaxed": false,
+          "motif": "label_0_rise_reach",
+          "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif",
+          "section_action_range": [
+            296,
+            344
+          ],
+          "global_action_range": [
+            2859,
+            2907
+          ]
+        }
+      ],
+      "common_motion_ids": [
+        "rise_reach"
+      ],
+      "inherited_common_motion_ids": [],
+      "recalled_common_motion_ids": [
+        "rise_reach"
+      ],
+      "reuse_fit": null
+    },
+    {
+      "a": 3038,
+      "b": 4092,
+      "source": "edge",
+      "role": "chorus",
+      "costs": {
+        "lodge": 0.5188,
+        "edge": -0.0413,
+        "reuse:1": 0.1812
+      },
+      "target_intensity": 0.8646520977087778,
+      "plan_bias": "edge",
+      "matched_bias": true,
+      "vocabulary": "explosive_fast",
+      "energies": {
+        "lodge": 0.1475,
+        "edge": 0.1638,
+        "reuse:1": 0.2092
+      },
+      "chosen_cost": -0.0413,
+      "caption": "A calm, steady phrase with even, sustained dynamics, on a regular pulse, often airborne, staying centered.",
+      "plan_alignment": 0.3819,
+      "post_variation": [],
+      "planned_common_motions": [],
+      "effective_common_motions": [
+        {
+          "motion_id": "side_step",
+          "position": 0.5,
+          "anchor": "center",
+          "intensity": 0.877,
+          "direction": "auto",
+          "mirror": false,
+          "repeats": 1,
+          "motif": "label_1_side_step",
+          "rationale": "chorus signature selected for section label 1; repeat-label returns inherit the same composed motif"
+        }
+      ],
+      "common_motions": [
+        {
+          "id": "side_step",
+          "name": "Side step",
+          "category": "locomotion",
+          "mode": "replace",
+          "anchor": "center",
+          "event_frame": 43,
+          "action_range": [
+            23,
+            55
+          ],
+          "action_frames": 32,
+          "recommended_beats": 2.0,
+          "beat_error_frames": 0.0,
+          "mirror": false,
+          "direction_request": "auto",
+          "direction": "left",
+          "direction_source": "canonical_fallback",
+          "natural_direction": "forward",
+          "counterflow_turn_degrees": 0.0,
+          "counterflow_turn_joints": [],
+          "intensity": 0.8771957138459298,
+          "repeats": 1,
+          "source": "MAESTRO procedural authoring",
+          "license": "MIT",
+          "attribution": "Created for MAESTRO",
+          "validation": {
+            "ok": true,
+            "type": "root_displacement",
+            "metric": 0.3352842330932617,
+            "threshold": 0.18,
+            "detail": "root displacement 0.335"
+          },
+          "status": "applied",
+          "position": 0.5,
+          "planned_intensity": 0.877,
+          "intensity_adjusted": false,
+          "beat_lock_relaxed": false,
+          "motif": "label_1_side_step",
+          "rationale": "chorus signature selected for section label 1; repeat-label returns inherit the same composed motif",
+          "section_action_range": [
+            508,
+            540
+          ],
+          "global_action_range": [
+            3546,
+            3578
+          ]
+        }
+      ],
+      "common_motion_ids": [
+        "side_step"
+      ],
+      "inherited_common_motion_ids": [],
+      "recalled_common_motion_ids": [
+        "side_step"
+      ],
+      "reuse_fit": null
+    },
+    {
+      "a": 4092,
+      "b": 5112,
+      "source": "edge",
+      "role": "chorus",
+      "costs": {
+        "lodge": 0.1606,
+        "edge": 0.1
+      },
+      "target_intensity": 1.0,
+      "plan_bias": "edge",
+      "matched_bias": true,
+      "vocabulary": "explosive_fast",
+      "energies": {
+        "lodge": 0.1776,
+        "edge": 0.1519
+      },
+      "chosen_cost": 0.1,
+      "caption": "A calm, settling phrase with even, sustained dynamics, on a regular pulse, often airborne, staying centered.",
+      "plan_alignment": 0.05,
+      "post_variation": [],
+      "planned_common_motions": [
+        {
+          "motion_id": "side_step",
+          "position": 0.5,
+          "anchor": "center",
+          "intensity": 0.92,
+          "direction": "auto",
+          "mirror": false,
+          "repeats": 1,
+          "motif": "label_2_side_step",
+          "rationale": "chorus signature selected for section label 2; repeat-label returns inherit the same composed motif"
+        }
+      ],
+      "effective_common_motions": [
+        {
+          "motion_id": "side_step",
+          "position": 0.5,
+          "anchor": "center",
+          "intensity": 0.92,
+          "direction": "auto",
+          "mirror": false,
+          "repeats": 1,
+          "motif": "label_2_side_step",
+          "rationale": "chorus signature selected for section label 2; repeat-label returns inherit the same composed motif"
+        }
+      ],
+      "common_motions": [
+        {
+          "id": "side_step",
+          "name": "Side step",
+          "category": "locomotion",
+          "mode": "replace",
+          "anchor": "center",
+          "event_frame": 41,
+          "action_range": [
+            21,
+            53
+          ],
+          "action_frames": 32,
+          "recommended_beats": 2.0,
+          "beat_error_frames": 0.0,
+          "mirror": false,
+          "direction_request": "auto",
+          "direction": "left",
+          "direction_source": "dance_flow",
+          "natural_direction": "left",
+          "counterflow_turn_degrees": 0.0,
+          "counterflow_turn_joints": [],
+          "intensity": 0.9199999999999999,
+          "repeats": 1,
+          "source": "MAESTRO procedural authoring",
+          "license": "MIT",
+          "attribution": "Created for MAESTRO",
+          "validation": {
+            "ok": true,
+            "type": "root_displacement",
+            "metric": 0.31592464447021484,
+            "threshold": 0.18,
+            "detail": "root displacement 0.316"
+          },
+          "status": "applied",
+          "position": 0.5,
+          "planned_intensity": 0.92,
+          "intensity_adjusted": false,
+          "beat_lock_relaxed": false,
+          "motif": "label_2_side_step",
+          "rationale": "chorus signature selected for section label 2; repeat-label returns inherit the same composed motif",
+          "section_action_range": [
+            490,
+            522
+          ],
+          "global_action_range": [
+            4582,
+            4614
+          ]
+        }
+      ],
+      "common_motion_ids": [
+        "side_step"
+      ],
+      "inherited_common_motion_ids": [],
+      "recalled_common_motion_ids": [],
+      "reuse_fit": null
+    },
+    {
+      "a": 5112,
+      "b": 5614,
+      "source": "edge",
+      "role": "drop",
+      "costs": {
+        "lodge": 0.5689,
+        "edge": -0.2585
+      },
+      "target_intensity": 0.9481751557643502,
+      "plan_bias": "edge",
+      "matched_bias": true,
+      "vocabulary": "explosive_fast",
+      "energies": {
+        "lodge": 0.1163,
+        "edge": 0.1556
+      },
+      "chosen_cost": -0.2585,
+      "caption": "A explosive, steady phrase with even, sustained dynamics, with free timing, often airborne, staying centered.",
+      "plan_alignment": 0.9241,
+      "post_variation": [],
+      "planned_common_motions": [
+        {
+          "motion_id": "chest_pop",
+          "position": 0.46,
+          "anchor": "beat",
+          "intensity": 0.894,
+          "direction": null,
+          "mirror": false,
+          "repeats": 1,
+          "motif": "label_3_chest_pop",
+          "rationale": "drop signature selected for section label 3; repeat-label returns inherit the same composed motif"
+        }
+      ],
+      "effective_common_motions": [
+        {
+          "motion_id": "chest_pop",
+          "position": 0.46,
+          "anchor": "beat",
+          "intensity": 0.894,
+          "direction": null,
+          "mirror": false,
+          "repeats": 1,
+          "motif": "label_3_chest_pop",
+          "rationale": "drop signature selected for section label 3; repeat-label returns inherit the same composed motif"
+        }
+      ],
+      "common_motions": [
+        {
+          "id": "chest_pop",
+          "name": "Chest pop",
+          "category": "accent",
+          "mode": "replace",
+          "anchor": "beat",
+          "event_frame": 23,
+          "action_range": [
+            7,
+            39
+          ],
+          "action_frames": 32,
+          "recommended_beats": 1.0,
+          "beat_error_frames": 0.0,
+          "mirror": false,
+          "direction_request": null,
+          "direction": null,
+          "direction_source": null,
+          "natural_direction": null,
+          "counterflow_turn_degrees": 0.0,
+          "counterflow_turn_joints": [],
+          "intensity": 0.8940875778821751,
+          "repeats": 1,
+          "source": "MAESTRO procedural authoring",
+          "license": "MIT",
+          "attribution": "Created for MAESTRO",
+          "validation": {
+            "ok": true,
+            "type": "articulation_chain",
+            "metric": 0.5355479121208191,
+            "threshold": 0.22,
+            "detail": "minimum chain activity 0.536"
+          },
+          "status": "applied",
+          "position": 0.46,
+          "planned_intensity": 0.894,
+          "intensity_adjusted": false,
+          "beat_lock_relaxed": false,
+          "motif": "label_3_chest_pop",
+          "rationale": "drop signature selected for section label 3; repeat-label returns inherit the same composed motif",
+          "section_action_range": [
+            207,
+            239
+          ],
+          "global_action_range": [
+            5319,
+            5351
+          ]
+        }
+      ],
+      "common_motion_ids": [
+        "chest_pop"
+      ],
+      "inherited_common_motion_ids": [],
+      "recalled_common_motion_ids": [],
+      "reuse_fit": null
+    },
+    {
+      "a": 5614,
+      "b": 6701,
+      "source": "edge",
+      "role": "chorus",
+      "costs": {
+        "lodge": 0.2439,
+        "edge": -0.2048,
+        "reuse:4": 0.2903
+      },
+      "target_intensity": 0.9838158422486936,
+      "plan_bias": "edge",
+      "matched_bias": true,
+      "vocabulary": "explosive_fast",
+      "energies": {
+        "lodge": 0.1711,
+        "edge": 0.1658,
+        "reuse:4": 0.1418
+      },
+      "chosen_cost": -0.2048,
+      "caption": "A explosive, steady phrase with even, sustained dynamics, with free timing, often airborne, staying centered.",
+      "plan_alignment": 0.8791,
+      "post_variation": [],
+      "planned_common_motions": [],
+      "effective_common_motions": [
+        {
+          "motion_id": "side_step",
+          "position": 0.5,
+          "anchor": "center",
+          "intensity": 0.92,
+          "direction": "auto",
+          "mirror": false,
+          "repeats": 1,
+          "motif": "label_2_side_step",
+          "rationale": "chorus signature selected for section label 2; repeat-label returns inherit the same composed motif"
+        }
+      ],
+      "common_motions": [
+        {
+          "id": "side_step",
+          "name": "Side step",
+          "category": "locomotion",
+          "mode": "replace",
+          "anchor": "center",
+          "event_frame": 40,
+          "action_range": [
+            20,
+            52
+          ],
+          "action_frames": 32,
+          "recommended_beats": 2.0,
+          "beat_error_frames": 0.0,
+          "mirror": false,
+          "direction_request": "auto",
+          "direction": "left",
+          "direction_source": "dance_flow",
+          "natural_direction": "left",
+          "counterflow_turn_degrees": 0.0,
+          "counterflow_turn_joints": [],
+          "intensity": 0.9199999999999999,
+          "repeats": 1,
+          "source": "MAESTRO procedural authoring",
+          "license": "MIT",
+          "attribution": "Created for MAESTRO",
+          "validation": {
+            "ok": true,
+            "type": "root_displacement",
+            "metric": 0.3236406743526459,
+            "threshold": 0.18,
+            "detail": "root displacement 0.324"
+          },
+          "status": "applied",
+          "position": 0.5,
+          "planned_intensity": 0.92,
+          "intensity_adjusted": false,
+          "beat_lock_relaxed": false,
+          "motif": "label_2_side_step",
+          "rationale": "chorus signature selected for section label 2; repeat-label returns inherit the same composed motif",
+          "section_action_range": [
+            522,
+            554
+          ],
+          "global_action_range": [
+            6136,
+            6168
+          ]
+        }
+      ],
+      "common_motion_ids": [
+        "side_step"
+      ],
+      "inherited_common_motion_ids": [],
+      "recalled_common_motion_ids": [
+        "side_step"
+      ],
+      "reuse_fit": null
+    },
+    {
+      "a": 6701,
+      "b": 7084,
+      "source": "lodge",
+      "role": "outro",
+      "costs": {
+        "lodge": -0.2857,
+        "edge": 0.6941,
+        "reuse:0": -0.2613
+      },
+      "target_intensity": 0.040023394994349676,
+      "plan_bias": "lodge",
+      "matched_bias": true,
+      "vocabulary": "grounded_minimal",
+      "energies": {
+        "lodge": 0.1383,
+        "edge": 0.1697,
+        "reuse:0": 0.1177
+      },
+      "chosen_cost": -0.2857,
+      "caption": "A moderate, steady phrase with varied dynamics, on a regular pulse, mostly grounded, staying centered.",
+      "plan_alignment": 0.6828,
+      "post_variation": [],
+      "planned_common_motions": [],
+      "effective_common_motions": [
+        {
+          "motion_id": "rise_reach",
+          "position": 0.68,
+          "anchor": "beat",
+          "intensity": 0.42,
+          "direction": null,
+          "mirror": false,
+          "repeats": 1,
+          "motif": "label_0_rise_reach",
+          "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif"
+        }
+      ],
+      "common_motions": [
+        {
+          "id": "rise_reach",
+          "name": "Rise and reach",
+          "category": "level change",
+          "mode": "replace",
+          "anchor": "beat",
+          "event_frame": 38,
+          "action_range": [
+            0,
+            48
+          ],
+          "action_frames": 48,
+          "recommended_beats": 3.0,
+          "beat_error_frames": 18.0,
+          "mirror": false,
+          "direction_request": null,
+          "direction": null,
+          "direction_source": null,
+          "natural_direction": null,
+          "counterflow_turn_degrees": 0.0,
+          "counterflow_turn_joints": [],
+          "intensity": 0.42,
+          "repeats": 1,
+          "source": "MAESTRO procedural authoring",
+          "license": "MIT",
+          "attribution": "Created for MAESTRO",
+          "validation": {
+            "ok": true,
+            "type": "rise_phases",
+            "metric": 1.0,
+            "threshold": 1.0,
+            "detail": "low f16; high f42; rise 0.300; fully planted 1.000"
+          },
+          "status": "applied",
+          "position": 0.68,
+          "planned_intensity": 0.42,
+          "intensity_adjusted": false,
+          "beat_lock_relaxed": false,
+          "motif": "label_0_rise_reach",
+          "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif",
+          "section_action_range": [
+            222,
+            270
+          ],
+          "global_action_range": [
+            6923,
+            6971
+          ]
+        }
+      ],
+      "common_motion_ids": [
+        "rise_reach"
+      ],
+      "inherited_common_motion_ids": [],
+      "recalled_common_motion_ids": [
+        "rise_reach"
+      ],
+      "reuse_fit": null
+    }
+  ]
+}

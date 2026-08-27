@@ -1,5 +1,5 @@
 {
-  "protocol": "maestro-expert-study-v11-background-refinement",
+  "protocol": "maestro-expert-study-v13-approved-pop-front-facing",
   "selection_type": "capability-focused expert-elicitation",
   "selection_note": "These windows intentionally show cases where MAESTRO is stronger than both baselines. They are demonstration and expert-elicitation stimuli, not a random or representative benchmark sample.",
   "source_layout": {
@@ -20,189 +20,251 @@
     "width": 1440,
     "height": 400,
     "fps": 30,
-    "duration_seconds": 10
+    "duration_seconds": 6
   },
-  "diagnostic_method": "Sliding 10-second windows at one-second stride. Optical-flow motion timing was compared with audio onset and beat timing; contact sheets were then reviewed for distinct motion, clipping, stalls, and transition artifacts.",
+  "diagnostic_method": "Sliding six-second windows at one-second stride. Optical-flow timing was compared with audio onset and beat timing, exact prepared motions were checked for pose difference from both baselines, and contact sheets were reviewed for distinct motion, front-facing presentation, clipping, stalls, and transition artifacts.",
+  "sources": {
+    "Can't Stop the Feeling!": {
+      "artist": "Justin Timberlake",
+      "sid": "can_t_stop_the_feeling_43322",
+      "full_composite": "story_cant-stop-the-feeling_3way.mp4",
+      "audio_sha256": "8537953f61685695870d349a829be3a61edb80c7344980d2c3455604e32eb3d5"
+    },
+    "Uptown Funk": {
+      "artist": "Mark Ronson feat. Bruno Mars",
+      "sid": "uptown_funk_43352",
+      "full_composite": "story_uptown-funk_3way.mp4",
+      "audio_sha256": "a1b53bbf216c264a2aef91bda1f4c6d91a7db701303c563209971d0ef78c525c"
+    },
+    "Levitating": {
+      "artist": "Dua Lipa",
+      "sid": "levitating_43228",
+      "full_composite": "story_levitating_3way.mp4",
+      "audio_sha256": "e2410ae7317cf03958042e21fde60ec74a82b0dec44cb610ffdd1459175f5116"
+    },
+    "Dynamite": {
+      "artist": "BTS",
+      "sid": "dynamite_43089",
+      "full_composite": "story_dynamite_3way.mp4",
+      "audio_sha256": "505f55500a7a3923662b6f8f6808d8cc206da644237ba3ba3ba0f4fd8546ff5a"
+    }
+  },
   "excerpts": [
     {
       "id": "EX01",
-      "source_song": "FineDance 002",
-      "source_video": "docs/static/videos/story_002_3way.mp4",
-      "start_seconds": 63,
-      "duration_seconds": 10,
+      "source_song": "Can't Stop the Feeling!",
+      "source_video": "experiments/user_study/stimuli/sources/EX01.mp4",
+      "start_seconds": 0,
+      "source_original_start_seconds": 85,
+      "duration_seconds": 6,
       "diagnostics": {
-        "quality_margin": 0.0658,
-        "beat_margin": 0.1389,
-        "maestro_quality": 0.6195,
-        "lodge_quality": 0.5537,
-        "edge_quality": 0.5338
+        "quality_margin": 0.016,
+        "beat_margin": 0.0484,
+        "maestro_quality": 0.7101,
+        "lodge_quality": 0.6941,
+        "edge_quality": 0.6319,
+        "min_pose_difference_degrees": 2.73,
+        "max_near_identical_ratio": 0.8768
       },
-      "rationale": "Clear MAESTRO timing advantage with distinct poses and no visible clipping."
+      "rationale": "A clean EDGE-to-LODGE handoff where MAESTRO preserves stronger beat accents without clipping or a visible transition break."
     },
     {
       "id": "EX02",
-      "source_song": "FineDance 037",
-      "source_video": "docs/static/videos/story_037_3way.mp4",
-      "start_seconds": 2,
-      "duration_seconds": 10,
+      "source_song": "Can't Stop the Feeling!",
+      "source_video": "experiments/user_study/stimuli/sources/EX02.mp4",
+      "start_seconds": 0,
+      "source_original_start_seconds": 98,
+      "duration_seconds": 6,
       "diagnostics": {
-        "quality_margin": 0.0206,
-        "beat_margin": 0.0692,
-        "maestro_quality": 0.629,
-        "lodge_quality": 0.6085,
-        "edge_quality": 0.5632
+        "quality_margin": 0.0338,
+        "beat_margin": 0.087,
+        "maestro_quality": 0.5893,
+        "lodge_quality": 0.5544,
+        "edge_quality": 0.5555,
+        "min_pose_difference_degrees": 10.0914,
+        "max_near_identical_ratio": 0.5937
       },
-      "rationale": "Early phrase with three visibly distinct interpretations and a positive MAESTRO timing margin."
+      "rationale": "The most pose-distinct window in this song, combining the rise-and-reach phrase with a smooth section transition and clearer timing."
     },
     {
       "id": "EX03",
-      "source_song": "FineDance 037",
-      "source_video": "docs/static/videos/story_037_3way.mp4",
-      "start_seconds": 34,
-      "duration_seconds": 10,
+      "source_song": "Can't Stop the Feeling!",
+      "source_video": "experiments/user_study/stimuli/sources/EX03.mp4",
+      "start_seconds": 0,
+      "source_original_start_seconds": 223,
+      "duration_seconds": 6,
       "diagnostics": {
-        "quality_margin": 0.1229,
-        "beat_margin": 0.2455,
-        "maestro_quality": 0.7149,
-        "lodge_quality": 0.5921,
-        "edge_quality": 0.5558
+        "quality_margin": 0.0055,
+        "beat_margin": 0.0712,
+        "maestro_quality": 0.6342,
+        "lodge_quality": 0.5701,
+        "edge_quality": 0.6287,
+        "min_pose_difference_degrees": 2.9638,
+        "max_near_identical_ratio": 0.8864
       },
-      "rationale": "Largest FineDance 037 margin, with expressive full-body accents and clean travel."
+      "rationale": "A stable transition into the outro with a clear beat-alignment advantage and coherent full-body phrasing."
     },
     {
       "id": "EX04",
-      "source_song": "FineDance 037",
-      "source_video": "docs/static/videos/story_037_3way.mp4",
-      "start_seconds": 46,
-      "duration_seconds": 10,
+      "source_song": "Uptown Funk",
+      "source_video": "experiments/user_study/stimuli/sources/EX04.mp4",
+      "start_seconds": 0,
+      "source_original_start_seconds": 161,
+      "duration_seconds": 6,
       "diagnostics": {
-        "quality_margin": 0.0401,
-        "beat_margin": 0.1484,
-        "maestro_quality": 0.6042,
-        "lodge_quality": 0.5642,
-        "edge_quality": 0.5401
+        "quality_margin": 0.0384,
+        "beat_margin": 0.0743,
+        "maestro_quality": 0.6718,
+        "lodge_quality": 0.5993,
+        "edge_quality": 0.6334,
+        "min_pose_difference_degrees": 2.2866,
+        "max_near_identical_ratio": 0.9306
       },
-      "rationale": "A separate high-energy phrase with stronger MAESTRO beat accents and pose variety."
+      "rationale": "The authored chest-pop accent gives MAESTRO a clearer rhythmic emphasis while retaining continuous footwork."
     },
     {
       "id": "EX05",
-      "source_song": "FineDance 150",
-      "source_video": "docs/static/videos/story_150_3way.mp4",
-      "start_seconds": 12,
-      "duration_seconds": 10,
+      "source_song": "Uptown Funk",
+      "source_video": "experiments/user_study/stimuli/sources/EX05.mp4",
+      "start_seconds": 0,
+      "source_original_start_seconds": 206,
+      "duration_seconds": 6,
       "diagnostics": {
-        "quality_margin": 0.0743,
-        "beat_margin": 0.1561,
-        "maestro_quality": 0.6323,
-        "lodge_quality": 0.558,
-        "edge_quality": 0.5366
+        "quality_margin": 0.0076,
+        "beat_margin": 0.0336,
+        "maestro_quality": 0.5588,
+        "lodge_quality": 0.5513,
+        "edge_quality": 0.5311,
+        "min_pose_difference_degrees": 4.8014,
+        "max_near_identical_ratio": 0.9328
       },
-      "rationale": "MAESTRO adds clearer upper-body phrasing without stalls or boundary artifacts."
+      "rationale": "A clap-repeat motif adds a distinct musical accent without a stall or loss of front-facing presentation."
     },
     {
       "id": "EX06",
-      "source_song": "FineDance 150",
-      "source_video": "docs/static/videos/story_150_3way.mp4",
-      "start_seconds": 70,
-      "duration_seconds": 10,
+      "source_song": "Uptown Funk",
+      "source_video": "experiments/user_study/stimuli/sources/EX06.mp4",
+      "start_seconds": 0,
+      "source_original_start_seconds": 230,
+      "duration_seconds": 6,
       "diagnostics": {
-        "quality_margin": 0.0882,
-        "beat_margin": 0.083,
-        "maestro_quality": 0.6398,
-        "lodge_quality": 0.5517,
-        "edge_quality": 0.5464
+        "quality_margin": 0.0159,
+        "beat_margin": 0.0292,
+        "maestro_quality": 0.594,
+        "lodge_quality": 0.5657,
+        "edge_quality": 0.5781,
+        "min_pose_difference_degrees": 1.2028,
+        "max_near_identical_ratio": 0.9381
       },
-      "rationale": "Build-to-climax region with strong level changes and a clean MAESTRO transition."
+      "rationale": "The EDGE-to-LODGE section handoff remains smooth while MAESTRO sustains the stronger timing and pose continuity."
     },
     {
       "id": "EX07",
-      "source_song": "FineDance 150",
-      "source_video": "docs/static/videos/story_150_3way.mp4",
-      "start_seconds": 86,
-      "duration_seconds": 10,
+      "source_song": "Levitating",
+      "source_video": "experiments/user_study/stimuli/sources/EX07.mp4",
+      "start_seconds": 0,
+      "source_original_start_seconds": 137,
+      "duration_seconds": 6,
       "diagnostics": {
-        "quality_margin": 0.0794,
-        "beat_margin": 0.1734,
-        "maestro_quality": 0.6506,
-        "lodge_quality": 0.52,
-        "edge_quality": 0.5713
+        "quality_margin": 0.0325,
+        "beat_margin": 0.0952,
+        "maestro_quality": 0.6628,
+        "lodge_quality": 0.5968,
+        "edge_quality": 0.6303,
+        "min_pose_difference_degrees": 3.1961,
+        "max_near_identical_ratio": 0.9417
       },
-      "rationale": "Late climax phrase where MAESTRO maintains energy and coherent footwork."
+      "rationale": "The arm-punch phrase produces the strongest beat margin in this song with clean, unclipped upper-body articulation."
     },
     {
       "id": "EX08",
-      "source_song": "FineDance 195",
-      "source_video": "docs/static/videos/story_195_3way.mp4",
-      "start_seconds": 3,
-      "duration_seconds": 10,
+      "source_song": "Levitating",
+      "source_video": "experiments/user_study/stimuli/sources/EX08.mp4",
+      "start_seconds": 0,
+      "source_original_start_seconds": 162,
+      "duration_seconds": 6,
       "diagnostics": {
-        "quality_margin": 0.0946,
-        "beat_margin": 0.2459,
-        "maestro_quality": 0.5522,
-        "lodge_quality": 0.4576,
-        "edge_quality": 0.4457
+        "quality_margin": 0.0107,
+        "beat_margin": 0.0128,
+        "maestro_quality": 0.6016,
+        "lodge_quality": 0.582,
+        "edge_quality": 0.5909,
+        "min_pose_difference_degrees": 4.4389,
+        "max_near_identical_ratio": 0.8172
       },
-      "rationale": "Strong opening advantage with stable rhythm and distinct full-body movement."
+      "rationale": "A distinct bridge-to-outro transition adds level contrast while maintaining stable orientation and continuous motion."
     },
     {
       "id": "EX09",
-      "source_song": "FineDance 195",
-      "source_video": "docs/static/videos/story_195_3way.mp4",
-      "start_seconds": 28,
-      "duration_seconds": 10,
+      "source_song": "Levitating",
+      "source_video": "experiments/user_study/stimuli/sources/EX09.mp4",
+      "start_seconds": 0,
+      "source_original_start_seconds": 184,
+      "duration_seconds": 6,
       "diagnostics": {
-        "quality_margin": 0.0529,
-        "beat_margin": 0.1266,
-        "maestro_quality": 0.6351,
-        "lodge_quality": 0.5821,
-        "edge_quality": 0.5739
+        "quality_margin": 0.0244,
+        "beat_margin": 0.0114,
+        "maestro_quality": 0.5975,
+        "lodge_quality": 0.5505,
+        "edge_quality": 0.5731,
+        "min_pose_difference_degrees": 2.0823,
+        "max_near_identical_ratio": 0.9298
       },
-      "rationale": "Mid-song phrase with clearer MAESTRO accents and broader expressive range."
+      "rationale": "The late crouch-drop phrase adds readable level change and smoother musical phrasing than either baseline."
     },
     {
       "id": "EX10",
-      "source_song": "FineDance 208",
-      "source_video": "docs/static/videos/story_208_3way.mp4",
-      "start_seconds": 12,
-      "duration_seconds": 10,
+      "source_song": "Dynamite",
+      "source_video": "experiments/user_study/stimuli/sources/EX10.mp4",
+      "start_seconds": 0,
+      "source_original_start_seconds": 134,
+      "duration_seconds": 6,
       "diagnostics": {
-        "quality_margin": 0.0428,
-        "beat_margin": 0.077,
-        "maestro_quality": 0.6115,
-        "lodge_quality": 0.5686,
-        "edge_quality": 0.5663
+        "quality_margin": 0.0401,
+        "beat_margin": 0.071,
+        "maestro_quality": 0.6546,
+        "lodge_quality": 0.607,
+        "edge_quality": 0.6145,
+        "min_pose_difference_degrees": 7.9851,
+        "max_near_identical_ratio": 0.8275
       },
-      "rationale": "The strongest audited FineDance 208 window, retained for source-song diversity."
+      "rationale": "A pronounced jump-and-reach sequence creates the clearest Dynamite level change with strong timing and no clipping."
     },
     {
       "id": "EX11",
-      "source_song": "Treasure",
-      "source_video": "docs/static/videos/story_trs_3way.mp4",
-      "start_seconds": 110,
-      "duration_seconds": 10,
+      "source_song": "Dynamite",
+      "source_video": "experiments/user_study/stimuli/sources/EX11.mp4",
+      "start_seconds": 0,
+      "source_original_start_seconds": 149,
+      "duration_seconds": 6,
       "diagnostics": {
-        "quality_margin": 0.0696,
-        "beat_margin": 0.1594,
-        "maestro_quality": 0.6421,
-        "lodge_quality": 0.5725,
-        "edge_quality": 0.5566
+        "quality_margin": 0.026,
+        "beat_margin": 0.0791,
+        "maestro_quality": 0.5879,
+        "lodge_quality": 0.5218,
+        "edge_quality": 0.5619,
+        "min_pose_difference_degrees": 4.5301,
+        "max_near_identical_ratio": 0.9066
       },
-      "rationale": "Reprised chorus material with coherent MAESTRO reuse and stronger beat timing."
+      "rationale": "The rise-and-reach accent leads into a cleaner upper-body phrase with a clear beat-timing advantage."
     },
     {
       "id": "EX12",
-      "source_song": "Treasure",
-      "source_video": "docs/static/videos/story_trs_3way.mp4",
-      "start_seconds": 131,
-      "duration_seconds": 10,
+      "source_song": "Dynamite",
+      "source_video": "experiments/user_study/stimuli/sources/EX12.mp4",
+      "start_seconds": 0,
+      "source_original_start_seconds": 169,
+      "duration_seconds": 6,
       "diagnostics": {
-        "quality_margin": 0.1164,
-        "beat_margin": 0.2699,
-        "maestro_quality": 0.6822,
-        "lodge_quality": 0.5658,
-        "edge_quality": 0.5642
+        "quality_margin": 0.0035,
+        "beat_margin": 0.0258,
+        "maestro_quality": 0.6081,
+        "lodge_quality": 0.5556,
+        "edge_quality": 0.6045,
+        "min_pose_difference_degrees": 0.7883,
+        "max_near_identical_ratio": 0.9475
       },
-      "rationale": "The strongest Treasure window, with a pronounced MAESTRO timing and flow advantage."
+      "rationale": "A subtle turn-half phrase retains coherent flow and a positive timing margin over the stronger baseline."
     }
   ]
 }

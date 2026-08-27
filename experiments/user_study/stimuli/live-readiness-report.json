@@ -1,0 +1,74 @@
+{
+  "validated_at": "2026-08-27T10:58:14-05:00",
+  "editor_base": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net",
+  "website": {
+    "url": "https://midotronn.github.io/MAESTRO/",
+    "config_url": "https://midotronn.github.io/MAESTRO/static/data/config.json",
+    "resolved_editor_url": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/",
+    "status": "passed"
+  },
+  "songs": [
+    {
+      "sid": "can_t_stop_the_feeling_43322",
+      "name": "Can't Stop the Feeling!",
+      "frames": 7084,
+      "duration_seconds": 236.13,
+      "beats": 436,
+      "generator": "live",
+      "preview_status": 206,
+      "edit_undo_redo": "passed",
+      "generative_edit_seconds": 2.78,
+      "comparison": {
+        "status": "passed",
+        "elapsed_seconds": 39
+      }
+    },
+    {
+      "sid": "uptown_funk_43352",
+      "name": "Uptown Funk",
+      "frames": 8046,
+      "duration_seconds": 268.2,
+      "beats": 512,
+      "generator": "live",
+      "preview_status": 206,
+      "edit_undo_redo": "passed"
+    },
+    {
+      "sid": "levitating_43228",
+      "name": "Levitating",
+      "frames": 6062,
+      "duration_seconds": 202.07,
+      "beats": 343,
+      "generator": "live",
+      "preview_status": 206,
+      "edit_undo_redo": "passed"
+    },
+    {
+      "sid": "dynamite_43089",
+      "name": "Dynamite",
+      "frames": 6173,
+      "duration_seconds": 205.77,
+      "beats": 363,
+      "generator": "live",
+      "preview_status": 206,
+      "edit_undo_redo": "passed"
+    }
+  ],
+  "planner": {
+    "configured": true,
+    "verified": true,
+    "model": "gpt-4o",
+    "message": "AI agent (LLM reasoning)"
+  },
+  "study_player": {
+    "url": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/study/",
+    "protocol": "maestro-expert-study-v13-approved-pop-front-facing",
+    "excerpt_duration_seconds": 6,
+    "status": "passed"
+  },
+  "test_suite": {
+    "passed": 85,
+    "failed": 0
+  },
+  "status": "passed"
+}

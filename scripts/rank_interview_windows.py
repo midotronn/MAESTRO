@@ -207,6 +207,79 @@ def _window_metrics(
     }
 
 
+def _sixd_to_matrix(values: np.ndarray) -> np.ndarray:
+    first = values[..., :3]
+    second = values[..., 3:]
+    first = first / (np.linalg.norm(first, axis=-1, keepdims=True) + 1e-8)
+    second = second - np.sum(first * second, axis=-1, keepdims=True) * first
+    second = second / (np.linalg.norm(second, axis=-1, keepdims=True) + 1e-8)
+    third = np.cross(first, second)
+    return np.stack([first, second, third], axis=-2)
+
+
+def _pose_difference(
+    maestro: np.ndarray,
+    baseline: np.ndarray,
+) -> dict[str, float]:
+    maestro_rotations = _sixd_to_matrix(maestro[:, 3:135].reshape(-1, 22, 6))
+    baseline_rotations = _sixd_to_matrix(baseline[:, 3:135].reshape(-1, 22, 6))
+    relative = maestro_rotations @ np.swapaxes(baseline_rotations, -1, -2)
+    cosine = np.clip(
+        (np.trace(relative, axis1=-2, axis2=-1) - 1.0) * 0.5,
+        -1.0,
+        1.0,
+    )
+    angles = np.degrees(np.arccos(cosine))
+    maestro_root = maestro[:, :3] - maestro[:1, :3]
+    baseline_root = baseline[:, :3] - baseline[:1, :3]
+    return {
+        "mean_rotation_degrees": float(np.mean(angles)),
+        "p90_rotation_degrees": float(np.percentile(angles, 90)),
+        "near_identical_rotation_ratio": float(np.mean(angles < 2.0)),
+        "relative_root_distance": float(
+            np.mean(np.linalg.norm(maestro_root - baseline_root, axis=1))
+        ),
+        "contact_mismatch_ratio": float(
+            np.mean(maestro[:, 135:139] != baseline[:, 135:139])
+        ),
+    }
+
+
+def add_motion_differences(
+    report: dict[str, object],
+    motion_dir: Path,
+) -> None:
+    motions = {
+        method: np.load(motion_dir / f"{method.lower()}.npy")
+        for method in METHODS
+    }
+    frame_count = min(motion.shape[0] for motion in motions.values())
+    if any(motion.ndim != 2 or motion.shape[1] != 139 for motion in motions.values()):
+        raise ValueError(f"invalid prepared comparison motions in {motion_dir}")
+    for row in report["windows"]:
+        start = max(0, round(float(row["start_seconds"]) * 30.0))
+        stop = min(frame_count, round(float(row["end_seconds"]) * 30.0))
+        if stop <= start:
+            raise ValueError(f"invalid motion window {start}:{stop} in {motion_dir}")
+        maestro = motions["MAESTRO"][start:stop]
+        comparisons = {
+            baseline: _pose_difference(
+                maestro,
+                motions[baseline][start:stop],
+            )
+            for baseline in ("LODGE", "EDGE")
+        }
+        row["pose_difference"] = {
+            **comparisons,
+            "min_mean_rotation_degrees": min(
+                item["mean_rotation_degrees"] for item in comparisons.values()
+            ),
+            "max_near_identical_rotation_ratio": max(
+                item["near_identical_rotation_ratio"] for item in comparisons.values()
+            ),
+        }
+
+
 def analyze_video(
     video: Path,
     window_seconds: float,
@@ -279,19 +352,26 @@ def main() -> None:
     parser.add_argument("--window-seconds", type=float, default=10.0)
     parser.add_argument("--stride-seconds", type=float, default=1.0)
     parser.add_argument("--edge-seconds", type=float, default=2.0)
+    parser.add_argument(
+        "--motion-root",
+        type=Path,
+        help="Optional comparison output root containing <slug>/motions/*.npy.",
+    )
     args = parser.parse_args()
 
     reports = []
     for video in sorted(args.video_dir.glob("story_*_3way.mp4")):
         print(f"analyzing {video.name}", flush=True)
-        reports.append(
-            analyze_video(
-                video,
-                window_seconds=args.window_seconds,
-                stride_seconds=args.stride_seconds,
-                edge_seconds=args.edge_seconds,
-            )
+        report = analyze_video(
+            video,
+            window_seconds=args.window_seconds,
+            stride_seconds=args.stride_seconds,
+            edge_seconds=args.edge_seconds,
         )
+        if args.motion_root:
+            slug = video.stem.removeprefix("story_").removesuffix("_3way")
+            add_motion_differences(report, args.motion_root / slug / "motions")
+        reports.append(report)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps({"videos": reports}, indent=2), encoding="utf-8")
     print(args.output)

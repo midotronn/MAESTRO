@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const video = $("comparison");
 let assignments = null;
+let excerptDuration = 6;
 
 function formatTime(seconds) {
   const safe = Number.isFinite(seconds) ? seconds : 0;
@@ -43,14 +44,16 @@ function loadTriplet() {
   const participant = phaseRows()[participantIndex];
   const selected = participant.triplets[tripletIndex];
   const order = selected.lanes.join("");
+  const revision = encodeURIComponent(assignments.protocol || "current");
 
   video.pause();
-  video.src = `videos/${selected.excerpt}/${order}.mp4`;
+  video.src = `videos/${selected.excerpt}/${order}.mp4?v=${revision}`;
   video.load();
-  $("excerptLabel").textContent = `${selected.excerpt} · synchronized 10-second excerpt`;
+  $("excerptLabel").textContent =
+    `${selected.excerpt} · synchronized ${excerptDuration}-second excerpt`;
   $("play").textContent = "▶ Play";
   $("scrub").value = "0";
-  $("time").value = "0:00 / 0:10";
+  $("time").value = `0:00 / ${formatTime(excerptDuration)}`;
   history.replaceState(
     null,
     "",
@@ -77,9 +80,10 @@ video.addEventListener("pause", () => {
   $("play").textContent = "▶ Play";
 });
 video.addEventListener("timeupdate", () => {
-  $("scrub").max = String(video.duration || 10);
+  $("scrub").max = String(video.duration || excerptDuration);
   $("scrub").value = String(video.currentTime);
-  $("time").value = `${formatTime(video.currentTime)} / ${formatTime(video.duration || 10)}`;
+  $("time").value =
+    `${formatTime(video.currentTime)} / ${formatTime(video.duration || excerptDuration)}`;
 });
 video.addEventListener("loadedmetadata", () => {
   if (video.currentTime === 0) video.currentTime = 0.001;
@@ -121,6 +125,7 @@ async function init() {
   }
   assignments = await assignmentResponse.json();
   const config = await configResponse.json();
+  excerptDuration = Number(config.excerpt_duration_seconds) || excerptDuration;
   $("formLink").href = config.response_form_url;
 
   const query = new URLSearchParams(location.search);
