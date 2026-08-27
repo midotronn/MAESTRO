@@ -1,5 +1,7 @@
 {
-  "validated_at": "2026-08-27T12:48:09-05:00",
+  "validated_at": "2026-08-27T16:43:20-05:00",
+  "study_content_commit": "076411d9753442581d07f2a68dd35a9d785b2931",
+  "rollback_snapshot": "/workspace/maestro-backups/study-player-before-v15-20260827T212344",
   "editor_base": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net",
   "website": {
     "url": "https://midotronn.github.io/MAESTRO/",
@@ -13,77 +15,95 @@
     "fallback_allowed": false,
     "all_storyboards_llm_authored": true,
     "best_of_k_requested": 10,
+    "require_full_best_of_k": true,
     "lodge_candidates_completed_per_song": 10,
-    "edge_candidates_completed_per_song": 10
+    "edge_candidates_completed_per_song": 10,
+    "credential_file_mode": "0600"
   },
-  "songs": [
-    {
-      "sid": "can_t_stop_the_feeling_43322",
-      "name": "Can't Stop the Feeling!",
-      "frames": 7084,
-      "duration_seconds": 236.13,
-      "beats": 436,
-      "generator": "live",
-      "preview_status": 206,
-      "browser_ready_state": 4,
-      "edit_undo_redo": "passed",
-      "generative_edit_seconds": 4.03,
-      "comparison": {
-        "status": "passed",
-        "elapsed_seconds": 40
+  "pod": {
+    "id": "eg25wp3e2ho1rg",
+    "ssh_port": 25166,
+    "internal_port": 8011,
+    "public_port": 8888,
+    "healthy_workers": 10,
+    "expected_workers": 10,
+    "status": "passed"
+  },
+  "editor": {
+    "songs": [
+      {
+        "sid": "can_t_stop_the_feeling_43322",
+        "name": "Can't Stop the Feeling!",
+        "duration_seconds": 236.135,
+        "browser_ready_state": 4,
+        "generator": "live pod"
+      },
+      {
+        "sid": "uptown_funk_43352",
+        "name": "Uptown Funk",
+        "duration_seconds": 268.201,
+        "browser_ready_state": 4,
+        "generator": "live pod"
+      },
+      {
+        "sid": "levitating_43228",
+        "name": "Levitating",
+        "duration_seconds": 202.068,
+        "browser_ready_state": 4,
+        "generator": "live pod"
+      },
+      {
+        "sid": "dynamite_43089",
+        "name": "Dynamite",
+        "duration_seconds": 205.768,
+        "browser_ready_state": 4,
+        "generator": "live pod"
       }
-    },
-    {
-      "sid": "uptown_funk_43352",
-      "name": "Uptown Funk",
-      "frames": 8046,
-      "duration_seconds": 268.2,
-      "beats": 512,
-      "generator": "live",
-      "preview_status": 206,
-      "browser_ready_state": 4,
-      "edit_undo_redo": "passed"
-    },
-    {
-      "sid": "levitating_43228",
-      "name": "Levitating",
-      "frames": 6062,
-      "duration_seconds": 202.07,
-      "beats": 343,
-      "generator": "live",
-      "preview_status": 206,
-      "browser_ready_state": 4,
-      "edit_undo_redo": "passed"
-    },
-    {
-      "sid": "dynamite_43089",
-      "name": "Dynamite",
-      "frames": 6173,
-      "duration_seconds": 205.77,
-      "beats": 363,
-      "generator": "live",
-      "preview_status": 206,
-      "browser_ready_state": 4,
-      "edit_undo_redo": "passed"
-    }
-  ],
-  "planner": {
-    "configured": true,
-    "verified": true,
-    "model": "gpt-4o",
-    "message": "AI agent (LLM reasoning)"
+    ],
+    "study_link": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/study/",
+    "project_link": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/project/",
+    "status": "passed"
   },
   "study_player": {
     "url": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/study/",
-    "protocol": "maestro-expert-study-v14-llm-gpt4o-k10-front-facing",
-    "excerpt_duration_seconds": 6,
-    "published_videos": 72,
+    "protocol": "maestro-expert-study-v15-llm-gpt4o-k10-front-facing-16s",
+    "excerpt_duration_seconds": 16,
+    "comparisons": 6,
+    "published_videos": 6,
+    "source_mix": {
+      "Dynamite": 2,
+      "Uptown Funk": 4
+    },
+    "fixed_for_all_participants": true,
+    "balanced_lane_positions": true,
+    "range_requests_passed": 6,
     "browser_ready_state": 4,
+    "playback_duration_seconds": 16,
     "status": "passed"
   },
-  "test_suite": {
-    "passed": 155,
-    "failed": 0
+  "response_form": {
+    "url": "https://docs.google.com/forms/d/e/1FAIpQLSdNsCS2AHE-uB02KnrOzz9_D9M8L03zHxWvmjfVCc4Ar_jfyg/viewform",
+    "title": "MAESTRO Expert Study",
+    "status": "passed"
+  },
+  "tests": {
+    "local_affected": {
+      "passed": 79,
+      "failed": 0
+    },
+    "pod_affected": {
+      "passed": 78,
+      "skipped": 1,
+      "failed": 0
+    },
+    "pod_full": {
+      "passed": 1113,
+      "skipped": 2,
+      "environment_specific_failures": [
+        "tests/test_render_multigpu.py::test_gpu_guard_rejects_missing_selector_shim"
+      ],
+      "failure_note": "The guard test expects the selector shim to be absent, but the configured production pod intentionally has the real shim installed. All other full-suite tests passed."
+    }
   },
   "status": "passed"
 }
