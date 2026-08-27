@@ -1,24 +1,40 @@
 {
   "sid": "dynamite_43089",
-  "best_of_k": 1,
+  "best_of_k": 10,
   "frames": 6173,
   "target_frames": 6173,
   "source_frames": {
     "lodge": 6144,
     "edge": 6150
   },
-  "lodge_summary": "LODGE two-stage pipeline (global choreography + PDDM) with genre=Hiphop; 6 global segments, 24 local windows.",
-  "edge_summary": "EDGE long-form pipeline with 81 chained 5s clips and 2.5s overlap; output length 6150 frames.",
+  "lodge_summary": "LODGE two-stage pipeline (global choreography + PDDM) with genre=Hiphop; 6 global segments, 24 local windows. | best-of-10 by BAS: seed 4 (BAS 0.4624)",
+  "edge_summary": "EDGE long-form pipeline with 81 chained 5s clips and 2.5s overlap; output length 6150 frames. | best-of-10 by BAS: seed 3 (BAS 0.4702)",
   "generation_workers": {
     "lodge": "lodge-gpu0",
     "edge": "edge-gpu1"
   },
-  "reasoning": "story assembly: 7 sections (1 LODGE, 6 EDGE, 0 motif-reuse); storyboard bias honored in 5/7 explicitly-biased sections; 7 common-motion cues applied across 7 sections; schedule: 0.0-9.0s:edge[intro], 9.0-41.3s:edge[drop], 41.3-129.7s:edge[drop], 129.7-143.8s:lodge[drop], 143.8-152.2s:edge[chorus], 152.2-194.2s:edge[drop], 194.2-205.8s:edge[outro]",
+  "backbone_selection": {
+    "lodge": {
+      "requested": 10,
+      "completed": 10,
+      "selected_seed": 4,
+      "fallback": null
+    },
+    "edge": {
+      "requested": 10,
+      "completed": 10,
+      "selected_seed": 3,
+      "fallback": null
+    }
+  },
+  "storyboard_required": true,
+  "storyboard_model": "gpt-4o",
+  "reasoning": "story assembly: 7 sections (5 LODGE, 2 EDGE, 0 motif-reuse); storyboard bias honored in 4/5 explicitly-biased sections; 10 common-motion cues applied across 7 sections; schedule: 0.0-9.0s:lodge[intro], 9.0-41.3s:edge[drop], 41.3-129.7s:lodge[drop], 129.7-143.8s:edge[drop], 143.8-152.2s:lodge[chorus], 152.2-194.2s:lodge[drop], 194.2-205.8s:lodge[outro]",
   "schedule": [
     [
       0,
       271,
-      "edge",
+      "lodge",
       "intro"
     ],
     [
@@ -30,88 +46,101 @@
     [
       1238,
       3892,
-      "edge",
+      "lodge",
       "drop"
     ],
     [
       3892,
       4315,
-      "lodge",
+      "edge",
       "drop"
     ],
     [
       4315,
       4566,
-      "edge",
+      "lodge",
       "chorus"
     ],
     [
       4566,
       5827,
-      "edge",
+      "lodge",
       "drop"
     ],
     [
       5827,
       6173,
-      "edge",
+      "lodge",
       "outro"
     ]
   ],
   "storyboard": {
-    "arc": "7 sections building toward the drop at section 2, then resolving: intro -> drop -> drop -> drop -> chorus -> drop -> outro",
-    "reasoning": "rule-based storyboard from detected structure",
-    "used_fallback": true,
+    "arc": "The dance builds from a graceful introduction to an energetic climax, followed by a resolution that mirrors the opening.",
+    "reasoning": "The structure follows a classic build-climax-resolution arc, with the climax at section 2. The intro sets a gentle tone, establishing motifs that are developed and intensified through the drops, with a return to the initial motif in the outro for closure.",
+    "used_fallback": false,
     "plans": [
       {
         "section_index": 0,
         "role": "intro",
-        "target_intensity": 0.567,
-        "vocabulary": "expansive_traveling",
-        "generator_bias": "edge",
+        "target_intensity": 0.1,
+        "vocabulary": "grounded_minimal",
+        "generator_bias": "lodge",
         "reuse_of": null,
         "variation": {
           "mirror": false,
+          "retrograde": false,
           "retime": 1.0,
           "amplitude": 1.0
         },
         "common_motions": [
           {
             "motion_id": "rise_reach",
-            "position": 0.68,
+            "position": 0.7,
             "anchor": "beat",
-            "intensity": 0.704,
+            "intensity": 0.45,
             "direction": null,
             "mirror": false,
             "repeats": 1,
-            "motif": "label_0_rise_reach",
-            "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif"
+            "motif": "opening_reach",
+            "rationale": "establish a restrained upward motif before the build"
           }
         ]
       },
       {
         "section_index": 1,
         "role": "drop",
-        "target_intensity": 0.953,
-        "vocabulary": "explosive_fast",
-        "generator_bias": "edge",
+        "target_intensity": 0.8,
+        "vocabulary": "flowing_smooth",
+        "generator_bias": "auto",
         "reuse_of": null,
         "variation": {
           "mirror": false,
+          "retrograde": false,
           "retime": 1.0,
           "amplitude": 1.0
         },
         "common_motions": [
           {
-            "motion_id": "arm_punch",
-            "position": 0.46,
-            "anchor": "beat",
-            "intensity": 0.896,
-            "direction": "auto",
+            "motion_id": "step_touch",
+            "position": 0.3,
+            "anchor": "early",
+            "intensity": 0.6,
+            "direction": "left",
+            "mirror": false,
+            "repeats": 2,
+            "motif": "step_touch_flow",
+            "rationale": "introduce movement with a smooth, flowing quality"
+          },
+          {
+            "motion_id": "wave",
+            "position": 0.8,
+            "anchor": "late",
+            "intensity": 0.5,
+            "direction": "right",
             "mirror": false,
             "repeats": 1,
-            "motif": "label_1_arm_punch",
-            "rationale": "drop signature selected for section label 1; repeat-label returns inherit the same composed motif"
+            "motif": "wave_transition",
+            "rationale": "transition smoothly into the next section"
           }
         ]
       },
@@ -124,112 +153,139 @@
         "reuse_of": null,
         "variation": {
           "mirror": false,
-          "retime": 1.0,
-          "amplitude": 1.0
-        },
-        "common_motions": [
-          {
-            "motion_id": "turn_half",
-            "position": 0.46,
-            "anchor": "center",
-            "intensity": 0.92,
-            "direction": "auto",
-            "mirror": false,
-            "repeats": 1,
-            "motif": "label_2_turn_half",
-            "rationale": "drop signature selected for section label 2; repeat-label returns inherit the same composed motif"
-          }
-        ]
-      },
-      {
-        "section_index": 3,
-        "role": "drop",
-        "target_intensity": 0.976,
-        "vocabulary": "explosive_fast",
-        "generator_bias": "edge",
-        "reuse_of": null,
-        "variation": {
-          "mirror": false,
+          "retrograde": false,
           "retime": 1.0,
           "amplitude": 1.0
         },
         "common_motions": [
           {
             "motion_id": "jump_arms_up",
-            "position": 0.46,
-            "anchor": "beat",
-            "intensity": 0.908,
+            "position": 0.5,
+            "anchor": "center",
+            "intensity": 0.9,
             "direction": null,
             "mirror": false,
             "repeats": 1,
-            "motif": "label_3_jump_arms_up",
-            "rationale": "drop signature selected for section label 3; repeat-label returns inherit the same composed motif"
+            "motif": "climax_jump",
+            "rationale": "highlight the peak of energy with a strong upward motion"
+          },
+          {
+            "motion_id": "arm_punch",
+            "position": 0.9,
+            "anchor": "end",
+            "intensity": 0.8,
+            "direction": "right",
+            "mirror": false,
+            "repeats": 2,
+            "motif": "punch_accent",
+            "rationale": "accentuate the energetic climax with sharp punches"
+          }
+        ]
+      },
+      {
+        "section_index": 3,
+        "role": "drop",
+        "target_intensity": 0.9,
+        "vocabulary": "percussive_sharp",
+        "generator_bias": "edge",
+        "reuse_of": null,
+        "variation": {
+          "mirror": false,
+          "retrograde": false,
+          "retime": 1.0,
+          "amplitude": 1.0
+        },
+        "common_motions": [
+          {
+            "motion_id": "chest_pop",
+            "position": 0.4,
+            "anchor": "early",
+            "intensity": 0.7,
+            "direction": null,
+            "mirror": false,
+            "repeats": 2,
+            "motif": "chest_accent",
+            "rationale": "maintain high energy with sharp, percussive movements"
           }
         ]
       },
       {
         "section_index": 4,
         "role": "chorus",
-        "target_intensity": 0.608,
-        "vocabulary": "percussive_sharp",
-        "generator_bias": "edge",
+        "target_intensity": 0.6,
+        "vocabulary": "sustained_lyrical",
+        "generator_bias": "lodge",
         "reuse_of": 0,
         "variation": {
           "mirror": false,
-          "retime": 0.9262,
-          "amplitude": 1.072
+          "retrograde": false,
+          "retime": 1.0,
+          "amplitude": 1.0
         },
         "common_motions": []
       },
       {
         "section_index": 5,
         "role": "drop",
-        "target_intensity": 0.975,
-        "vocabulary": "explosive_fast",
-        "generator_bias": "edge",
+        "target_intensity": 0.95,
+        "vocabulary": "expansive_traveling",
+        "generator_bias": "auto",
         "reuse_of": null,
         "variation": {
           "mirror": false,
+          "retrograde": false,
           "retime": 1.0,
           "amplitude": 1.0
         },
         "common_motions": [
           {
+            "motion_id": "side_step",
+            "position": 0.2,
+            "anchor": "early",
+            "intensity": 0.75,
+            "direction": "left",
+            "mirror": false,
+            "repeats": 3,
+            "motif": "travel_step",
+            "rationale": "expand the movement across the space"
+          },
+          {
             "motion_id": "turn_half",
-            "position": 0.46,
-            "anchor": "center",
-            "intensity": 0.907,
-            "direction": "auto",
+            "position": 0.7,
+            "anchor": "beat",
+            "intensity": 0.85,
+            "direction": "right",
             "mirror": false,
             "repeats": 1,
-            "motif": "label_4_turn_half",
-            "rationale": "drop signature selected for section label 4; repeat-label returns inherit the same composed motif"
+            "motif": "turn_transition",
+            "rationale": "transition dynamically with a turning motion"
           }
         ]
       },
       {
         "section_index": 6,
         "role": "outro",
-        "target_intensity": 0.0,
+        "target_intensity": 0.1,
         "vocabulary": "grounded_minimal",
         "generator_bias": "lodge",
         "reuse_of": null,
         "variation": {
           "mirror": false,
+          "retrograde": false,
           "retime": 1.0,
           "amplitude": 1.0
         },
         "common_motions": [
           {
-            "motion_id": "crouch_drop",
-            "position": 0.66,
-            "anchor": "beat",
-            "intensity": 0.42,
+            "motion_id": "rise_reach",
+            "position": 0.3,
+            "anchor": "early",
+            "intensity": 0.3,
             "direction": null,
             "mirror": false,
             "repeats": 1,
-            "motif": "label_5_crouch_drop",
-            "rationale": "outro signature selected for section label 5; repeat-label returns inherit the same composed motif"
+            "motif": "closing_reach",
+            "rationale": "mirror the opening motif for a cohesive resolution"
           }
         ]
       }
@@ -239,48 +295,48 @@
     {
       "a": 0,
       "b": 271,
-      "source": "edge",
+      "source": "lodge",
       "role": "intro",
       "costs": {
-        "lodge": 0.3404,
-        "edge": -0.0802
+        "lodge": -0.44,
+        "edge": 0.94
       },
-      "target_intensity": 0.5672896475026974,
-      "plan_bias": "edge",
+      "target_intensity": 0.1,
+      "plan_bias": "lodge",
       "matched_bias": true,
-      "vocabulary": "expansive_traveling",
+      "vocabulary": "grounded_minimal",
       "energies": {
-        "lodge": 0.1221,
-        "edge": 0.1494
+        "lodge": 0.1163,
+        "edge": 0.1583
       },
-      "chosen_cost": -0.0802,
-      "caption": "A explosive, steady phrase with varied dynamics, with free timing, often airborne, staying centered.",
-      "plan_alignment": 0.5586,
+      "chosen_cost": -0.44,
+      "caption": "A calm, steady phrase with varied dynamics, on a regular pulse, mostly grounded, staying centered.",
+      "plan_alignment": 0.89,
       "post_variation": [],
       "planned_common_motions": [
         {
           "motion_id": "rise_reach",
-          "position": 0.68,
+          "position": 0.7,
           "anchor": "beat",
-          "intensity": 0.704,
+          "intensity": 0.45,
           "direction": null,
           "mirror": false,
           "repeats": 1,
-          "motif": "label_0_rise_reach",
-          "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif"
+          "motif": "opening_reach",
+          "rationale": "establish a restrained upward motif before the build"
         }
       ],
       "effective_common_motions": [
         {
           "motion_id": "rise_reach",
-          "position": 0.68,
+          "position": 0.7,
           "anchor": "beat",
-          "intensity": 0.704,
+          "intensity": 0.45,
           "direction": null,
           "mirror": false,
           "repeats": 1,
-          "motif": "label_0_rise_reach",
-          "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif"
+          "motif": "opening_reach",
+          "rationale": "establish a restrained upward motif before the build"
         }
       ],
       "common_motions": [
@@ -290,10 +346,10 @@
           "category": "level change",
           "mode": "replace",
           "anchor": "beat",
-          "event_frame": 47,
+          "event_frame": 42,
           "action_range": [
-            9,
-            57
+            4,
+            52
           ],
           "action_frames": 48,
           "recommended_beats": 3.0,
@@ -305,7 +361,7 @@
           "natural_direction": null,
           "counterflow_turn_degrees": 0.0,
           "counterflow_turn_joints": [],
-          "intensity": 0.7036448237513486,
+          "intensity": 0.45,
           "repeats": 1,
           "source": "MAESTRO procedural authoring",
           "license": "MIT",
@@ -315,15 +371,15 @@
             "type": "rise_phases",
             "metric": 1.0,
             "threshold": 1.0,
-            "detail": "low f11; high f38; rise 0.337; fully planted 1.000"
+            "detail": "low f16; high f42; rise 0.304; fully planted 1.000"
           },
           "status": "applied",
-          "position": 0.68,
-          "planned_intensity": 0.704,
+          "position": 0.7,
+          "planned_intensity": 0.45,
           "intensity_adjusted": false,
           "beat_lock_relaxed": false,
-          "motif": "label_0_rise_reach",
-          "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif",
+          "motif": "opening_reach",
+          "rationale": "establish a restrained upward motif before the build",
           "section_action_range": [
             155,
             203
@@ -347,70 +403,141 @@
       "source": "edge",
       "role": "drop",
       "costs": {
-        "lodge": 0.5716,
-        "edge": -0.3905
+        "lodge": 0.48,
+        "edge": 0.3036
       },
-      "target_intensity": 0.9526341381298891,
-      "plan_bias": "edge",
-      "matched_bias": true,
-      "vocabulary": "explosive_fast",
+      "target_intensity": 0.8,
+      "plan_bias": "auto",
+      "matched_bias": false,
+      "vocabulary": "flowing_smooth",
       "energies": {
-        "lodge": 0.1642,
-        "edge": 0.1656
+        "lodge": 0.1551,
+        "edge": 0.188
       },
-      "chosen_cost": -0.3905,
+      "chosen_cost": 0.3036,
       "caption": "A explosive, steady phrase with even, sustained dynamics, on a regular pulse, often airborne, staying centered.",
-      "plan_alignment": 0.9263,
+      "plan_alignment": 0.575,
       "post_variation": [],
       "planned_common_motions": [
         {
-          "motion_id": "arm_punch",
-          "position": 0.46,
-          "anchor": "beat",
-          "intensity": 0.896,
-          "direction": "auto",
+          "motion_id": "step_touch",
+          "position": 0.3,
+          "anchor": "early",
+          "intensity": 0.6,
+          "direction": "left",
+          "mirror": false,
+          "repeats": 2,
+          "motif": "step_touch_flow",
+          "rationale": "introduce movement with a smooth, flowing quality"
+        },
+        {
+          "motion_id": "wave",
+          "position": 0.8,
+          "anchor": "late",
+          "intensity": 0.5,
+          "direction": "right",
           "mirror": false,
           "repeats": 1,
-          "motif": "label_1_arm_punch",
-          "rationale": "drop signature selected for section label 1; repeat-label returns inherit the same composed motif"
+          "motif": "wave_transition",
+          "rationale": "transition smoothly into the next section"
         }
       ],
       "effective_common_motions": [
         {
-          "motion_id": "arm_punch",
-          "position": 0.46,
-          "anchor": "beat",
-          "intensity": 0.896,
-          "direction": "auto",
+          "motion_id": "step_touch",
+          "position": 0.3,
+          "anchor": "early",
+          "intensity": 0.6,
+          "direction": "left",
+          "mirror": false,
+          "repeats": 2,
+          "motif": "step_touch_flow",
+          "rationale": "introduce movement with a smooth, flowing quality"
+        },
+        {
+          "motion_id": "wave",
+          "position": 0.8,
+          "anchor": "late",
+          "intensity": 0.5,
+          "direction": "right",
           "mirror": false,
           "repeats": 1,
-          "motif": "label_1_arm_punch",
-          "rationale": "drop signature selected for section label 1; repeat-label returns inherit the same composed motif"
+          "motif": "wave_transition",
+          "rationale": "transition smoothly into the next section"
         }
       ],
       "common_motions": [
         {
-          "id": "arm_punch",
-          "name": "Arm punch",
-          "category": "accent",
+          "id": "step_touch",
+          "name": "Step touch",
+          "category": "locomotion",
           "mode": "replace",
-          "anchor": "beat",
-          "event_frame": 32,
+          "anchor": "early",
+          "event_frame": 84,
           "action_range": [
-            15,
-            47
+            0,
+            96
+          ],
+          "action_frames": 96,
+          "recommended_beats": 6.0,
+          "beat_error_frames": 0.0,
+          "mirror": false,
+          "direction_request": "left",
+          "direction": "left",
+          "direction_source": "explicit",
+          "natural_direction": "right",
+          "counterflow_turn_degrees": 0.0,
+          "counterflow_turn_joints": [],
+          "intensity": 0.6,
+          "repeats": 2,
+          "source": "MAESTRO procedural authoring",
+          "license": "MIT",
+          "attribution": "Created for MAESTRO",
+          "validation": {
+            "ok": true,
+            "type": "root_displacement",
+            "metric": 0.31021660566329956,
+            "threshold": 0.18,
+            "detail": "root displacement 0.310"
+          },
+          "status": "applied",
+          "position": 0.3,
+          "planned_intensity": 0.6,
+          "intensity_adjusted": false,
+          "beat_lock_relaxed": false,
+          "motif": "step_touch_flow",
+          "rationale": "introduce movement with a smooth, flowing quality",
+          "section_action_range": [
+            198,
+            294
+          ],
+          "global_action_range": [
+            469,
+            565
+          ]
+        },
+        {
+          "id": "wave",
+          "name": "Wave",
+          "category": "gesture",
+          "mode": "replace",
+          "anchor": "late",
+          "event_frame": 60,
+          "action_range": [
+            44,
+            76
           ],
           "action_frames": 32,
           "recommended_beats": 2.0,
           "beat_error_frames": 0.0,
-          "mirror": true,
-          "direction_request": "auto",
-          "direction": "left",
-          "direction_source": "dance_flow",
+          "mirror": false,
+          "direction_request": "right",
+          "direction": "right",
+          "direction_source": "explicit",
           "natural_direction": "left",
           "counterflow_turn_degrees": 0.0,
           "counterflow_turn_joints": [],
-          "intensity": 0.8963170690649445,
+          "intensity": 0.5,
           "repeats": 1,
           "source": "MAESTRO procedural authoring",
           "license": "MIT",
@@ -418,29 +545,30 @@
           "validation": {
             "ok": true,
             "type": "joint_activity",
-            "metric": 3.100600242614746,
-            "threshold": 0.85,
-            "detail": "joint activity 3.101"
+            "metric": 2.262873888015747,
+            "threshold": 0.65,
+            "detail": "joint activity 2.263"
           },
           "status": "applied",
-          "position": 0.46,
-          "planned_intensity": 0.896,
+          "position": 0.8,
+          "planned_intensity": 0.5,
           "intensity_adjusted": false,
           "beat_lock_relaxed": false,
-          "motif": "label_1_arm_punch",
-          "rationale": "drop signature selected for section label 1; repeat-label returns inherit the same composed motif",
+          "motif": "wave_transition",
+          "rationale": "transition smoothly into the next section",
           "section_action_range": [
-            427,
-            459
+            773,
+            805
           ],
           "global_action_range": [
-            698,
-            730
+            1044,
+            1076
           ]
         }
       ],
       "common_motion_ids": [
-        "arm_punch"
+        "step_touch",
+        "wave"
       ],
       "inherited_common_motion_ids": [],
       "recalled_common_motion_ids": [],
@@ -449,153 +577,70 @@
     {
       "a": 1238,
       "b": 3892,
-      "source": "edge",
-      "role": "drop",
-      "costs": {
-        "lodge": 0.6,
-        "edge": -0.4017
-      },
-      "target_intensity": 1.0,
-      "plan_bias": "edge",
-      "matched_bias": true,
-      "vocabulary": "explosive_fast",
-      "energies": {
-        "lodge": 0.1681,
-        "edge": 0.1728
-      },
-      "chosen_cost": -0.4017,
-      "caption": "A explosive, steady phrase with even, sustained dynamics, on a regular pulse, often airborne, staying centered.",
-      "plan_alignment": 0.95,
-      "post_variation": [],
-      "planned_common_motions": [
-        {
-          "motion_id": "turn_half",
-          "position": 0.46,
-          "anchor": "center",
-          "intensity": 0.92,
-          "direction": "auto",
-          "mirror": false,
-          "repeats": 1,
-          "motif": "label_2_turn_half",
-          "rationale": "drop signature selected for section label 2; repeat-label returns inherit the same composed motif"
-        }
-      ],
-      "effective_common_motions": [
-        {
-          "motion_id": "turn_half",
-          "position": 0.46,
-          "anchor": "center",
-          "intensity": 0.92,
-          "direction": "auto",
-          "mirror": false,
-          "repeats": 1,
-          "motif": "label_2_turn_half",
-          "rationale": "drop signature selected for section label 2; repeat-label returns inherit the same composed motif"
-        }
-      ],
-      "common_motions": [
-        {
-          "id": "turn_half",
-          "name": "Half turn",
-          "category": "turn",
-          "mode": "replace",
-          "anchor": "center",
-          "event_frame": 36,
-          "action_range": [
-            18,
-            50
-          ],
-          "action_frames": 32,
-          "recommended_beats": 2.0,
-          "beat_error_frames": 0.0,
-          "mirror": true,
-          "direction_request": "auto",
-          "direction": "right",
-          "direction_source": "dance_flow",
-          "natural_direction": "right",
-          "counterflow_turn_degrees": 0.0,
-          "counterflow_turn_joints": [],
-          "intensity": 0.9199999999999999,
-          "repeats": 1,
-          "source": "MAESTRO procedural authoring",
-          "license": "MIT",
-          "attribution": "Created for MAESTRO",
-          "validation": {
-            "ok": true,
-            "type": "root_yaw",
-            "metric": 3.1498074531555176,
-            "threshold": 2.6,
-            "detail": "yaw excursion 3.150 rad"
-          },
-          "status": "applied",
-          "position": 0.46,
-          "planned_intensity": 0.92,
-          "intensity_adjusted": false,
-          "beat_lock_relaxed": false,
-          "motif": "label_2_turn_half",
-          "rationale": "drop signature selected for section label 2; repeat-label returns inherit the same composed motif",
-          "section_action_range": [
-            1194,
-            1226
-          ],
-          "global_action_range": [
-            2432,
-            2464
-          ]
-        }
-      ],
-      "common_motion_ids": [
-        "turn_half"
-      ],
-      "inherited_common_motion_ids": [],
-      "recalled_common_motion_ids": [],
-      "reuse_fit": null
-    },
-    {
-      "a": 3892,
-      "b": 4315,
       "source": "lodge",
       "role": "drop",
       "costs": {
-        "lodge": 0.0145,
-        "edge": 0.1878
+        "lodge": 0.027,
+        "edge": 0.1
       },
-      "target_intensity": 0.9757589202430502,
+      "target_intensity": 1.0,
       "plan_bias": "edge",
       "matched_bias": false,
       "vocabulary": "explosive_fast",
       "energies": {
-        "lodge": 0.1981,
-        "edge": 0.1943
+        "lodge": 0.1771,
+        "edge": 0.1627
       },
-      "chosen_cost": 0.0145,
+      "chosen_cost": 0.027,
       "caption": "A explosive, steady phrase with even, sustained dynamics, on a regular pulse, mostly grounded, staying centered.",
-      "plan_alignment": 0.9379,
+      "plan_alignment": 0.95,
       "post_variation": [],
       "planned_common_motions": [
         {
           "motion_id": "jump_arms_up",
-          "position": 0.46,
-          "anchor": "beat",
-          "intensity": 0.908,
+          "position": 0.5,
+          "anchor": "center",
+          "intensity": 0.9,
           "direction": null,
           "mirror": false,
           "repeats": 1,
-          "motif": "label_3_jump_arms_up",
-          "rationale": "drop signature selected for section label 3; repeat-label returns inherit the same composed motif"
+          "motif": "climax_jump",
+          "rationale": "highlight the peak of energy with a strong upward motion"
+        },
+        {
+          "motion_id": "arm_punch",
+          "position": 0.9,
+          "anchor": "end",
+          "intensity": 0.8,
+          "direction": "right",
+          "mirror": false,
+          "repeats": 2,
+          "motif": "punch_accent",
+          "rationale": "accentuate the energetic climax with sharp punches"
         }
       ],
       "effective_common_motions": [
         {
           "motion_id": "jump_arms_up",
-          "position": 0.46,
-          "anchor": "beat",
-          "intensity": 0.908,
+          "position": 0.5,
+          "anchor": "center",
+          "intensity": 0.9,
           "direction": null,
           "mirror": false,
           "repeats": 1,
-          "motif": "label_3_jump_arms_up",
-          "rationale": "drop signature selected for section label 3; repeat-label returns inherit the same composed motif"
+          "motif": "climax_jump",
+          "rationale": "highlight the peak of energy with a strong upward motion"
+        },
+        {
+          "motion_id": "arm_punch",
+          "position": 0.9,
+          "anchor": "end",
+          "intensity": 0.8,
+          "direction": "right",
+          "mirror": false,
+          "repeats": 2,
+          "motif": "punch_accent",
+          "rationale": "accentuate the energetic climax with sharp punches"
         }
       ],
       "common_motions": [
@@ -604,11 +649,11 @@
           "name": "Jump with arm raise",
           "category": "accent",
           "mode": "replace",
-          "anchor": "beat",
-          "event_frame": 45,
+          "anchor": "center",
+          "event_frame": 35,
           "action_range": [
-            20,
-            68
+            10,
+            58
           ],
           "action_frames": 48,
           "recommended_beats": 2.0,
@@ -620,7 +665,7 @@
           "natural_direction": null,
           "counterflow_turn_degrees": 0.0,
           "counterflow_turn_joints": [],
-          "intensity": 0.9078794601215251,
+          "intensity": 0.9,
           "repeats": 1,
           "source": "MAESTRO procedural authoring",
           "license": "MIT",
@@ -628,29 +673,184 @@
           "validation": {
             "ok": true,
             "type": "jump_phases",
-            "metric": 1.4916134732110158,
+            "metric": 1.487195917538234,
             "threshold": 1.0,
-            "detail": "load f9 drop 0.088 flex 1.173; apex f24 rise 0.418; landing f38 flex 0.836; airborne 0.479; contacts ground-air-ground"
+            "detail": "load f9 drop 0.087 flex 1.149; apex f24 rise 0.416; landing f38 flex 0.767; airborne 0.479; contacts ground-air-ground"
           },
           "status": "applied",
-          "position": 0.46,
-          "planned_intensity": 0.908,
+          "position": 0.5,
+          "planned_intensity": 0.9,
           "intensity_adjusted": false,
           "beat_lock_relaxed": false,
-          "motif": "label_3_jump_arms_up",
-          "rationale": "drop signature selected for section label 3; repeat-label returns inherit the same composed motif",
+          "motif": "climax_jump",
+          "rationale": "highlight the peak of energy with a strong upward motion",
           "section_action_range": [
-            176,
-            224
+            1298,
+            1346
           ],
           "global_action_range": [
-            4068,
-            4116
+            2536,
+            2584
+          ]
+        },
+        {
+          "id": "arm_punch",
+          "name": "Arm punch",
+          "category": "accent",
+          "mode": "replace",
+          "anchor": "end",
+          "event_frame": 81,
+          "action_range": [
+            32,
+            96
+          ],
+          "action_frames": 64,
+          "recommended_beats": 4.0,
+          "beat_error_frames": 0.0,
+          "mirror": false,
+          "direction_request": "right",
+          "direction": "right",
+          "direction_source": "explicit",
+          "natural_direction": "right",
+          "counterflow_turn_degrees": 0.0,
+          "counterflow_turn_joints": [],
+          "intensity": 0.8,
+          "repeats": 2,
+          "source": "MAESTRO procedural authoring",
+          "license": "MIT",
+          "attribution": "Created for MAESTRO",
+          "validation": {
+            "ok": true,
+            "type": "joint_activity",
+            "metric": 3.133803129196167,
+            "threshold": 0.85,
+            "detail": "joint activity 3.134"
+          },
+          "status": "applied",
+          "position": 0.9,
+          "planned_intensity": 0.8,
+          "intensity_adjusted": false,
+          "beat_lock_relaxed": false,
+          "motif": "punch_accent",
+          "rationale": "accentuate the energetic climax with sharp punches",
+          "section_action_range": [
+            2364,
+            2428
+          ],
+          "global_action_range": [
+            3602,
+            3666
           ]
         }
       ],
       "common_motion_ids": [
-        "jump_arms_up"
+        "jump_arms_up",
+        "arm_punch"
+      ],
+      "inherited_common_motion_ids": [],
+      "recalled_common_motion_ids": [],
+      "reuse_fit": null
+    },
+    {
+      "a": 3892,
+      "b": 4315,
+      "source": "edge",
+      "role": "drop",
+      "costs": {
+        "lodge": 0.1046,
+        "edge": 0.04
+      },
+      "target_intensity": 0.9,
+      "plan_bias": "edge",
+      "matched_bias": true,
+      "vocabulary": "percussive_sharp",
+      "energies": {
+        "lodge": 0.1905,
+        "edge": 0.1833
+      },
+      "chosen_cost": 0.04,
+      "caption": "A calm, steady phrase with even, sustained dynamics, on a regular pulse, often airborne, staying centered.",
+      "plan_alignment": 0.2,
+      "post_variation": [],
+      "planned_common_motions": [
+        {
+          "motion_id": "chest_pop",
+          "position": 0.4,
+          "anchor": "early",
+          "intensity": 0.7,
+          "direction": null,
+          "mirror": false,
+          "repeats": 2,
+          "motif": "chest_accent",
+          "rationale": "maintain high energy with sharp, percussive movements"
+        }
+      ],
+      "effective_common_motions": [
+        {
+          "motion_id": "chest_pop",
+          "position": 0.4,
+          "anchor": "early",
+          "intensity": 0.7,
+          "direction": null,
+          "mirror": false,
+          "repeats": 2,
+          "motif": "chest_accent",
+          "rationale": "maintain high energy with sharp, percussive movements"
+        }
+      ],
+      "common_motions": [
+        {
+          "id": "chest_pop",
+          "name": "Chest pop",
+          "category": "accent",
+          "mode": "replace",
+          "anchor": "early",
+          "event_frame": 37,
+          "action_range": [
+            1,
+            49
+          ],
+          "action_frames": 48,
+          "recommended_beats": 2.0,
+          "beat_error_frames": 0.0,
+          "mirror": false,
+          "direction_request": null,
+          "direction": null,
+          "direction_source": null,
+          "natural_direction": null,
+          "counterflow_turn_degrees": 0.0,
+          "counterflow_turn_joints": [],
+          "intensity": 0.7,
+          "repeats": 2,
+          "source": "MAESTRO procedural authoring",
+          "license": "MIT",
+          "attribution": "Created for MAESTRO",
+          "validation": {
+            "ok": true,
+            "type": "articulation_chain",
+            "metric": 0.5166515111923218,
+            "threshold": 0.22,
+            "detail": "minimum chain activity 0.517"
+          },
+          "status": "applied",
+          "position": 0.4,
+          "planned_intensity": 0.7,
+          "intensity_adjusted": false,
+          "beat_lock_relaxed": false,
+          "motif": "chest_accent",
+          "rationale": "maintain high energy with sharp, percussive movements",
+          "section_action_range": [
+            117,
+            165
+          ],
+          "global_action_range": [
+            4009,
+            4057
+          ]
+        }
+      ],
+      "common_motion_ids": [
+        "chest_pop"
       ],
       "inherited_common_motion_ids": [],
       "recalled_common_motion_ids": [],
@@ -659,38 +859,38 @@
     {
       "a": 4315,
       "b": 4566,
-      "source": "edge",
+      "source": "lodge",
       "role": "chorus",
       "costs": {
-        "lodge": 0.3648,
-        "edge": -0.2004,
-        "reuse:0": 0.1718
+        "lodge": -0.3673,
+        "edge": 0.3923,
+        "reuse:0": 0.1017
       },
-      "target_intensity": 0.608023317063047,
-      "plan_bias": "edge",
+      "target_intensity": 0.6,
+      "plan_bias": "lodge",
       "matched_bias": true,
-      "vocabulary": "percussive_sharp",
+      "vocabulary": "sustained_lyrical",
       "energies": {
-        "lodge": 0.1511,
-        "edge": 0.1561,
-        "reuse:0": 0.1706
+        "lodge": 0.1491,
+        "edge": 0.1732,
+        "reuse:0": 0.1344
       },
-      "chosen_cost": -0.2004,
-      "caption": "A calm, steady phrase with varied dynamics, on a regular pulse, often airborne, staying centered.",
-      "plan_alignment": 0.6032,
+      "chosen_cost": -0.3673,
+      "caption": "A moderate, steady phrase with even, sustained dynamics, with free timing, mostly grounded, staying centered.",
+      "plan_alignment": 0.865,
       "post_variation": [],
       "planned_common_motions": [],
       "effective_common_motions": [
         {
           "motion_id": "rise_reach",
-          "position": 0.68,
+          "position": 0.7,
           "anchor": "beat",
-          "intensity": 0.704,
+          "intensity": 0.45,
           "direction": null,
           "mirror": false,
           "repeats": 1,
-          "motif": "label_0_rise_reach",
-          "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif"
+          "motif": "opening_reach",
+          "rationale": "establish a restrained upward motif before the build"
         }
       ],
       "common_motions": [
@@ -700,10 +900,10 @@
           "category": "level change",
           "mode": "replace",
           "anchor": "beat",
-          "event_frame": 42,
+          "event_frame": 37,
           "action_range": [
-            5,
-            51
+            0,
+            46
           ],
           "action_frames": 46,
           "recommended_beats": 3.0,
@@ -715,7 +915,7 @@
           "natural_direction": null,
           "counterflow_turn_degrees": 0.0,
           "counterflow_turn_joints": [],
-          "intensity": 0.7036448237513486,
+          "intensity": 0.45,
           "repeats": 1,
           "source": "MAESTRO procedural authoring",
           "license": "MIT",
@@ -725,15 +925,15 @@
             "type": "rise_phases",
             "metric": 1.0,
             "threshold": 1.0,
-            "detail": "low f10; high f37; rise 0.338; fully planted 1.000"
+            "detail": "low f15; high f41; rise 0.304; fully planted 1.000"
           },
           "status": "applied",
-          "position": 0.68,
-          "planned_intensity": 0.704,
+          "position": 0.7,
+          "planned_intensity": 0.45,
           "intensity_adjusted": false,
           "beat_lock_relaxed": false,
-          "motif": "label_0_rise_reach",
-          "rationale": "intro signature selected for section label 0; repeat-label returns inherit the same composed motif",
+          "motif": "opening_reach",
+          "rationale": "establish a restrained upward motif before the build",
           "section_action_range": [
             137,
             183
@@ -756,73 +956,144 @@
     {
       "a": 4566,
       "b": 5827,
-      "source": "edge",
+      "source": "lodge",
       "role": "drop",
       "costs": {
-        "lodge": 0.1005,
-        "edge": 0.0849
+        "lodge": 0.0706,
+        "edge": 0.57
       },
-      "target_intensity": 0.9748637310399466,
-      "plan_bias": "edge",
-      "matched_bias": true,
-      "vocabulary": "explosive_fast",
+      "target_intensity": 0.95,
+      "plan_bias": "auto",
+      "matched_bias": false,
+      "vocabulary": "expansive_traveling",
       "energies": {
-        "lodge": 0.1892,
-        "edge": 0.1574
+        "lodge": 0.182,
+        "edge": 0.165
       },
-      "chosen_cost": 0.0849,
-      "caption": "A calm, steady phrase with even, sustained dynamics, with free timing, often airborne, staying centered.",
-      "plan_alignment": 0.0626,
+      "chosen_cost": 0.0706,
+      "caption": "A explosive, steady phrase with even, sustained dynamics, on a regular pulse, mostly grounded, staying centered.",
+      "plan_alignment": 0.75,
       "post_variation": [],
       "planned_common_motions": [
         {
+          "motion_id": "side_step",
+          "position": 0.2,
+          "anchor": "early",
+          "intensity": 0.75,
+          "direction": "left",
+          "mirror": false,
+          "repeats": 3,
+          "motif": "travel_step",
+          "rationale": "expand the movement across the space"
+        },
+        {
           "motion_id": "turn_half",
-          "position": 0.46,
-          "anchor": "center",
-          "intensity": 0.907,
-          "direction": "auto",
+          "position": 0.7,
+          "anchor": "beat",
+          "intensity": 0.85,
+          "direction": "right",
           "mirror": false,
           "repeats": 1,
-          "motif": "label_4_turn_half",
-          "rationale": "drop signature selected for section label 4; repeat-label returns inherit the same composed motif"
+          "motif": "turn_transition",
+          "rationale": "transition dynamically with a turning motion"
         }
       ],
       "effective_common_motions": [
         {
+          "motion_id": "side_step",
+          "position": 0.2,
+          "anchor": "early",
+          "intensity": 0.75,
+          "direction": "left",
+          "mirror": false,
+          "repeats": 3,
+          "motif": "travel_step",
+          "rationale": "expand the movement across the space"
+        },
+        {
           "motion_id": "turn_half",
-          "position": 0.46,
-          "anchor": "center",
-          "intensity": 0.907,
-          "direction": "auto",
+          "position": 0.7,
+          "anchor": "beat",
+          "intensity": 0.85,
+          "direction": "right",
           "mirror": false,
           "repeats": 1,
-          "motif": "label_4_turn_half",
-          "rationale": "drop signature selected for section label 4; repeat-label returns inherit the same composed motif"
+          "motif": "turn_transition",
+          "rationale": "transition dynamically with a turning motion"
         }
       ],
       "common_motions": [
+        {
+          "id": "side_step",
+          "name": "Side step",
+          "category": "locomotion",
+          "mode": "replace",
+          "anchor": "early",
+          "event_frame": 61,
+          "action_range": [
+            9,
+            105
+          ],
+          "action_frames": 96,
+          "recommended_beats": 6.0,
+          "beat_error_frames": 0.0,
+          "mirror": false,
+          "direction_request": "left",
+          "direction": "left",
+          "direction_source": "explicit",
+          "natural_direction": "forward",
+          "counterflow_turn_degrees": 0.0,
+          "counterflow_turn_joints": [],
+          "intensity": 0.75,
+          "repeats": 3,
+          "source": "MAESTRO procedural authoring",
+          "license": "MIT",
+          "attribution": "Created for MAESTRO",
+          "validation": {
+            "ok": true,
+            "type": "root_displacement",
+            "metric": 0.3355179727077484,
+            "threshold": 0.18,
+            "detail": "root displacement 0.336"
+          },
+          "status": "applied",
+          "position": 0.2,
+          "planned_intensity": 0.75,
+          "intensity_adjusted": false,
+          "beat_lock_relaxed": false,
+          "motif": "travel_step",
+          "rationale": "expand the movement across the space",
+          "section_action_range": [
+            154,
+            250
+          ],
+          "global_action_range": [
+            4720,
+            4816
+          ]
+        },
         {
           "id": "turn_half",
           "name": "Half turn",
           "category": "turn",
           "mode": "replace",
-          "anchor": "center",
-          "event_frame": 49,
+          "anchor": "beat",
+          "event_frame": 46,
           "action_range": [
-            31,
-            63
+            28,
+            60
           ],
           "action_frames": 32,
           "recommended_beats": 2.0,
           "beat_error_frames": 0.0,
           "mirror": true,
-          "direction_request": "auto",
+          "direction_request": "right",
           "direction": "right",
-          "direction_source": "dance_flow",
+          "direction_source": "explicit",
           "natural_direction": "right",
           "counterflow_turn_degrees": 0.0,
           "counterflow_turn_joints": [],
-          "intensity": 0.9074318655199733,
+          "intensity": 0.85,
           "repeats": 1,
           "source": "MAESTRO procedural authoring",
           "license": "MIT",
@@ -830,28 +1101,29 @@
           "validation": {
             "ok": true,
             "type": "root_yaw",
-            "metric": 3.1494972705841064,
+            "metric": 3.1480813026428223,
             "threshold": 2.6,
-            "detail": "yaw excursion 3.149 rad"
+            "detail": "yaw excursion 3.148 rad"
           },
           "status": "applied",
-          "position": 0.46,
-          "planned_intensity": 0.907,
+          "position": 0.7,
+          "planned_intensity": 0.85,
           "intensity_adjusted": false,
           "beat_lock_relaxed": false,
-          "motif": "label_4_turn_half",
-          "rationale": "drop signature selected for section label 4; repeat-label returns inherit the same composed motif",
+          "motif": "turn_transition",
+          "rationale": "transition dynamically with a turning motion",
           "section_action_range": [
-            567,
-            599
+            866,
+            898
           ],
           "global_action_range": [
-            5133,
-            5165
+            5432,
+            5464
           ]
         }
       ],
       "common_motion_ids": [
+        "side_step",
         "turn_half"
       ],
       "inherited_common_motion_ids": [],
@@ -861,64 +1133,64 @@
     {
       "a": 5827,
       "b": 6173,
-      "source": "edge",
+      "source": "lodge",
       "role": "outro",
       "costs": {
-        "lodge": 0.1611,
-        "edge": 0.0
+        "lodge": 0.04,
+        "edge": 0.1127
       },
-      "target_intensity": 0.0,
+      "target_intensity": 0.1,
       "plan_bias": "lodge",
-      "matched_bias": false,
+      "matched_bias": true,
       "vocabulary": "grounded_minimal",
       "energies": {
-        "lodge": 0.1462,
-        "edge": 0.1038
+        "lodge": 0.1402,
+        "edge": 0.1166
       },
-      "chosen_cost": 0.0,
-      "caption": "A calm, steady phrase with varied dynamics, with free timing, often airborne, staying centered.",
-      "plan_alignment": 0.94,
+      "chosen_cost": 0.04,
+      "caption": "A explosive, steady phrase with even, sustained dynamics, with free timing, mostly grounded, staying centered.",
+      "plan_alignment": 0.11,
       "post_variation": [],
       "planned_common_motions": [
         {
-          "motion_id": "crouch_drop",
-          "position": 0.66,
-          "anchor": "beat",
-          "intensity": 0.42,
+          "motion_id": "rise_reach",
+          "position": 0.3,
+          "anchor": "early",
+          "intensity": 0.3,
           "direction": null,
           "mirror": false,
           "repeats": 1,
-          "motif": "label_5_crouch_drop",
-          "rationale": "outro signature selected for section label 5; repeat-label returns inherit the same composed motif"
+          "motif": "closing_reach",
+          "rationale": "mirror the opening motif for a cohesive resolution"
         }
       ],
       "effective_common_motions": [
         {
-          "motion_id": "crouch_drop",
-          "position": 0.66,
-          "anchor": "beat",
-          "intensity": 0.42,
+          "motion_id": "rise_reach",
+          "position": 0.3,
+          "anchor": "early",
+          "intensity": 0.3,
           "direction": null,
           "mirror": false,
           "repeats": 1,
-          "motif": "label_5_crouch_drop",
-          "rationale": "outro signature selected for section label 5; repeat-label returns inherit the same composed motif"
+          "motif": "closing_reach",
+          "rationale": "mirror the opening motif for a cohesive resolution"
         }
       ],
       "common_motions": [
         {
-          "id": "crouch_drop",
-          "name": "Crouch or drop",
+          "id": "rise_reach",
+          "name": "Rise and reach",
           "category": "level change",
           "mode": "replace",
-          "anchor": "beat",
-          "event_frame": 38,
+          "anchor": "early",
+          "event_frame": 48,
           "action_range": [
             0,
             60
           ],
           "action_frames": 60,
-          "recommended_beats": 2.0,
+          "recommended_beats": 3.0,
           "beat_error_frames": null,
           "mirror": false,
           "direction_request": null,
@@ -927,37 +1199,37 @@
           "natural_direction": null,
           "counterflow_turn_degrees": 0.0,
           "counterflow_turn_joints": [],
-          "intensity": 0.42,
+          "intensity": 0.3,
           "repeats": 1,
           "source": "MAESTRO procedural authoring",
           "license": "MIT",
           "attribution": "Created for MAESTRO",
           "validation": {
             "ok": true,
-            "type": "root_level",
-            "metric": 0.23690497875213623,
-            "threshold": 0.18,
-            "detail": "root level excursion 0.237"
+            "type": "rise_phases",
+            "metric": 1.0,
+            "threshold": 1.0,
+            "detail": "low f19; high f53; rise 0.286; fully planted 1.000"
           },
           "status": "applied",
-          "position": 0.66,
-          "planned_intensity": 0.42,
+          "position": 0.3,
+          "planned_intensity": 0.3,
           "intensity_adjusted": false,
           "beat_lock_relaxed": false,
-          "motif": "label_5_crouch_drop",
-          "rationale": "outro signature selected for section label 5; repeat-label returns inherit the same composed motif",
+          "motif": "closing_reach",
+          "rationale": "mirror the opening motif for a cohesive resolution",
           "section_action_range": [
-            190,
-            250
+            66,
+            126
           ],
           "global_action_range": [
-            6017,
-            6077
+            5893,
+            5953
           ]
         }
       ],
       "common_motion_ids": [
-        "crouch_drop"
+        "rise_reach"
       ],
       "inherited_common_motion_ids": [],
       "recalled_common_motion_ids": [],

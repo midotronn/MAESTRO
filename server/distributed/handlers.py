@@ -604,11 +604,45 @@ class DanceGenerationHandler:
             if timing_value
             else None
         )
+        generation_env: dict[str, str] = {}
+        if "best_of_k" in payload:
+            raw_best_of_k = payload["best_of_k"]
+            if isinstance(raw_best_of_k, bool) or not isinstance(raw_best_of_k, int):
+                raise ValueError("best_of_k must be an integer")
+            best_of_k = raw_best_of_k
+            if not 1 <= best_of_k <= 16:
+                raise ValueError(
+                    f"best_of_k must be between 1 and 16, got {best_of_k}"
+                )
+            generation_env["AGENTLODGE_BEST_OF_K"] = str(best_of_k)
+        for payload_name, env_name in (
+            ("require_full_best_of_k", "AGENTLODGE_REQUIRE_FULL_BEST_OF_K"),
+            ("require_llm_storyboard", "AGENTLODGE_REQUIRE_LLM_STORYBOARD"),
+        ):
+            if payload_name not in payload:
+                continue
+            value = payload[payload_name]
+            if not isinstance(value, bool):
+                raise ValueError(f"{payload_name} must be a boolean")
+            generation_env[env_name] = "1" if value else "0"
+        if "storyboard_model" in payload:
+            raw_model = payload["storyboard_model"]
+            if not isinstance(raw_model, str):
+                raise ValueError("storyboard_model must be a string")
+            model = raw_model.strip()
+            if not model or len(model) > 100:
+                raise ValueError("storyboard_model must be a non-empty model name")
+            generation_env["OPENAI_CHAT_MODEL"] = model
         previous_timing = os.environ.get("MAESTRO_TIMING_FILE")
+        previous_generation = {
+            name: os.environ.get(name)
+            for name in generation_env
+        }
         try:
             if timing_path is not None:
                 timing_path.parent.mkdir(parents=True, exist_ok=True)
                 os.environ["MAESTRO_TIMING_FILE"] = str(timing_path)
+            os.environ.update(generation_env)
             report = self._generator()(sid)
             output = self.shared_root / f"fd_{sid}_STORY_bestofk.npy"
             if not output.is_file() or output.stat().st_size == 0:
@@ -635,12 +669,19 @@ class DanceGenerationHandler:
                 os.environ.pop("MAESTRO_TIMING_FILE", None)
             else:
                 os.environ["MAESTRO_TIMING_FILE"] = previous_timing
+            for name, value in previous_generation.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
         return {
             "sid": sid,
             "output": str(output),
             "frames": int(report["frames"]),
             "best_of_k": int(report["best_of_k"]),
             "generation_workers": report.get("generation_workers") or {},
+            "storyboard_model": report.get("storyboard_model"),
+            "storyboard_required": bool(report.get("storyboard_required")),
         }
 
 

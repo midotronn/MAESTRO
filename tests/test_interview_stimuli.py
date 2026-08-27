@@ -23,8 +23,17 @@ def test_frozen_stimulus_manifest_has_twelve_verified_positive_windows():
     selection = json.loads((STIMULI / "selection.json").read_text(encoding="utf-8"))
     manifest = json.loads((STIMULI / "manifest.json").read_text(encoding="utf-8"))
 
-    assert selection["protocol"] == "maestro-expert-study-v13-approved-pop-front-facing"
+    assert selection["protocol"] == "maestro-expert-study-v14-llm-gpt4o-k10-front-facing"
     assert selection["selection_type"] == "capability-focused expert-elicitation"
+    assert selection["generation_evidence"] == {
+        "storyboard_model": "gpt-4o",
+        "storyboard_required": True,
+        "fallback_allowed": False,
+        "all_storyboards_llm_authored": True,
+        "best_of_k_requested": 10,
+        "lodge_candidates_completed_per_song": 10,
+        "edge_candidates_completed_per_song": 10,
+    }
     assert selection["source_layout"]["lanes"] == ["LODGE", "EDGE", "MAESTRO"]
     assert selection["output"]["duration_seconds"] == 6
     assert [item["id"] for item in selection["excerpts"]] == [
@@ -42,6 +51,22 @@ def test_frozen_stimulus_manifest_has_twelve_verified_positive_windows():
         "Levitating": 3,
         "Dynamite": 3,
     }
+
+    for source in selection["sources"].values():
+        report_path = (
+            STIMULI
+            / "story-reports"
+            / f"fd_{source['sid']}_STORY_bestofk.json"
+        )
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert report["best_of_k"] == 10
+        assert report["storyboard_model"] == "gpt-4o"
+        assert report["storyboard_required"] is True
+        assert report["storyboard"]["used_fallback"] is False
+        assert report["backbone_selection"]["lodge"]["requested"] == 10
+        assert report["backbone_selection"]["lodge"]["completed"] == 10
+        assert report["backbone_selection"]["edge"]["requested"] == 10
+        assert report["backbone_selection"]["edge"]["completed"] == 10
 
     for excerpt in manifest["excerpts"]:
         source = ROOT / excerpt["source_video"]
@@ -68,7 +93,7 @@ def test_blind_player_assignments_cover_only_valid_lane_permutations():
     config = json.loads((STIMULI / "player" / "config.json").read_text(encoding="utf-8"))
     valid_excerpts = {f"EX{index:02d}" for index in range(1, 13)}
 
-    assert assignments["protocol"] == "maestro-expert-study-v13-approved-pop-front-facing"
+    assert assignments["protocol"] == "maestro-expert-study-v14-llm-gpt4o-k10-front-facing"
     assert config["protocol"] == assignments["protocol"]
     assert config["excerpt_duration_seconds"] == 6
     assert len(assignments["phases"]["pilot"]) == 5

@@ -13,8 +13,12 @@ sys.path.insert(0, str(ROOT))
 from server.distributed import FileTaskCoordinator, WorkerRegistry
 
 GENERATION_CONTRACT_VERSION = (
-    "dance-generation-v3-resident-penetration-cleanup"
+    "dance-generation-v4-explicit-storyboard-search"
 )
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _source(path: Path) -> dict[str, int]:
@@ -58,6 +62,20 @@ def main() -> int:
             "sid": sid,
             "contract_version": GENERATION_CONTRACT_VERSION,
             "penetration_cleanup": True,
+            "best_of_k": max(
+                1,
+                int(os.environ.get("AGENTLODGE_BEST_OF_K", "1")),
+            ),
+            "require_full_best_of_k": _env_flag(
+                "AGENTLODGE_REQUIRE_FULL_BEST_OF_K"
+            ),
+            "require_llm_storyboard": _env_flag(
+                "AGENTLODGE_REQUIRE_LLM_STORYBOARD"
+            ),
+            "storyboard_model": os.environ.get(
+                "OPENAI_CHAT_MODEL",
+                "",
+            ).strip() or "gpt-4o-mini",
             "timing_file": os.environ.get("MAESTRO_TIMING_FILE", ""),
             "sources": {
                 path.name: _source(path)

@@ -1002,6 +1002,12 @@ def test_dance_generation_handler_preserves_timing_context(tmp_path, monkeypatch
         sequence.append("generate")
         observed["sid"] = value
         observed["timing"] = os.environ.get("MAESTRO_TIMING_FILE")
+        observed["generation_env"] = {
+            "best_of_k": os.environ.get("AGENTLODGE_BEST_OF_K"),
+            "require_full": os.environ.get("AGENTLODGE_REQUIRE_FULL_BEST_OF_K"),
+            "require_llm": os.environ.get("AGENTLODGE_REQUIRE_LLM_STORYBOARD"),
+            "model": os.environ.get("OPENAI_CHAT_MODEL"),
+        }
         np.save(
             shared / f"fd_{sid}_STORY_bestofk.npy",
             np.zeros((4, 139), dtype=np.float32),
@@ -1021,14 +1027,31 @@ def test_dance_generation_handler_preserves_timing_context(tmp_path, monkeypatch
     handler._generate_song = fake_generate
     handler._build_bank = fake_build
     monkeypatch.setenv("MAESTRO_TIMING_FILE", "original")
+    monkeypatch.setenv("AGENTLODGE_BEST_OF_K", "2")
+    monkeypatch.setenv("AGENTLODGE_REQUIRE_FULL_BEST_OF_K", "0")
+    monkeypatch.setenv("AGENTLODGE_REQUIRE_LLM_STORYBOARD", "0")
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "original-model")
 
-    result = handler({"sid": sid, "timing_file": str(timing)})
+    result = handler({
+        "sid": sid,
+        "timing_file": str(timing),
+        "best_of_k": 10,
+        "require_full_best_of_k": True,
+        "require_llm_storyboard": True,
+        "storyboard_model": "gpt-4o",
+    })
 
     assert result["frames"] == 4
     assert sequence == ["generate", "bank"]
     assert observed == {
         "sid": sid,
         "timing": str(timing.resolve()),
+        "generation_env": {
+            "best_of_k": "10",
+            "require_full": "1",
+            "require_llm": "1",
+            "model": "gpt-4o",
+        },
         "bank": {
             "sid": sid,
             "bank_k": 1,
@@ -1038,6 +1061,40 @@ def test_dance_generation_handler_preserves_timing_context(tmp_path, monkeypatch
         },
     }
     assert os.environ["MAESTRO_TIMING_FILE"] == "original"
+    assert os.environ["AGENTLODGE_BEST_OF_K"] == "2"
+    assert os.environ["AGENTLODGE_REQUIRE_FULL_BEST_OF_K"] == "0"
+    assert os.environ["AGENTLODGE_REQUIRE_LLM_STORYBOARD"] == "0"
+    assert os.environ["OPENAI_CHAT_MODEL"] == "original-model"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("best_of_k", True, "best_of_k must be an integer"),
+        ("best_of_k", 1.5, "best_of_k must be an integer"),
+        ("storyboard_model", None, "storyboard_model must be a string"),
+        ("storyboard_model", " ", "storyboard_model must be a non-empty model name"),
+    ],
+)
+def test_dance_generation_handler_rejects_invalid_generation_settings(
+    tmp_path,
+    field,
+    value,
+    message,
+):
+    from server.distributed.handlers import DanceGenerationHandler
+
+    shared = tmp_path / "shared"
+    sid = "song_123"
+    wav = shared / "LODGE" / "data" / "finedance" / "music_wav" / f"{sid}.wav"
+    wav.parent.mkdir(parents=True)
+    wav.write_bytes(b"wav")
+    np.save(shared / f"lodge_fd_{sid}_feats.npy", np.zeros((2, 35)))
+    np.save(shared / f"edge{sid}_slices.npy", np.zeros((2, 3)))
+
+    handler = DanceGenerationHandler(shared_root=shared)
+    with pytest.raises(ValueError, match=message):
+        handler({"sid": sid, field: value})
 
 
 def test_dance_generation_handler_builds_bank_with_resident_workers(tmp_path):

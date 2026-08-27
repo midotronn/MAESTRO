@@ -118,6 +118,19 @@ def test_best_of_k_job_single_run_when_k_is_one():
 
     r = BK.best_of_k_job(job, 1, _music())
     assert calls == [None] and r["summary"] == "one"
+    assert r["best_of_k_requested"] == 1
+    assert r["best_of_k_completed"] == 1
+
+
+def test_best_of_k_job_records_failed_single_run_as_incomplete():
+    r = BK.best_of_k_job(
+        lambda _seed: {"motion": None, "error": "boom", "summary": ""},
+        1,
+        _music(),
+    )
+
+    assert r["best_of_k_requested"] == 1
+    assert r["best_of_k_completed"] == 0
 
 
 def test_best_of_k_job_selects_best_seed_and_annotates():
@@ -127,6 +140,10 @@ def test_best_of_k_job_selects_best_seed_and_annotates():
 
     r = BK.best_of_k_job(job, 3, _music())
     assert "best-of-3" in r["summary"] and "seed 1" in r["summary"]
+    assert r["best_of_k_requested"] == 3
+    assert r["best_of_k_completed"] == 3
+    assert r["best_of_k_selected_seed"] == 1
+    assert "best_of_k_fallback" not in r
 
 
 def test_best_of_k_job_falls_back_when_all_fail():
@@ -135,3 +152,6 @@ def test_best_of_k_job_falls_back_when_all_fail():
 
     r = BK.best_of_k_job(job, 3, _music())
     assert r["error"] == "boom"   # fell back to a single run
+    assert r["best_of_k_requested"] == 3
+    assert r["best_of_k_completed"] == 0
+    assert r["best_of_k_fallback"]

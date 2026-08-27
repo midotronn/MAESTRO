@@ -521,30 +521,70 @@ def _ensure_common_motion_coverage(board: Storyboard,
 
 def author_storyboard(structure: MusicStructure, metadata: "SongMetadata",
                       descriptor: "AudioDescriptor | None", api_key: str | None,
-                      *, motif_reuse: bool = True, chat_model: str | None = None) -> Storyboard:
+                      *, motif_reuse: bool = True, chat_model: str | None = None,
+                      require_llm: bool = False) -> Storyboard:
     """Author a :class:`Storyboard` for ``structure`` (LLM if ``api_key`` else rule-based)."""
     if not structure.sections:
         return Storyboard(arc="(empty)", plans=[], reasoning="no sections", used_fallback=True)
     if not api_key:
+        if require_llm:
+            raise RuntimeError("LLM storyboard required but no OpenAI API key is configured")
         board = _rule_based_storyboard(structure, motif_reuse=motif_reuse)
     else:
+        last_error: Exception | None = None
+        board: Storyboard | None = None
+        attempts = 0
         try:
             from openai import OpenAI
 
             client = OpenAI(api_key=api_key)
             model = chat_model or os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
-            response = client.chat.completions.create(
-                model=model,
-                max_tokens=2400,
-                messages=[{"role": "user", "content": _build_prompt(structure, metadata, descriptor)}],
+            prompt = _build_prompt(structure, metadata, descriptor)
+            attempts = max(1, int(os.getenv("AGENTLODGE_STORYBOARD_ATTEMPTS", "3")))
+            for attempt in range(attempts):
+                retry_note = (
+                    ""
+                    if attempt == 0
+                    else (
+                        "\n\nYour previous response was invalid. Return one complete JSON object "
+                        f"with exactly {len(structure.sections)} plans and no omitted sections. "
+                        f"Validation error: {last_error}"
+                    )
+                )
+                try:
+                    response = client.chat.completions.create(
+                        model=model,
+                        max_tokens=5000,
+                        temperature=0.2,
+                        response_format={"type": "json_object"},
+                        messages=[{"role": "user", "content": prompt + retry_note}],
+                    )
+                    text = response.choices[0].message.content or ""
+                    board = _ensure_common_motion_coverage(
+                        _parse_response(text, structure),
+                        structure,
+                    )
+                    break
+                except Exception as exc:  # noqa: BLE001 - retry malformed LLM output
+                    last_error = exc
+                    logger.warning(
+                        "Storyboard agent attempt %s/%s failed (%s)",
+                        attempt + 1,
+                        attempts,
+                        exc,
+                    )
+        except Exception as exc:  # noqa: BLE001 - preserve optional fallback semantics
+            last_error = exc
+            logger.warning("Storyboard agent setup failed (%s)", exc)
+        if board is None:
+            assert last_error is not None
+            if require_llm:
+                raise RuntimeError("required LLM storyboard generation failed") from last_error
+            logger.warning(
+                "Storyboard agent failed after %s attempts (%s); using rule-based fallback",
+                attempts,
+                last_error,
             )
-            text = response.choices[0].message.content or ""
-            board = _ensure_common_motion_coverage(
-                _parse_response(text, structure),
-                structure,
-            )
-        except Exception as exc:  # noqa: BLE001 - robust fallback on any failure
-            logger.warning("Storyboard agent failed (%s); using rule-based fallback", exc)
             board = _rule_based_storyboard(structure, motif_reuse=motif_reuse)
     logger.info("Storyboard authored (%s):\n%s",
                 "rule-based fallback" if board.used_fallback else "LLM", board.describe())

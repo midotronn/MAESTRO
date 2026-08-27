@@ -49,6 +49,33 @@ _TIMING_LOCK = threading.Lock()
 EARLY_LODGE_CONTRACT_VERSION = "lodge-early-generation-v1"
 
 
+def _openai_api_key() -> str | None:
+    value = os.environ.get("OPENAI_API_KEY", "").strip()
+    if value:
+        return value
+    configured = os.environ.get("OAI_KEY_FILE", "").strip()
+    candidates = (
+        [Path(configured).expanduser()]
+        if configured
+        else [
+            Path.home() / ".oai_key",
+            WORKSPACE / ".oai_key",
+        ]
+    )
+    for key_file in candidates:
+        try:
+            value = key_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if value:
+            return value
+    return None
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _emit_timing(stage: str, state: str, detail: str = "") -> None:
     timestamp_ms = time.time_ns() // 1_000_000
     line = f"MAESTRO_TIMING {stage} {state} {timestamp_ms} {detail}".rstrip()
@@ -453,6 +480,25 @@ def generate_song(sid: str) -> dict:
 
     lodge_motion = _successful_motion(lodge_result, "LODGE")
     edge_motion = _successful_motion(edge_result, "EDGE")
+    if _env_flag("AGENTLODGE_REQUIRE_FULL_BEST_OF_K"):
+        incomplete = {
+            label: {
+                "requested": int(result.get("best_of_k_requested") or 1),
+                "completed": int(result.get("best_of_k_completed") or 0),
+                "fallback": result.get("best_of_k_fallback"),
+            }
+            for label, result in (
+                ("lodge", lodge_result),
+                ("edge", edge_result),
+            )
+            if (
+                int(result.get("best_of_k_requested") or 1) != k
+                or int(result.get("best_of_k_completed") or 0) != k
+                or result.get("best_of_k_fallback")
+            )
+        }
+        if incomplete:
+            raise RuntimeError(f"full best-of-{k} generation required: {incomplete}")
     source_frames = {
         "lodge": int(lodge_motion.shape[0]),
         "edge": int(edge_motion.shape[0]),
@@ -487,13 +533,20 @@ def generate_song(sid: str) -> dict:
         flush=True,
     )
     _emit_timing("storyboard", "start")
+    require_llm = _env_flag("AGENTLODGE_REQUIRE_LLM_STORYBOARD")
+    storyboard_model = (
+        os.environ.get("OPENAI_CHAT_MODEL", "").strip()
+        or "gpt-4o-mini"
+    )
     try:
         storyboard = author_storyboard(
             structure,
             metadata,
             descriptor,
-            api_key=os.environ.get("OPENAI_API_KEY") or None,
+            api_key=_openai_api_key(),
             motif_reuse=True,
+            chat_model=storyboard_model,
+            require_llm=require_llm,
         )
     finally:
         _emit_timing("storyboard", "end")
@@ -549,6 +602,20 @@ def generate_song(sid: str) -> dict:
             "lodge": lodge_result.get("worker_id"),
             "edge": edge_result.get("worker_id"),
         },
+        "backbone_selection": {
+            label: {
+                "requested": int(result.get("best_of_k_requested", 1)),
+                "completed": int(result.get("best_of_k_completed", 1)),
+                "selected_seed": result.get("best_of_k_selected_seed"),
+                "fallback": result.get("best_of_k_fallback"),
+            }
+            for label, result in (
+                ("lodge", lodge_result),
+                ("edge", edge_result),
+            )
+        },
+        "storyboard_required": require_llm,
+        "storyboard_model": storyboard_model,
         "reasoning": assembled.reasoning,
         "schedule": schedule,
         "storyboard": storyboard.to_dict(),

@@ -1,7 +1,7 @@
 # MAESTRO expert-study stimuli
 
 This directory freezes the 12 capability-focused six-second blind-comparison excerpts used by
-`maestro-expert-study-v13-approved-pop-front-facing`.
+`maestro-expert-study-v14-llm-gpt4o-k10-front-facing`.
 
 - `selection.json` records the source window, objective diagnostics, and investigator rationale.
 - `window-analysis.json` contains the complete sliding-window diagnostic output produced by
@@ -22,6 +22,10 @@ This directory freezes the 12 capability-focused six-second blind-comparison exc
 
 The windows intentionally favor MAESTRO and are suitable for capability demonstration and expert
 elicitation. Do not describe their ratings as an unbiased random-sample comparison.
+
+Every v14 MAESTRO source uses a required `gpt-4o` storyboard with fallback disabled. LODGE and EDGE
+both completed the requested best-of-10 search for every song; the selected seeds and storyboard
+evidence are pinned in `story-reports/`.
 
 Generate full-song comparison sources on the study pod, rank them, and rebuild the blind clips with:
 

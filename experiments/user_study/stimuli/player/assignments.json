@@ -1,5 +1,5 @@
 {
-  "protocol": "maestro-expert-study-v13-approved-pop-front-facing",
+  "protocol": "maestro-expert-study-v14-llm-gpt4o-k10-front-facing",
   "lane_encoding": "private numeric source lanes",
   "phases": {
     "pilot": [

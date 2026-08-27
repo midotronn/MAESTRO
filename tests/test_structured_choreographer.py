@@ -7,6 +7,7 @@ import sys
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from agentlodge.agent import storyboard as SB
 from agentlodge.audio.structure import MusicStructure, Section
@@ -116,10 +117,127 @@ def test_author_storyboard_uses_llm_catalog_and_completes_empty_cues(monkeypatch
     assert not board.used_fallback
     assert captured["api_key"] == "test-key"
     assert captured["model"] == "test-model"
-    assert captured["max_tokens"] == 2400
+    assert captured["max_tokens"] == 5000
+    assert captured["temperature"] == 0.2
+    assert captured["response_format"] == {"type": "json_object"}
     assert "Available common motions" in captured["messages"][0]["content"]
     assert len(board.plans[1].common_motions) == 1
     assert board.plans[2].common_motions == []
+
+
+def test_author_storyboard_retries_incomplete_llm_response(monkeypatch):
+    structure = _structure([0, 1], ["intro", "chorus"])
+    metadata = SimpleNamespace(duration_seconds=14.0, bpm=120.0)
+    complete = {
+        "arc": "build",
+        "reasoning": "complete retry",
+        "plans": [
+            {
+                "section_index": idx,
+                "role": section.role,
+                "target_intensity": section.energy,
+                "vocabulary": "flowing_smooth",
+                "generator_bias": "auto",
+                "reuse_of": None,
+                "variation": {},
+                "common_motions": [],
+            }
+            for idx, section in enumerate(structure.sections)
+        ],
+    }
+    responses = iter([
+        json.dumps({"arc": "incomplete", "reasoning": "retry", "plans": []}),
+        json.dumps(complete),
+    ])
+    prompts = []
+
+    class Completions:
+        def create(self, **kwargs):
+            prompts.append(kwargs["messages"][0]["content"])
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=next(responses))
+                    )
+                ]
+            )
+
+    class Client:
+        def __init__(self, api_key=None):
+            assert api_key == "test-key"
+            self.chat = SimpleNamespace(completions=Completions())
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=Client))
+    board = SB.author_storyboard(
+        structure,
+        metadata,
+        None,
+        "test-key",
+        require_llm=True,
+    )
+
+    assert not board.used_fallback
+    assert len(prompts) == 2
+    assert "previous response was invalid" in prompts[1]
+    assert "exactly 2 plans" in prompts[1]
+
+
+def test_author_storyboard_fails_closed_when_llm_is_required(monkeypatch):
+    structure = _structure([0], ["intro"])
+    metadata = SimpleNamespace(duration_seconds=7.0, bpm=120.0)
+
+    with pytest.raises(RuntimeError, match="no OpenAI API key"):
+        SB.author_storyboard(
+            structure,
+            metadata,
+            None,
+            None,
+            require_llm=True,
+        )
+
+    class Client:
+        def __init__(self, api_key=None):
+            assert api_key == "test-key"
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(
+                    create=lambda **_kwargs: (_ for _ in ()).throw(
+                        ValueError("invalid response")
+                    )
+                )
+            )
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=Client))
+    with pytest.raises(RuntimeError, match="required LLM storyboard"):
+        SB.author_storyboard(
+            structure,
+            metadata,
+            None,
+            "test-key",
+            require_llm=True,
+        )
+
+
+def test_author_storyboard_preserves_optional_fallback_on_client_setup_failure(
+    monkeypatch,
+):
+    structure = _structure([0], ["intro"])
+    metadata = SimpleNamespace(duration_seconds=7.0, bpm=120.0)
+
+    class Client:
+        def __init__(self, api_key=None):
+            raise RuntimeError("client setup failed")
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=Client))
+
+    board = SB.author_storyboard(
+        structure,
+        metadata,
+        None,
+        "test-key",
+    )
+
+    assert board.used_fallback
+    assert len(board.plans) == 1
 
 
 def test_all_nineteen_motion_ids_parse_and_realize_through_story_assembly():

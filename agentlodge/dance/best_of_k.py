@@ -151,8 +151,17 @@ def best_of_k_job(job_fn: Callable[[int | None], dict], k: int | None, music_bea
     the 139-dim scoring format), and returns the winning job dict (summary annotated). Falls back to
     a single ungated run (``job_fn(None)``) when K<=1, no beats are available, or selection fails.
     """
-    if not k or int(k) <= 1 or music_beat_frames is None:
-        return job_fn(None)
+    requested = max(1, int(k or 1))
+    if requested <= 1 or music_beat_frames is None:
+        result = dict(job_fn(None))
+        result["best_of_k_requested"] = requested
+        result["best_of_k_completed"] = int(
+            result.get("error") is None and result.get("motion") is not None
+        )
+        result["best_of_k_selected_seed"] = None
+        if requested > 1:
+            result["best_of_k_fallback"] = "no music beat frames"
+        return result
     results: dict[int, dict] = {}
 
     def gen(seed):
@@ -161,16 +170,34 @@ def best_of_k_job(job_fn: Callable[[int | None], dict], k: int | None, music_bea
         return r.get("motion") if r.get("error") is None else None
 
     try:
-        _, seed, report = best_of_k(gen, list(range(int(k))), music_beat_frames,
+        _, seed, report = best_of_k(gen, list(range(requested)), music_beat_frames,
                                     score_transform=score_transform)
         r = dict(results[seed])
         r["summary"] = (r.get("summary", "")
                         + f" | best-of-{report['k']} by BAS: seed {seed} (BAS {report['winner_bas']})")
+        r["best_of_k_requested"] = requested
+        r["best_of_k_completed"] = int(report["k"])
+        r["best_of_k_selected_seed"] = int(seed)
+        r["best_of_k_report"] = report
         logger.info("Best-of-%s selected seed %s (BAS %s)", report["k"], seed, report["winner_bas"])
         return r
     except Exception as exc:  # noqa: BLE001 - never let selection break generation
         logger.warning("best-of-K selection failed (%s); using a single generation", exc)
+        completed = sum(
+            result.get("error") is None and result.get("motion") is not None
+            for result in results.values()
+        )
         for r in results.values():
             if r.get("error") is None and r.get("motion") is not None:
-                return r
-        return job_fn(None)
+                fallback = dict(r)
+                fallback["best_of_k_requested"] = requested
+                fallback["best_of_k_completed"] = completed
+                fallback["best_of_k_selected_seed"] = None
+                fallback["best_of_k_fallback"] = f"{type(exc).__name__}: {exc}"
+                return fallback
+        fallback = dict(job_fn(None))
+        fallback["best_of_k_requested"] = requested
+        fallback["best_of_k_completed"] = 0
+        fallback["best_of_k_selected_seed"] = None
+        fallback["best_of_k_fallback"] = f"{type(exc).__name__}: {exc}"
+        return fallback

@@ -1239,6 +1239,62 @@ def test_packaged_song_generator_writes_expected_outputs(tmp_path, monkeypatch):
     assert report["section_scores"] == [{"common_motion_ids": ["wave"]}]
 
 
+def test_packaged_song_generator_reads_secure_key_file(tmp_path, monkeypatch):
+    import scripts.make_song_bestofk as M
+
+    key_file = tmp_path / ".oai_key"
+    key_file.write_text("file-key\n", encoding="utf-8")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OAI_KEY_FILE", str(key_file))
+
+    assert M._openai_api_key() == "file-key"
+
+
+def test_packaged_song_generator_rejects_partial_required_best_of_k(
+    tmp_path,
+    monkeypatch,
+):
+    import scripts.make_song_bestofk as M
+
+    sid = "partial"
+    wav = tmp_path / f"LODGE/data/finedance/music_wav/{sid}.wav"
+    wav.parent.mkdir(parents=True)
+    wav.write_bytes(b"wav")
+    np.save(tmp_path / f"lodge_fd_{sid}_feats.npy", np.zeros((2, 35)))
+    np.save(tmp_path / f"edge{sid}_slices.npy", np.zeros((2, 4, 8)))
+    motion = np.zeros((60, 139), dtype=np.float32)
+
+    monkeypatch.setattr(M, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(
+        M,
+        "extract_song_metadata",
+        lambda _wav: SimpleNamespace(
+            duration_seconds=20.0,
+            beat_frames=np.array([0, 30], dtype=np.int64),
+            wav_path=wav,
+        ),
+    )
+    monkeypatch.setattr(M, "_use_parallel_execution", lambda: False)
+    monkeypatch.setattr(
+        M,
+        "best_of_k_job",
+        lambda *_args, **_kwargs: {
+            "motion": motion,
+            "error": None,
+            "summary": "partial",
+            "best_of_k_requested": 10,
+            "best_of_k_completed": 9,
+            "best_of_k_selected_seed": None,
+            "best_of_k_fallback": "one candidate failed",
+        },
+    )
+    monkeypatch.setenv("AGENTLODGE_BEST_OF_K", "10")
+    monkeypatch.setenv("AGENTLODGE_REQUIRE_FULL_BEST_OF_K", "1")
+
+    with pytest.raises(RuntimeError, match="full best-of-10 generation required"):
+        M.generate_song(sid)
+
+
 def test_lists_named_motions_from_the_shared_manifest(client):
     data = client.get("/api/motions").json()
     assert data["version"] == MotionBank().version

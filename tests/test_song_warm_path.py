@@ -477,10 +477,14 @@ def test_dispatch_song_generation_requests_resident_cleanup(
     assert kind == "dance.generate"
     assert worker == "worker-1"
     assert dispatch.GENERATION_CONTRACT_VERSION == (
-        "dance-generation-v3-resident-penetration-cleanup"
+        "dance-generation-v4-explicit-storyboard-search"
     )
     assert payload["contract_version"] == dispatch.GENERATION_CONTRACT_VERSION
     assert payload["penetration_cleanup"] is True
+    assert payload["best_of_k"] == 1
+    assert payload["require_full_best_of_k"] is False
+    assert payload["require_llm_storyboard"] is False
+    assert payload["storyboard_model"] == "gpt-4o-mini"
 
 
 def test_dispatch_backbone_generation_publishes_fingerprinted_marker(

@@ -1,11 +1,20 @@
 {
-  "validated_at": "2026-08-27T10:58:14-05:00",
+  "validated_at": "2026-08-27T12:48:09-05:00",
   "editor_base": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net",
   "website": {
     "url": "https://midotronn.github.io/MAESTRO/",
     "config_url": "https://midotronn.github.io/MAESTRO/static/data/config.json",
     "resolved_editor_url": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/",
     "status": "passed"
+  },
+  "generation": {
+    "storyboard_model": "gpt-4o",
+    "storyboard_required": true,
+    "fallback_allowed": false,
+    "all_storyboards_llm_authored": true,
+    "best_of_k_requested": 10,
+    "lodge_candidates_completed_per_song": 10,
+    "edge_candidates_completed_per_song": 10
   },
   "songs": [
     {
@@ -16,11 +25,12 @@
       "beats": 436,
       "generator": "live",
       "preview_status": 206,
+      "browser_ready_state": 4,
       "edit_undo_redo": "passed",
-      "generative_edit_seconds": 2.78,
+      "generative_edit_seconds": 4.03,
       "comparison": {
         "status": "passed",
-        "elapsed_seconds": 39
+        "elapsed_seconds": 40
       }
     },
     {
@@ -31,6 +41,7 @@
       "beats": 512,
       "generator": "live",
       "preview_status": 206,
+      "browser_ready_state": 4,
       "edit_undo_redo": "passed"
     },
     {
@@ -41,6 +52,7 @@
       "beats": 343,
       "generator": "live",
       "preview_status": 206,
+      "browser_ready_state": 4,
       "edit_undo_redo": "passed"
     },
     {
@@ -51,6 +63,7 @@
       "beats": 363,
       "generator": "live",
       "preview_status": 206,
+      "browser_ready_state": 4,
       "edit_undo_redo": "passed"
     }
   ],
@@ -62,12 +75,14 @@
   },
   "study_player": {
     "url": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/study/",
-    "protocol": "maestro-expert-study-v13-approved-pop-front-facing",
+    "protocol": "maestro-expert-study-v14-llm-gpt4o-k10-front-facing",
     "excerpt_duration_seconds": 6,
+    "published_videos": 72,
+    "browser_ready_state": 4,
     "status": "passed"
   },
   "test_suite": {
-    "passed": 85,
+    "passed": 155,
     "failed": 0
   },
   "status": "passed"

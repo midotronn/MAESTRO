@@ -113,6 +113,23 @@ probe before declaring the Pod ready. This avoids relying on shared-volume Unix 
 some RunPod volumes do not preserve. `GET /api/planner/status` reports both `configured` and
 `verified`; the four-GPU verifier rejects the configured-but-unverified state.
 
+The full-song generation worker also reads `OAI_KEY_FILE`, so the storyboard agent uses the same
+secure credential without copying it into a command or repository file. Persistent generation
+settings can be placed in `/workspace/.maestro_generation.env`; for the expert-study configuration:
+
+```bash
+AGENTLODGE_BEST_OF_K=10
+AGENTLODGE_REQUIRE_FULL_BEST_OF_K=1
+AGENTLODGE_REQUIRE_LLM_STORYBOARD=1
+OPENAI_CHAT_MODEL=gpt-4o
+OAI_KEY_FILE=/root/.oai_key
+```
+
+`AGENTLODGE_REQUIRE_LLM_STORYBOARD=1` makes an absent, failed, or invalid LLM response fail the
+generation instead of silently substituting the rule-based storyboard.
+`AGENTLODGE_REQUIRE_FULL_BEST_OF_K=1` similarly rejects a partial or fallback search rather than
+reporting a requested K that was not completed.
+
 The full-song path exports one animated GLB through the warm Blender daemon, splits all source frames
 into contiguous GPU ranges, renders and encodes each range with Filament plus NVENC, validates every
 shard and the exact final frame count, concatenates locally, and atomically publishes one audio-muxed

@@ -1,5 +1,5 @@
 {
-  "protocol": "maestro-expert-study-v13-approved-pop-front-facing",
+  "protocol": "maestro-expert-study-v14-llm-gpt4o-k10-front-facing",
   "source_layout": [
     "LODGE",
     "EDGE",
@@ -12,7 +12,7 @@
       "name": "Can't Stop the Feeling!",
       "artist": "Justin Timberlake",
       "frames": 7084,
-      "target_yaw": -0.037339016795158386,
+      "target_yaw": 0.022572681307792664,
       "source_shapes": {
         "lodge": [
           6912,
@@ -49,14 +49,14 @@
             "policy": "identity"
           },
           "root_min": [
-            -0.0844256803393364,
-            -0.04289242997765541,
-            0.8631953597068787
+            -0.0887036919593811,
+            -0.0422922745347023,
+            0.9273695945739746
           ],
           "root_max": [
-            0.07525549829006195,
-            0.02181931957602501,
-            1.2899993658065796
+            0.06741777807474136,
+            0.03673964738845825,
+            1.2913471460342407
           ]
         },
         "edge": {
@@ -75,14 +75,14 @@
             "policy": "identity"
           },
           "root_min": [
-            -0.7436639070510864,
-            -0.696678876876831,
-            1.692568302154541
+            -0.6755129098892212,
+            -0.5716978311538696,
+            1.698732852935791
           ],
           "root_max": [
-            0.8216518759727478,
-            0.7242377400398254,
-            2.059967041015625
+            0.7811278700828552,
+            0.9681119918823242,
+            2.1088528633117676
           ]
         },
         "maestro": {
@@ -101,29 +101,29 @@
             "policy": "identity"
           },
           "root_min": [
-            -0.5549588799476624,
-            -0.35948747396469116,
-            0.8409826755523682
+            -0.6753860712051392,
+            -0.34310778975486755,
+            0.9811524152755737
           ],
           "root_max": [
-            1.0773134231567383,
-            0.7995090484619141,
-            2.0068016052246094
+            0.7025904059410095,
+            0.8547744750976562,
+            2.327317476272583
           ]
         }
       },
       "motions": {
         "lodge": {
           "frames": 7084,
-          "sha256": "87a171fa5386a2270b0501f990650d5fba6674422855edf32ce7c12e304bd03a"
+          "sha256": "2dea610bb703f9b88b6aa3ea89d5c2b2e85f96c6e9e745397ada61d3f6a4b86d"
         },
         "edge": {
           "frames": 7084,
-          "sha256": "c4c6cee522bcb001b081b2294edc1ad1aee5200f107fda8eafff703caefe4f10"
+          "sha256": "f9bb96c4fd64e6482232434b4e5df490443ae6d54a4cd5b17d8d30e4ad0a6fa3"
         },
         "maestro": {
           "frames": 7084,
-          "sha256": "015464b29057289adac2252158f0feba44af2fa7291157a81e7a535406d4334d"
+          "sha256": "cddaad5a9ed5f470c6bedde9f889db425f994db954aeaec975c283bf16574d4d"
         }
       },
       "lanes": {
@@ -133,8 +133,8 @@
           "fps": 29.99974359250066,
           "frames": 7084,
           "duration_seconds": 236.136,
-          "bytes": 46228244,
-          "sha256": "6096e9bdf61d1bb08d2b9f2beb4b637221014cefce9bd7ce40abdf99d09c9044"
+          "bytes": 45798610,
+          "sha256": "81b92eadfb68024d8b197d263f6d53f89aafef69205999a327b10f5244434301"
         },
         "edge": {
           "width": 1080,
@@ -142,8 +142,8 @@
           "fps": 29.99974359250066,
           "frames": 7084,
           "duration_seconds": 236.136,
-          "bytes": 50181631,
-          "sha256": "03c0b90cccfc718176664f75832385b3c396cb9781596f9629ecade2e02751c6"
+          "bytes": 51464987,
+          "sha256": "fe8d01e702ea4ec537700ba7a8756c683bd727f45cdfe5ef4bc2232f8d19ebb0"
         },
         "maestro": {
           "width": 1080,
@@ -151,19 +151,19 @@
           "fps": 29.99974359250066,
           "frames": 7084,
           "duration_seconds": 236.136,
-          "bytes": 48448252,
-          "sha256": "d51ec632bb9f664bc92ed1e5581dd90a6991cc226476994605071b0347a64f45"
+          "bytes": 48554244,
+          "sha256": "fc9e52f2a194fec11f1015c746cef615a37f19929fd870448c8de1f4ca9ef9c2"
         }
       },
       "composite": {
-        "path": "/workspace/approved-comparisons/composites/story_cant-stop-the-feeling_3way.mp4",
+        "path": "/workspace/approved-comparisons-llm-k10/composites/story_cant-stop-the-feeling_3way.mp4",
         "width": 1440,
         "height": 480,
         "fps": 30.0,
         "frames": 7084,
         "duration_seconds": 236.134,
-        "bytes": 19492112,
-        "sha256": "c622b6ac5db990323b6ae752cedb91ba6bf32711c7aae643d8474da3a5adf7f0"
+        "bytes": 19565443,
+        "sha256": "ef5685d43c2396c0b981275db4539559b40601105409625a17c66596256854e3"
       }
     },
     {
@@ -172,7 +172,7 @@
       "name": "Uptown Funk",
       "artist": "Mark Ronson feat. Bruno Mars",
       "frames": 8046,
-      "target_yaw": 0.004752783570438623,
+      "target_yaw": -0.03676090016961098,
       "source_shapes": {
         "lodge": [
           7936,
@@ -209,14 +209,14 @@
             "policy": "identity"
           },
           "root_min": [
-            -0.10595810413360596,
-            -0.03981165587902069,
-            0.9290132522583008
+            -0.10657487064599991,
+            -0.039443835616111755,
+            0.9864415526390076
           ],
           "root_max": [
-            0.07986972481012344,
-            0.03878166154026985,
-            1.2929192781448364
+            0.09011577814817429,
+            0.0241143386811018,
+            1.2924702167510986
           ]
         },
         "edge": {
@@ -235,14 +235,14 @@
             "policy": "identity"
           },
           "root_min": [
-            -0.5979410409927368,
-            -0.45229414105415344,
-            1.6882808208465576
+            -0.3564631938934326,
+            -0.4858913719654083,
+            1.7477434873580933
           ],
           "root_max": [
-            0.7642095685005188,
-            0.9210717678070068,
-            2.0538673400878906
+            0.9179742336273193,
+            0.7596940398216248,
+            2.028998851776123
           ]
         },
         "maestro": {
@@ -261,29 +261,29 @@
             "policy": "identity"
           },
           "root_min": [
-            -0.5963239669799805,
-            -0.4522923529148102,
-            0.7535055875778198
+            -0.7014856338500977,
+            -0.6016358733177185,
+            0.7841001749038696
           ],
           "root_max": [
-            0.7063845992088318,
-            0.9199097752571106,
-            2.272435426712036
+            0.6415832042694092,
+            0.6703957915306091,
+            2.0070571899414062
           ]
         }
       },
       "motions": {
         "lodge": {
           "frames": 8046,
-          "sha256": "cee2f67e790ee3acdcadf1e4565a02fd9f79873d1573dace85e228f2b924890a"
+          "sha256": "5b5c18211333925f8749c2e5f0e8725d610046c251ad41f46569e51a2f9c6abd"
         },
         "edge": {
           "frames": 8046,
-          "sha256": "53cd014d2384c980a4c25e9c9f946e5a34e27a7e8b439b32a33ac01cfb0b4252"
+          "sha256": "d988239ddd040790ebcd184d6afdf912aa20951f7c630131c286a68555f09254"
         },
         "maestro": {
           "frames": 8046,
-          "sha256": "6086dd62612313dc140a59ac55eec0a8bcf342b3570602cf649eee0108f3b3a7"
+          "sha256": "c4d023c4fbad8f0a79d6d0cc01949a318b08058334739de65f7b258bb8627075"
         }
       },
       "lanes": {
@@ -293,8 +293,8 @@
           "fps": 29.9998543538018,
           "frames": 8046,
           "duration_seconds": 268.202,
-          "bytes": 51278434,
-          "sha256": "e7869ebc8291a0ef9eb3bd58cb70d46b09e9d614bd878a1f0e23fc9cdac7711a"
+          "bytes": 51715451,
+          "sha256": "1b1077b78b93e09f02bccac79f23a2557c340e8241e939cd07831ac70b7a0998"
         },
         "edge": {
           "width": 1080,
@@ -302,8 +302,8 @@
           "fps": 29.9998543538018,
           "frames": 8046,
           "duration_seconds": 268.202,
-          "bytes": 54298344,
-          "sha256": "203efc4191a07eba552e8481d5a983b8eb5a5719df3ba981ef22b8e9310e74a7"
+          "bytes": 54975183,
+          "sha256": "ddcc8c81ad886d9d5834b50b5d6c3ee668253aa810f99332b2e8962a11cedf49"
         },
         "maestro": {
           "width": 1080,
@@ -311,19 +311,19 @@
           "fps": 29.9998543538018,
           "frames": 8046,
           "duration_seconds": 268.202,
-          "bytes": 53102302,
-          "sha256": "9e885a027fa5d4a2c2ff95634defd1876c48fdecef0246477556e95b321dcb51"
+          "bytes": 52169556,
+          "sha256": "2bcbdbeb76cf0c1f7f3d1d2b6f7cc0d4f76acf4471f90674ce9c9a021c858a04"
         }
       },
       "composite": {
-        "path": "/workspace/approved-comparisons/composites/story_uptown-funk_3way.mp4",
+        "path": "/workspace/approved-comparisons-llm-k10/composites/story_uptown-funk_3way.mp4",
         "width": 1440,
         "height": 480,
         "fps": 30.0,
         "frames": 8046,
         "duration_seconds": 268.2,
-        "bytes": 21058548,
-        "sha256": "523b9620525a6831159875663023a8e3dc81d50ae1ffce29b9bcd32f7cd6271b"
+        "bytes": 21089934,
+        "sha256": "5d352c562085a6ea2711c18b843fe14fdd0dc6075c1910ac6cb79bef45fc190d"
       }
     },
     {
@@ -332,7 +332,7 @@
       "name": "Levitating",
       "artist": "Dua Lipa",
       "frames": 6062,
-      "target_yaw": -0.433767169713974,
+      "target_yaw": -0.49418383836746216,
       "source_shapes": {
         "lodge": [
           5888,
@@ -369,14 +369,14 @@
             "policy": "identity"
           },
           "root_min": [
-            -0.10320521146059036,
-            -0.037941306829452515,
-            1.0025882720947266
+            -0.12330583482980728,
+            -0.03871268033981323,
+            0.973056435585022
           ],
           "root_max": [
-            0.08798470348119736,
-            0.040538765490055084,
-            1.2926158905029297
+            0.09242463111877441,
+            0.030258584767580032,
+            1.2959072589874268
           ]
         },
         "edge": {
@@ -395,14 +395,14 @@
             "policy": "identity"
           },
           "root_min": [
-            -0.7780535221099854,
-            -0.5899312496185303,
-            1.4086676836013794
+            -0.7461322546005249,
+            -1.1370786428451538,
+            1.7245234251022339
           ],
           "root_max": [
-            0.5476194620132446,
-            0.7537270188331604,
-            2.0449211597442627
+            0.9103453159332275,
+            0.747092068195343,
+            2.052455186843872
           ]
         },
         "maestro": {
@@ -421,29 +421,29 @@
             "policy": "identity"
           },
           "root_min": [
-            -1.0448955297470093,
-            -0.5548791289329529,
-            0.7130357027053833
+            -0.7398139834403992,
+            -0.611773669719696,
+            0.961296558380127
           ],
           "root_max": [
-            0.9212209582328796,
-            1.0051337480545044,
-            2.0296080112457275
+            0.8671243190765381,
+            0.7318088412284851,
+            2.344208002090454
           ]
         }
       },
       "motions": {
         "lodge": {
           "frames": 6062,
-          "sha256": "997b638ae47010ee25719e082839f3d2b0885a95b9e60d00f8e7065fb9ec0eda"
+          "sha256": "cc342970b78be41cec4c9be524a66e212522fa5abc1d4f46fd6ff897592d0d3a"
         },
         "edge": {
           "frames": 6062,
-          "sha256": "6e204c8c5df1c6004a05edcc0a049585d25843752a53097707134b0eaff1c17d"
+          "sha256": "5023137b9da00e8d621266fc6941701abb445a75dccbc7369d760affe9f22db0"
         },
         "maestro": {
           "frames": 6062,
-          "sha256": "20e285092d842dc188e4db018d903af5bea407e6f155914f44f7d10294644a84"
+          "sha256": "c4cf047de9e70460fd19dd4274eb86ce1adf225acb2f4a376d3587a926662883"
         }
       },
       "lanes": {
@@ -453,8 +453,8 @@
           "fps": 29.99980668633311,
           "frames": 6062,
           "duration_seconds": 202.068,
-          "bytes": 39895803,
-          "sha256": "ce893157c407ebc23d51c2d88c6375f24ca17427f2373794501101b3749db4c5"
+          "bytes": 39280923,
+          "sha256": "3eefebdae4eff984d3bd44a376a2a89af0a88213a9a59ca200e858eda3222c6d"
         },
         "edge": {
           "width": 1080,
@@ -462,8 +462,8 @@
           "fps": 29.99980668633311,
           "frames": 6062,
           "duration_seconds": 202.068,
-          "bytes": 42662587,
-          "sha256": "49ac6607e30d8f44f88c7ccf3b32746e5e1ad7d01824787be3246c800fa6aa0f"
+          "bytes": 42666576,
+          "sha256": "aa927f3acd102b2f116f2f86703e852e191727e2f55e870cdb2f1788080198c6"
         },
         "maestro": {
           "width": 1080,
@@ -471,19 +471,19 @@
           "fps": 29.99980668633311,
           "frames": 6062,
           "duration_seconds": 202.068,
-          "bytes": 42045083,
-          "sha256": "94b20989b9bafe77cd8f10557e55c8c58b046f0a58599e046299709a7cc94a87"
+          "bytes": 41126900,
+          "sha256": "8967269bd1a4622f790cc7f25910852948fb8574b5842db96f2c6dcc41fb7f90"
         }
       },
       "composite": {
-        "path": "/workspace/approved-comparisons/composites/story_levitating_3way.mp4",
+        "path": "/workspace/approved-comparisons-llm-k10/composites/story_levitating_3way.mp4",
         "width": 1440,
         "height": 480,
         "fps": 30.0,
         "frames": 6062,
         "duration_seconds": 202.067,
-        "bytes": 17181968,
-        "sha256": "b006a8aa2aef880f822023e1d53ffc3aee8b59851b7bb0f2ac77fa061a04b364"
+        "bytes": 16945418,
+        "sha256": "12114d6c6dcf7176f432cc54125e2e5bb564bf7153480e956556422426929343"
       }
     },
     {
@@ -492,7 +492,7 @@
       "name": "Dynamite",
       "artist": "BTS",
       "frames": 6173,
-      "target_yaw": 0.754439115524292,
+      "target_yaw": 0.016738377511501312,
       "source_shapes": {
         "lodge": [
           6144,
@@ -529,14 +529,14 @@
             "policy": "identity"
           },
           "root_min": [
-            -0.13310201466083527,
-            -0.04564739763736725,
-            0.8915991187095642
+            -0.08797463029623032,
+            -0.04967188462615013,
+            0.9120071530342102
           ],
           "root_max": [
-            0.11638514697551727,
-            0.056073855608701706,
-            1.28803288936615
+            0.0880674347281456,
+            0.031716398894786835,
+            1.2936285734176636
           ]
         },
         "edge": {
@@ -555,14 +555,14 @@
             "policy": "identity"
           },
           "root_min": [
-            -0.5843570828437805,
-            -0.47088611125946045,
-            1.372188687324524
+            -0.6420918703079224,
+            -0.8822940587997437,
+            1.6922228336334229
           ],
           "root_max": [
-            0.43989935517311096,
-            0.9261722564697266,
-            2.061073064804077
+            1.0276983976364136,
+            1.09617018699646,
+            2.035439968109131
           ]
         },
         "maestro": {
@@ -581,29 +581,29 @@
             "policy": "identity"
           },
           "root_min": [
-            -0.5807577967643738,
-            -0.47079217433929443,
-            1.3727484941482544
+            -0.26109030842781067,
+            -0.8626400828361511,
+            0.8826552629470825
           ],
           "root_max": [
-            0.45812007784843445,
-            0.9254233837127686,
-            2.3698291778564453
+            0.5945093035697937,
+            0.35784658789634705,
+            1.8127025365829468
           ]
         }
       },
       "motions": {
         "lodge": {
           "frames": 6173,
-          "sha256": "f285ab611e89fc34f2fa5855aa100d31dda17abf96448199353be4ec6b33635d"
+          "sha256": "36671c22f78bb679541837bfb254818e23b389c920a06732dab2e8994d19d6ec"
         },
         "edge": {
           "frames": 6173,
-          "sha256": "8f23313c3d713af8c66981e56bfa1ed2c1da5485a302690fbe21259b4176b0b2"
+          "sha256": "68a2ffb40051440c2214800cc01524f2e47bb975811f20913d1ab402f6980d04"
         },
         "maestro": {
           "frames": 6173,
-          "sha256": "b0ca9bfdb8ec9b8a629b77fc166cc50309ff87bc5a65cda80e29701581c26c65"
+          "sha256": "31665cb95472b5afd0b8b77d4fe42a41bc0b7c22f16d1f0ed5ee6d7eb200a7f7"
         }
       },
       "lanes": {
@@ -613,8 +613,8 @@
           "fps": 29.99975321157172,
           "frames": 6173,
           "duration_seconds": 205.769,
-          "bytes": 41157417,
-          "sha256": "ab9d35614e645acf6bafb56c586601fb33bd9cc5172f4bd04ef3821fc3300fbd"
+          "bytes": 41886974,
+          "sha256": "4115b4ddd9779ca3d18e64330a71ecafbaf83b0139ec3bfd54227d501a6b88f6"
         },
         "edge": {
           "width": 1080,
@@ -622,8 +622,8 @@
           "fps": 29.99975321157172,
           "frames": 6173,
           "duration_seconds": 205.769,
-          "bytes": 42631934,
-          "sha256": "0c25a46ae30e28797297780e1b00939d28d8cc9dea004a245439688edbabb4cb"
+          "bytes": 43640117,
+          "sha256": "53374b0918c66510d275024a589da290e30996c0ea58eacf27b01dbf4c139c5a"
         },
         "maestro": {
           "width": 1080,
@@ -631,19 +631,19 @@
           "fps": 29.99975321157172,
           "frames": 6173,
           "duration_seconds": 205.769,
-          "bytes": 42122063,
-          "sha256": "c50203405f9fb5847d3806f3829b0e452f2c25c312fa5983885f5b8e456de7f7"
+          "bytes": 42447878,
+          "sha256": "4a1fd28f1b60c2213a27280101192abc35077a5196f15532385c5d955fa58d09"
         }
       },
       "composite": {
-        "path": "/workspace/approved-comparisons/composites/story_dynamite_3way.mp4",
+        "path": "/workspace/approved-comparisons-llm-k10/composites/story_dynamite_3way.mp4",
         "width": 1440,
         "height": 480,
         "fps": 30.0,
         "frames": 6173,
         "duration_seconds": 205.767,
-        "bytes": 17190575,
-        "sha256": "be7af08aa8af81a503da6abb793093698aa2cc6cab7372b1ab50fa4dcab7b8ac"
+        "bytes": 17238424,
+        "sha256": "6983872e138adabf14bbee97df12dd0bc5d4eb90a001bde78ed1a9b0a16c3cca"
       }
     }
   ]
