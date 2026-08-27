@@ -83,6 +83,17 @@ if [ "$MODE" = "setup" ]; then
   WORKSPACE="$WORKSPACE" \
     AGENTLODGE_SLA_FORCE_RESTART="${AGENTLODGE_SLA_FORCE_RESTART:-1}" \
     bash "$ROOT/scripts/start_four_gpu_server.sh"
+  if [ -n "${AGENTLODGE_PUBLIC_PORT:-}" ]; then
+    WORKSPACE="$WORKSPACE" \
+      AGENTLODGE_SLA_PORT="$AGENTLODGE_PUBLIC_PORT" \
+      AGENTLODGE_SLA_HOST=0.0.0.0 \
+      AGENTLODGE_SLA_LOG="$WORKSPACE/maestro-public-server.log" \
+      AGENTLODGE_SLA_PID_FILE="$WORKSPACE/maestro-public-server.pid" \
+      AGENTLODGE_SLA_FORCE_RESTART=1 \
+      AGENTLODGE_PREWARM_RENDER=0 \
+      MAESTRO_INTERVIEW_MODE="${MAESTRO_PUBLIC_INTERVIEW_MODE:-0}" \
+      bash "$ROOT/scripts/start_four_gpu_server.sh"
+  fi
 fi
 
 WORKSPACE="$WORKSPACE" \
@@ -189,6 +200,20 @@ if configured != verified:
 if os.environ.get("AGENTLODGE_REQUIRE_LLM_PLANNER") == "1" and not verified:
     raise SystemExit(f"planner verification is required but unavailable: {planner}")
 
+public_port = os.environ.get("AGENTLODGE_PUBLIC_PORT", "").strip()
+public_songs = None
+study_player = False
+if public_port:
+    public_base = f"http://127.0.0.1:{int(public_port)}"
+    with urllib.request.urlopen(f"{public_base}/api/songs", timeout=10) as response:
+        public_songs_payload = json.load(response)
+    public_songs = len(public_songs_payload.get("songs", []))
+    with urllib.request.urlopen(f"{public_base}/study/", timeout=10) as response:
+        study_html = response.read().decode("utf-8")
+    study_player = "Blind comparison player" in study_html
+    if not study_player:
+        raise SystemExit("public study player did not serve the expected page")
+
 ffmpeg_path_file = workspace / "maestro-filament-poc/ffmpeg.path"
 ffmpeg = Path(ffmpeg_path_file.read_text(encoding="utf-8").strip())
 if not ffmpeg.is_file():
@@ -230,6 +255,9 @@ status = {
     "server_port": port,
     "planner_configured": configured,
     "planner_verified": verified,
+    "public_port": int(public_port) if public_port else None,
+    "public_songs": public_songs,
+    "study_player": study_player,
     "ffmpeg": str(ffmpeg),
     "quality": expected_quality,
 }

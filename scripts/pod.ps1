@@ -10,6 +10,7 @@
 #      .\scripts\pod.ps1 setup
 #    Provision and start the exact warm four-GPU SLA stack:
 #      .\scripts\pod.ps1 setup4
+#    setup4 also replaces the public RunPod service on port 8888 with the interview-ready editor.
 # 3) Build a real candidate bank for a song (K seeded LODGE/EDGE takes) and pull it into the app:
 #      .\scripts\pod.ps1 bank trs 4
 # 4) Run the editor:  uvicorn server.app:app   ->  http://127.0.0.1:8000
@@ -98,6 +99,10 @@ switch ($Command) {
   }
   "setup4" {
     $torch = if ($env:AGENTLODGE_TORCH_INDEX) { $env:AGENTLODGE_TORCH_INDEX } else { "cu128" }
+    $publicPort = if ($env:AGENTLODGE_PUBLIC_PORT) { $env:AGENTLODGE_PUBLIC_PORT } else { "8888" }
+    if ($publicPort -notmatch '^\d+$') {
+      throw "AGENTLODGE_PUBLIC_PORT must be numeric"
+    }
     $remotePlannerKey = ""
     $requirePlanner = "0"
     if ($env:AGENTLODGE_OAI_KEY_FILE) {
@@ -150,6 +155,8 @@ WORKSPACE='$WS' \
 AGENTLODGE_GIT_URL='$GitUrl' \
 AGENTLODGE_GIT_REF='$GitRef' \
 AGENTLODGE_TORCH_INDEX='$torch' \
+AGENTLODGE_PUBLIC_PORT='$publicPort' \
+MAESTRO_PUBLIC_INTERVIEW_MODE='1' \
 OAI_KEY_FILE='$remotePlannerKey' \
 AGENTLODGE_REQUIRE_LLM_PLANNER='$requirePlanner' \
 bash scripts/setup_four_gpu_pod.sh

@@ -3,8 +3,9 @@ set -euo pipefail
 
 WORKSPACE="${WORKSPACE:-/workspace}"
 ROOT="$WORKSPACE/AgentLODGE"
-LOG="$WORKSPACE/maestro-sla-server.log"
-PID_FILE="$WORKSPACE/maestro-sla-server.pid"
+LOG="${AGENTLODGE_SLA_LOG:-$WORKSPACE/maestro-sla-server.log}"
+PID_FILE="${AGENTLODGE_SLA_PID_FILE:-$WORKSPACE/maestro-sla-server.pid}"
+HOST="${AGENTLODGE_SLA_HOST:-127.0.0.1}"
 PORT="${AGENTLODGE_SLA_PORT:-8011}"
 
 health_ready() {
@@ -34,6 +35,41 @@ if [ -f "$PID_FILE" ]; then
     fi
   fi
 fi
+
+# A prior public launcher may not have used this PID file. Replace any listener on the requested
+# port so a health response can never come from a stale process.
+mapfile -t listener_pids < <(
+  "$ROOT/.venv/bin/python" - "$PORT" <<'PY'
+import psutil
+import sys
+
+port = int(sys.argv[1])
+print(
+    *sorted(
+        {
+            connection.pid
+            for connection in psutil.net_connections(kind="tcp")
+            if connection.pid
+            and connection.status == psutil.CONN_LISTEN
+            and connection.laddr
+            and connection.laddr.port == port
+        }
+    ),
+    sep="\n",
+)
+PY
+)
+for listener_pid in "${listener_pids[@]}"; do
+  [ -n "$listener_pid" ] || continue
+  kill "$listener_pid"
+  for _attempt in $(seq 1 30); do
+    kill -0 "$listener_pid" 2>/dev/null || break
+    sleep 1
+  done
+  if kill -0 "$listener_pid" 2>/dev/null; then
+    kill -9 "$listener_pid"
+  fi
+done
 
 export AGENTLODGE_LIVE=1
 export AGENTLODGE_POD_HOST=127.0.0.1
@@ -112,7 +148,7 @@ fi
 
 rm -f "$LOG"
 nohup "$ROOT/.venv/bin/python" -m uvicorn server.app:app \
-  --host 127.0.0.1 --port "$PORT" >"$LOG" 2>&1 </dev/null &
+  --host "$HOST" --port "$PORT" >"$LOG" 2>&1 </dev/null &
 echo "$!" >"$PID_FILE"
 
 for _attempt in $(seq 1 90); do
@@ -120,7 +156,7 @@ for _attempt in $(seq 1 90); do
     break
   fi
   if health_ready; then
-    echo "MAESTRO_SLA_SERVER_READY pid=$(cat "$PID_FILE") port=$PORT"
+    echo "MAESTRO_SLA_SERVER_READY pid=$(cat "$PID_FILE") host=$HOST port=$PORT"
     exit 0
   fi
   sleep 1

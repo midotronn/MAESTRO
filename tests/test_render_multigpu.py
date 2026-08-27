@@ -643,6 +643,9 @@ def test_setup_and_launcher_wire_selector_without_global_preload():
     setup_gen = (
         ROOT / "scripts" / "setup_gen_pod.sh"
     ).read_text(encoding="utf-8")
+    setup_four = (
+        ROOT / "scripts" / "setup_four_gpu_pod.sh"
+    ).read_text(encoding="utf-8")
     bootstrap = (
         ROOT / "scripts" / "runpod_bootstrap.sh"
     ).read_text(encoding="utf-8")
@@ -660,6 +663,11 @@ def test_setup_and_launcher_wire_selector_without_global_preload():
     assert "setup_four_gpu_pod.sh" in bootstrap
     assert 'AGENTLODGE_FILAMENT_FAST_GROUNDING:-0' in four_gpu_server
     assert 'AGENTLODGE_FILAMENT_FOOT_GROUNDING:-1' in four_gpu_server
+    assert 'AGENTLODGE_SLA_HOST:-127.0.0.1' in four_gpu_server
+    assert 'AGENTLODGE_SLA_PORT="$AGENTLODGE_PUBLIC_PORT"' in setup_four
+    assert 'MAESTRO_INTERVIEW_MODE="${MAESTRO_PUBLIC_INTERVIEW_MODE:-0}"' in setup_four
+    assert "AGENTLODGE_PUBLIC_PORT='$publicPort'" in pod_helper
+    assert "MAESTRO_PUBLIC_INTERVIEW_MODE='1'" in pod_helper
     assert "egl_cuda_device_selector.c" in pod_helper
     assert "AGENTLODGE_OAI_KEY_FILE" in pod_helper
     assert ".oai_key.upload" in pod_helper

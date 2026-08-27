@@ -47,9 +47,10 @@ volume it clones the requested ref, then:
 6. runs real Vulkan/Filament/NVENC smoke tests;
 7. starts four resident Jukebox workers plus LODGE, EDGE, three audio workers, and the resident dance
    generation/cleanup worker;
-8. starts the warm server on pod-local port `8011` with one Filament lane per GPU; and
-9. verifies all ten fresh worker heartbeats, process IDs, CUDA/Blender quality attestation,
-   `h264_nvenc`, server JSON health, and planner status.
+8. starts the warm server on pod-local port `8011` with one Filament lane per GPU;
+9. replaces RunPod port `8888` with the public interview editor in curated-song mode; and
+10. verifies all ten fresh worker heartbeats, process IDs, CUDA/Blender quality attestation,
+    `h264_nvenc`, both server endpoints, the blind study player, and planner status.
 
 The retained quality contract is 1080x1080, 30 FPS, 96 samples, EEVEE scene export, every frame,
 denoising enabled, TGA source frames, lossless FFV1 shards, and one final H.264/audio mux. The
@@ -82,8 +83,9 @@ To recheck a running pod without reinstalling anything:
 .\scripts\pod.ps1 ssh "cd /workspace/AgentLODGE && WORKSPACE=/workspace bash scripts/setup_four_gpu_pod.sh --verify-only"
 ```
 
-The server binds to `127.0.0.1:8011`; RunPod's port `8001` is nginx, not MAESTRO. Use an SSH tunnel
-when accessing it from the host:
+The internal server binds to `127.0.0.1:8011`. `setup4` also binds the interview-facing editor to
+`0.0.0.0:8888`, which is the port exposed by the RunPod proxy. RunPod's port `8001` is nginx, not
+MAESTRO. Use an SSH tunnel when directly inspecting the internal service:
 
 ```powershell
 ssh -p $env:AGENTLODGE_POD_PORT -i $env:AGENTLODGE_POD_KEY `
