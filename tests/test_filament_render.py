@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 
 def _filament_root(tmp_path: Path) -> Path:
@@ -303,6 +304,27 @@ def test_filament_probe_decodes_when_container_frame_count_is_missing(
     assert len(commands) == 2
     assert "-count_frames" not in commands[0]
     assert "-count_frames" in commands[1]
+
+
+def test_filament_validation_accepts_mux_duration_rounding(tmp_path):
+    import server.filament_render as filament_render
+
+    video = tmp_path / "video.mp4"
+    probe = {
+        "codec": "h264",
+        "width": 1080,
+        "height": 1080,
+        "frame_rate": "81146880/2704927",
+        "nominal_frame_rate": "30/1",
+        "frames": 5283,
+        "duration": 176.103,
+    }
+
+    filament_render._validate_probe(video, probe, expected_frames=5283)
+
+    probe["frame_rate"] = "299/10"
+    with pytest.raises(RuntimeError, match="validation failed"):
+        filament_render._validate_probe(video, probe, expected_frames=5283)
 
 
 def test_full_render_feature_flag_routes_to_filament(tmp_path, monkeypatch):

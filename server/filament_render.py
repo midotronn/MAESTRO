@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from fractions import Fraction
 from pathlib import Path
 from typing import Callable
 
@@ -154,7 +155,7 @@ def _probe_payload(path: Path, *, count_frames: bool) -> dict:
     command.extend(
         [
             "-show_entries",
-            "stream=codec_name,width,height,avg_frame_rate,nb_frames,nb_read_frames:"
+            "stream=codec_name,width,height,avg_frame_rate,r_frame_rate,nb_frames,nb_read_frames:"
             "format=duration",
             "-of",
             "json",
@@ -198,6 +199,9 @@ def _probe_video(path: Path) -> dict:
         "width": int(stream.get("width") or 0),
         "height": int(stream.get("height") or 0),
         "frame_rate": str(stream.get("avg_frame_rate") or ""),
+        "nominal_frame_rate": str(
+            stream.get("r_frame_rate") or stream.get("avg_frame_rate") or ""
+        ),
         "frames": frames,
         "duration": float((payload.get("format") or {}).get("duration") or 0.0),
         "bytes": path.stat().st_size,
@@ -205,13 +209,25 @@ def _probe_video(path: Path) -> dict:
     }
 
 
+def _frame_rate(value: str) -> float:
+    try:
+        return float(Fraction(value))
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
 def _validate_probe(path: Path, probe: dict, *, expected_frames: int) -> None:
+    expected_duration = expected_frames / 30.0
+    average_fps = _frame_rate(probe["frame_rate"])
+    nominal_fps = _frame_rate(probe.get("nominal_frame_rate", probe["frame_rate"]))
     if (
         probe["codec"] != "h264"
         or probe["width"] != 1080
         or probe["height"] != 1080
-        or probe["frame_rate"] != "30/1"
+        or abs(nominal_fps - 30.0) > 1e-9
+        or abs(average_fps - 30.0) > 0.001
         or probe["frames"] != expected_frames
+        or abs(probe["duration"] - expected_duration) > (1.0 / 30.0)
     ):
         raise RuntimeError(f"Filament video validation failed for {path}: {probe}")
 
