@@ -98,6 +98,26 @@ switch ($Command) {
   }
   "setup4" {
     $torch = if ($env:AGENTLODGE_TORCH_INDEX) { $env:AGENTLODGE_TORCH_INDEX } else { "cu128" }
+    $remotePlannerKey = ""
+    $requirePlanner = "0"
+    if ($env:AGENTLODGE_OAI_KEY_FILE) {
+      $plannerKey = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(
+        $env:AGENTLODGE_OAI_KEY_FILE
+      )
+      if (-not (Test-Path -LiteralPath $plannerKey -PathType Leaf)) {
+        throw "Planner key file not found: $plannerKey"
+      }
+      Write-Host "Provisioning the planner credential from a private local file..." -ForegroundColor Cyan
+      Pod-Push $plannerKey "$WS/.oai_key.upload"
+      try {
+        Pod-SSH "set -e; trap 'rm -f $WS/.oai_key.upload' EXIT; umask 077; install -m 600 '$WS/.oai_key.upload' /root/.oai_key; test -s /root/.oai_key; test `"`$(stat -c %a /root/.oai_key)`" = 600"
+      } catch {
+        Pod-SSH "rm -f '$WS/.oai_key.upload'" | Out-Null
+        throw
+      }
+      $remotePlannerKey = "/root/.oai_key"
+      $requirePlanner = "1"
+    }
     Write-Host "Provisioning the exact warm four-GPU MAESTRO stack from '$GitRef'..." -ForegroundColor Cyan
     Pod-SSH @"
 set -euo pipefail
@@ -130,6 +150,8 @@ WORKSPACE='$WS' \
 AGENTLODGE_GIT_URL='$GitUrl' \
 AGENTLODGE_GIT_REF='$GitRef' \
 AGENTLODGE_TORCH_INDEX='$torch' \
+OAI_KEY_FILE='$remotePlannerKey' \
+AGENTLODGE_REQUIRE_LLM_PLANNER='$requirePlanner' \
 bash scripts/setup_four_gpu_pod.sh
 "@
   }
