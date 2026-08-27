@@ -87,31 +87,60 @@ def test_frozen_stimulus_manifest_has_twelve_verified_positive_windows():
             assert permutation["output_sha256"] == _sha256(output)
 
 
-def test_blind_player_assignments_cover_only_valid_lane_permutations():
+def test_blind_player_uses_one_fixed_balanced_sequence():
     assignment_path = STIMULI / "player" / "assignments.json"
     assignments = json.loads(assignment_path.read_text(encoding="utf-8"))
     config = json.loads((STIMULI / "player" / "config.json").read_text(encoding="utf-8"))
     valid_excerpts = {f"EX{index:02d}" for index in range(1, 13)}
+    sequence = assignments["sequence"]
 
     assert assignments["protocol"] == "maestro-expert-study-v14-llm-gpt4o-k10-front-facing"
     assert config["protocol"] == assignments["protocol"]
     assert config["excerpt_duration_seconds"] == 6
-    assert len(assignments["phases"]["pilot"]) == 5
-    assert len(assignments["phases"]["main"]) == 18
+    assert sequence == [
+        {"excerpt": "EX03", "lanes": [0, 2, 1]},
+        {"excerpt": "EX04", "lanes": [1, 2, 0]},
+        {"excerpt": "EX08", "lanes": [0, 1, 2]},
+        {"excerpt": "EX06", "lanes": [2, 0, 1]},
+        {"excerpt": "EX09", "lanes": [1, 0, 2]},
+        {"excerpt": "EX02", "lanes": [2, 1, 0]},
+    ]
     assert "LODGE" not in assignment_path.read_text(encoding="utf-8")
     assert "EDGE" not in assignment_path.read_text(encoding="utf-8")
+    for forbidden in (
+        "phase",
+        "pilot",
+        "participant",
+        "assignment_code",
+        "guided_sequence",
+        "open_ended_start",
+    ):
+        assert forbidden not in assignment_path.read_text(encoding="utf-8").lower()
 
-    for phase in assignments["phases"].values():
-        for participant in phase:
-            assert len(participant["triplets"]) == 6
-            for triplet in participant["triplets"]:
-                assert triplet["excerpt"] in valid_excerpts
-                assert sorted(triplet["lanes"]) == [0, 1, 2]
+    assert len(sequence) == 6
+    for comparison in sequence:
+        assert comparison["excerpt"] in valid_excerpts
+        assert sorted(comparison["lanes"]) == [0, 1, 2]
 
-    for participant in assignments["phases"]["main"]:
-        for position in range(3):
-            counts = [
-                sum(triplet["lanes"][position] == lane for triplet in participant["triplets"])
-                for lane in range(3)
-            ]
-            assert counts == [2, 2, 2]
+    for position in range(3):
+        counts = [
+            sum(comparison["lanes"][position] == lane for comparison in sequence)
+            for lane in range(3)
+        ]
+        assert counts == [2, 2, 2]
+
+
+def test_blind_player_has_no_phase_or_participant_state():
+    player = STIMULI / "player"
+    page = (player / "index.html").read_text(encoding="utf-8")
+    app = (player / "app.js").read_text(encoding="utf-8")
+
+    assert 'id="comparisonSelect"' in page
+    assert 'id="phase"' not in page
+    assert 'id="participant"' not in page
+    assert 'id="triplet"' not in page
+    assert "Pilot" not in page
+    assert "localStorage" not in app
+    assert "phase=" not in app
+    assert "participant=" not in app
+    assert "triplet=" not in app

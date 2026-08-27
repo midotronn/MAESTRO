@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const video = $("comparison");
-let assignments = null;
+let study = null;
 let excerptDuration = 6;
 
 function formatTime(seconds) {
@@ -8,68 +8,47 @@ function formatTime(seconds) {
   return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, "0")}`;
 }
 
-function phaseRows() {
-  return assignments.phases[$("phase").value] || [];
+function updateNavigation(index) {
+  $("previous").disabled = index === 0;
+  $("next").disabled = index === study.sequence.length - 1;
 }
 
-function populateParticipants(preferred, preferredTriplet = 0) {
-  const rows = phaseRows();
-  $("participant").replaceChildren(...rows.map((row, index) => {
-    const option = document.createElement("option");
-    option.value = String(index);
-    option.textContent = row.participant_id;
-    return option;
-  }));
-  $("participant").value = String(Math.min(Number(preferred) || 0, Math.max(0, rows.length - 1)));
-  loadParticipant(preferredTriplet);
-}
+function loadComparison() {
+  const index = Number($("comparisonSelect").value);
+  const selected = study.sequence[index];
+  if (!selected) return;
 
-function loadParticipant(preferredTriplet = 0) {
-  const participant = phaseRows()[Number($("participant").value)];
-  if (!participant) return;
-  $("assignmentCode").textContent = participant.assignment_code;
-  $("triplet").replaceChildren(...participant.triplets.map((triplet, index) => {
-    const option = document.createElement("option");
-    option.value = String(index);
-    option.textContent = `Triplet ${index + 1} · ${triplet.excerpt}`;
-    return option;
-  }));
-  $("triplet").value = String(Math.min(Number(preferredTriplet) || 0, participant.triplets.length - 1));
-  loadTriplet();
-}
-
-function loadTriplet() {
-  const participantIndex = Number($("participant").value);
-  const tripletIndex = Number($("triplet").value);
-  const participant = phaseRows()[participantIndex];
-  const selected = participant.triplets[tripletIndex];
   const order = selected.lanes.join("");
-  const revision = encodeURIComponent(assignments.protocol || "current");
+  const revision = encodeURIComponent(study.protocol || "current");
 
   video.pause();
   video.src = `videos/${selected.excerpt}/${order}.mp4?v=${revision}`;
   video.load();
-  $("excerptLabel").textContent =
-    `${selected.excerpt} · synchronized ${excerptDuration}-second excerpt`;
+  $("comparisonProgress").textContent = `Comparison ${index + 1} of ${study.sequence.length}`;
+  $("statusLabel").textContent = `Synchronized ${excerptDuration}-second excerpt`;
   $("play").textContent = "▶ Play";
   $("scrub").value = "0";
   $("time").value = `0:00 / ${formatTime(excerptDuration)}`;
-  history.replaceState(
-    null,
-    "",
-    `?phase=${$("phase").value}&participant=${participantIndex + 1}&triplet=${tripletIndex + 1}`,
-  );
-  localStorage.setItem("maestro-study-phase", $("phase").value);
-  localStorage.setItem("maestro-study-participant", String(participantIndex));
-  localStorage.setItem("maestro-study-triplet", String(tripletIndex));
+  updateNavigation(index);
 }
 
-function changeTriplet(delta) {
-  const count = $("triplet").options.length;
-  const next = Math.max(0, Math.min(count - 1, Number($("triplet").value) + delta));
-  if (next !== Number($("triplet").value)) {
-    $("triplet").value = String(next);
-    loadTriplet();
+function populateComparisons() {
+  $("comparisonSelect").replaceChildren(...study.sequence.map((_, index) => {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = `Comparison ${index + 1}`;
+    return option;
+  }));
+  $("comparisonSelect").value = "0";
+  loadComparison();
+}
+
+function changeComparison(delta) {
+  const current = Number($("comparisonSelect").value);
+  const next = Math.max(0, Math.min(study.sequence.length - 1, current + delta));
+  if (next !== current) {
+    $("comparisonSelect").value = String(next);
+    loadComparison();
   }
 }
 
@@ -89,12 +68,10 @@ video.addEventListener("loadedmetadata", () => {
   if (video.currentTime === 0) video.currentTime = 0.001;
 });
 video.addEventListener("error", () => {
-  $("excerptLabel").textContent = "Video failed to load; refresh before continuing";
+  $("statusLabel").textContent = "Video failed to load; refresh before continuing";
 });
 
-$("phase").addEventListener("change", () => populateParticipants(0, 0));
-$("participant").addEventListener("change", () => loadParticipant(0));
-$("triplet").addEventListener("change", loadTriplet);
+$("comparisonSelect").addEventListener("change", loadComparison);
 $("play").addEventListener("click", () => video.paused ? video.play() : video.pause());
 $("restart").addEventListener("click", () => {
   video.currentTime = 0;
@@ -103,43 +80,36 @@ $("restart").addEventListener("click", () => {
 $("scrub").addEventListener("input", () => {
   video.currentTime = Number($("scrub").value);
 });
-$("previous").addEventListener("click", () => changeTriplet(-1));
-$("next").addEventListener("click", () => changeTriplet(1));
+$("previous").addEventListener("click", () => changeComparison(-1));
+$("next").addEventListener("click", () => changeComparison(1));
 $("fullscreen").addEventListener("click", () => document.querySelector(".stage").requestFullscreen());
 document.addEventListener("keydown", (event) => {
   if (event.target.matches("select, input, button")) return;
   if (event.code === "Space") {
     event.preventDefault();
     video.paused ? video.play() : video.pause();
-  } else if (event.key === "ArrowLeft") changeTriplet(-1);
-  else if (event.key === "ArrowRight") changeTriplet(1);
+  } else if (event.key === "ArrowLeft") changeComparison(-1);
+  else if (event.key === "ArrowRight") changeComparison(1);
 });
 
 async function init() {
-  const [assignmentResponse, configResponse] = await Promise.all([
+  const [studyResponse, configResponse] = await Promise.all([
     fetch("assignments.json"),
     fetch("config.json"),
   ]);
-  if (!assignmentResponse.ok || !configResponse.ok) {
+  if (!studyResponse.ok || !configResponse.ok) {
     throw new Error("Study configuration could not be loaded");
   }
-  assignments = await assignmentResponse.json();
+  study = await studyResponse.json();
   const config = await configResponse.json();
+  if (!Array.isArray(study.sequence) || study.sequence.length === 0) {
+    throw new Error("The comparison sequence is empty");
+  }
   excerptDuration = Number(config.excerpt_duration_seconds) || excerptDuration;
   $("formLink").href = config.response_form_url;
-
-  const query = new URLSearchParams(location.search);
-  const phase = query.get("phase") || localStorage.getItem("maestro-study-phase") || "pilot";
-  $("phase").value = phase in assignments.phases ? phase : "pilot";
-  const participant = query.has("participant")
-    ? Math.max(0, Number(query.get("participant")) - 1)
-    : Math.max(0, Number(localStorage.getItem("maestro-study-participant")) || 0);
-  const triplet = query.has("triplet")
-    ? Math.max(0, Number(query.get("triplet")) - 1)
-    : Math.max(0, Number(localStorage.getItem("maestro-study-triplet")) || 0);
-  populateParticipants(participant, triplet);
+  populateComparisons();
 }
 
 init().catch((error) => {
-  $("excerptLabel").textContent = error.message;
+  $("statusLabel").textContent = error.message;
 });
