@@ -1,6 +1,7 @@
 {
-  "validated_at": "2026-08-27T16:43:20-05:00",
+  "validated_at": "2026-08-27T22:36:19-05:00",
   "study_content_commit": "076411d9753442581d07f2a68dd35a9d785b2931",
+  "deployment_commit": "cb87362c87032c0392b366aecf8d69de3704925b",
   "rollback_snapshot": "/workspace/maestro-backups/study-player-before-v15-20260827T212344",
   "editor_base": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net",
   "website": {
@@ -22,7 +23,7 @@
   },
   "pod": {
     "id": "eg25wp3e2ho1rg",
-    "ssh_port": 25166,
+    "ssh_port": 33054,
     "internal_port": 8011,
     "public_port": 8888,
     "healthy_workers": 10,
@@ -30,7 +31,17 @@
     "status": "passed"
   },
   "editor": {
+    "default_song_sid": "dynamite_43089",
+    "default_song_name": "Dynamite",
+    "browser_default_verified": true,
     "songs": [
+      {
+        "sid": "dynamite_43089",
+        "name": "Dynamite",
+        "duration_seconds": 205.768,
+        "browser_ready_state": 4,
+        "generator": "live pod"
+      },
       {
         "sid": "can_t_stop_the_feeling_43322",
         "name": "Can't Stop the Feeling!",
@@ -49,13 +60,6 @@
         "sid": "levitating_43228",
         "name": "Levitating",
         "duration_seconds": 202.068,
-        "browser_ready_state": 4,
-        "generator": "live pod"
-      },
-      {
-        "sid": "dynamite_43089",
-        "name": "Dynamite",
-        "duration_seconds": 205.768,
         "browser_ready_state": 4,
         "generator": "live pod"
       }
