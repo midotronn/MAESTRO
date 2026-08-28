@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 STIMULI = ROOT / "experiments" / "user_study" / "stimuli"
+MUSIC = ROOT / "experiments" / "user_study" / "music"
 
 
 @lru_cache(maxsize=None)
@@ -17,6 +18,19 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def test_approved_song_catalog_starts_with_dynamite():
+    catalog = json.loads((MUSIC / "approved_songs.json").read_text(encoding="utf-8"))
+    ordered = sorted(catalog["songs"], key=lambda song: song["order"])
+
+    assert [song["name"] for song in ordered] == [
+        "Dynamite",
+        "Can't Stop the Feeling!",
+        "Uptown Funk",
+        "Levitating",
+    ]
+    assert [song["order"] for song in ordered] == [1, 2, 3, 4]
 
 
 def test_frozen_stimulus_manifest_has_six_verified_high_energy_phrase_windows():

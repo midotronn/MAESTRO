@@ -9,7 +9,7 @@
     {
       "name": "Can't Stop the Feeling!",
       "artist": "Justin Timberlake",
-      "order": 1,
+      "order": 2,
       "study_pod_sid": "can_t_stop_the_feeling_43322",
       "duration_seconds": 236.12371882086168,
       "motion_frames_30fps": 7084,
@@ -18,7 +18,7 @@
     {
       "name": "Uptown Funk",
       "artist": "Mark Ronson feat. Bruno Mars",
-      "order": 2,
+      "order": 3,
       "study_pod_sid": "uptown_funk_43352",
       "duration_seconds": 268.1904761904762,
       "motion_frames_30fps": 8046,
@@ -27,7 +27,7 @@
     {
       "name": "Levitating",
       "artist": "Dua Lipa",
-      "order": 3,
+      "order": 4,
       "study_pod_sid": "levitating_43228",
       "duration_seconds": 202.08326530612246,
       "motion_frames_30fps": 6062,
@@ -36,7 +36,7 @@
     {
       "name": "Dynamite",
       "artist": "BTS",
-      "order": 4,
+      "order": 1,
       "study_pod_sid": "dynamite_43089",
       "duration_seconds": 205.7752380952381,
       "motion_frames_30fps": 6173,
