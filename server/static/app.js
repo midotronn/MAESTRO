@@ -1197,6 +1197,8 @@ async function openSession(sid) {
   activityStart("session", "Loading song", `Opening ${label}`, 8);
   if (sel) sel.disabled = true;
   updateSectionNavigation(sid);
+  $("prevSection").disabled = true;
+  $("nextSection").disabled = true;
   let st = null;
   for (let i = 0; i < 4 && !st; i++) {
     try { st = await api(`/api/session/${sid}`, { method: "POST" }); }
