@@ -1,8 +1,8 @@
 {
-  "validated_at": "2026-08-30T16:51:05-05:00",
+  "validated_at": "2026-08-30T17:14:47-05:00",
   "study_content_commit": "076411d9753442581d07f2a68dd35a9d785b2931",
-  "production_release_commit": "4ad11c13e5fa0e81e2c907c436db14fe72ffe122",
-  "deployment_commit": "4ad11c13e5fa0e81e2c907c436db14fe72ffe122",
+  "production_release_commit": "2b3909e799ee092877794ef0e87b93bc0388b2f2",
+  "deployment_commit": "2b3909e799ee092877794ef0e87b93bc0388b2f2",
   "rollback_snapshot": "/workspace/maestro-backups/study-player-before-v15-20260827T212344",
   "editor_base": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net",
   "website": {
@@ -26,7 +26,7 @@
   },
   "pod": {
     "id": "eg25wp3e2ho1rg",
-    "checkout_commit": "4ad11c13e5fa0e81e2c907c436db14fe72ffe122",
+    "checkout_commit": "2b3909e799ee092877794ef0e87b93bc0388b2f2",
     "checkout_clean": true,
     "host": "213.173.109.45",
     "ssh_port": 34088,
@@ -116,6 +116,13 @@
       "malformed_intervals_render_blank": true,
       "branchable_history_verified": true,
       "branch_lineage_verified": true,
+      "history_tree_root_first": true,
+      "history_tree_branch_connectors": true,
+      "history_tree_current_path_highlighted": true,
+      "history_tree_branch_only_indentation": true,
+      "history_tree_restore_keyboard_accessible": true,
+      "history_tree_branch_action": "Branch here",
+      "history_tree_responsive_500px": true,
       "timeline_tracks_rendered_video_box": true,
       "playhead_midpoint_percent": 50,
       "selection_start_preview_sync": true,
@@ -233,6 +240,19 @@
       "study_player_regression_passed": true,
       "website_links_passed": true,
       "form_regression_passed": true,
+      "failed": 0
+    },
+    "history_tree_release": {
+      "local_python_passed": 97,
+      "local_javascript_passed": 6,
+      "mock_browser_passed": true,
+      "live_browser_passed": true,
+      "root_first_order_verified": true,
+      "branch_grouping_verified": true,
+      "desktop_layout_verified": true,
+      "responsive_500px_verified": true,
+      "strict_four_gpu_verify_passed": true,
+      "validation_session_reset_to_root": true,
       "failed": 0
     }
   },
