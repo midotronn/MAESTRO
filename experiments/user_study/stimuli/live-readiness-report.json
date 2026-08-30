@@ -1,7 +1,8 @@
 {
-  "validated_at": "2026-08-30T14:44:00-05:00",
+  "validated_at": "2026-08-30T14:46:14-05:00",
   "study_content_commit": "076411d9753442581d07f2a68dd35a9d785b2931",
-  "deployment_commit": "7352af1c6d55df3a7e9f9b369822d19636283842",
+  "production_release_commit": "7352af1c6d55df3a7e9f9b369822d19636283842",
+  "deployment_commit": "8c98f741cf7e56d62931ee866f3fe965c2bc8128",
   "rollback_snapshot": "/workspace/maestro-backups/study-player-before-v15-20260827T212344",
   "editor_base": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net",
   "website": {
@@ -25,6 +26,8 @@
   },
   "pod": {
     "id": "eg25wp3e2ho1rg",
+    "checkout_commit": "8c98f741cf7e56d62931ee866f3fe965c2bc8128",
+    "checkout_clean": true,
     "host": "213.173.109.45",
     "ssh_port": 34088,
     "internal_port": 8011,
