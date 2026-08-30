@@ -135,8 +135,24 @@ def test_manifest_has_nineteen_valid_redistributable_motions():
     for spec in bank.specs:
         clip = bank.load_clip(spec)
         assert clip.shape == (spec.frames, 139)
-        assert spec.source and spec.license and spec.attribution
+        assert spec.description and spec.source and spec.license and spec.attribution
         assert validate_semantics(clip, spec)["ok"]
+    assert bank.resolve("wave").name == "Hand wave"
+    assert "not the torso" in bank.resolve("wave").description
+    assert bank.resolve("body wave").name == "Body roll (torso wave)"
+    assert "90°" in bank.resolve("turn_quarter").name
+    assert "180°" in bank.resolve("turn_half").name
+
+
+def test_motion_preview_reel_contains_one_composed_example_for_every_manifest_entry():
+    from scripts.generate_motion_previews import build_preview_reel
+
+    bank = default_motion_bank()
+    reel, spans = build_preview_reel(bank)
+    assert reel.ndim == 2 and reel.shape[1] == 139
+    assert [span["id"] for span in spans] == [spec.id for spec in bank.specs]
+    assert all(span["end"] > span["start"] for span in spans)
+    assert all(span["repeats"] == 1 for span in spans)
 
 
 @needs_fk
@@ -2955,6 +2971,31 @@ def test_a_quarter_turn_reaches_and_holds_its_new_facing_before_the_clip_ends():
     assert completion / (len(progress) - 1) < 0.82
     assert progress[hold] > 0.85 * target
     assert float(np.ptp(progress[hold:])) < 0.08 * target
+
+
+def test_half_turn_has_one_authored_180_degree_action_and_one_documented_root_handoff():
+    """The canonical action is not repeated; fixed-window root closure supplies the other 180°."""
+    bank = default_motion_bank()
+    canonical = _root_yaw_series(bank.load_clip("turn_half"))
+    canonical_progress = canonical - canonical[0]
+    assert np.rad2deg(canonical_progress[-1]) == pytest.approx(180.0, abs=1.0)
+    assert np.rad2deg(np.max(canonical_progress)) < 182.0
+
+    base = _base()
+    base[:, :2] = base[0, :2]
+    base[:, 3:9] = base[:1, 3:9]
+    applied, report = bank.apply(base, "turn_half", mode="replace", anchor="center")
+    yaw = np.unwrap(_root_yaw_series(applied) - _root_yaw_series(applied)[0])
+    start, end = report["action_range"]
+    action_turn = float(yaw[end - 1] - yaw[start])
+    handoff_turn = float(yaw[-1] - yaw[end - 1])
+    total_path = float(np.abs(np.diff(yaw)).sum())
+
+    assert report["repeats"] == 1
+    assert np.rad2deg(action_turn) == pytest.approx(180.0, abs=3.0)
+    assert np.rad2deg(handoff_turn) == pytest.approx(180.0, abs=3.0)
+    assert np.rad2deg(yaw[-1]) == pytest.approx(360.0, abs=3.0)
+    assert np.rad2deg(total_path) < 370.0
 
 
 @needs_fk

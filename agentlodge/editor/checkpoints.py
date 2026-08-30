@@ -141,12 +141,21 @@ class CheckpointStore:
         return list(reversed(chain))
 
     def timeline(self) -> list[dict]:
-        """All checkpoints (ts order) with a ``is_head`` flag -- for a UI history panel."""
+        """All checkpoints (ts order) with lineage metadata for a UI history tree."""
         out = []
+        head_lineage = set(self.ancestry()) if self.head is not None else set()
         for c in sorted(self._ckpts.values(), key=lambda c: c.ts):
             d = c.to_dict()
+            lineage = self.ancestry(c.id)
             d["is_head"] = c.id == self.head
             d["children"] = self.children(c.id)
+            d["lineage"] = lineage
+            d["depth"] = len(lineage) - 1
+            d["is_ancestor_of_head"] = c.id in head_lineage
+            d["is_branch"] = (
+                c.parent_id is not None
+                and len(self._children.get(c.parent_id, ())) > 1
+            )
             out.append(d)
         return out
 

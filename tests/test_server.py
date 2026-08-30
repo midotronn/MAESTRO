@@ -41,6 +41,7 @@ def client(tmp_path, monkeypatch):
     (media / "preview.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")  # tiny stub
     monkeypatch.setattr(A, "MEDIA", tmp_path / "media")
     monkeypatch.setattr(A, "SESSIONS", tmp_path / "sessions")
+    monkeypatch.setattr(A, "MOTION_PREVIEWS", tmp_path / "motion-previews")
     A._sessions.clear()
     return TestClient(A.app)
 
@@ -799,6 +800,7 @@ def test_lists_songs_and_opens_session(client):
 def test_interview_mode_lists_only_curated_songs_in_order(client, monkeypatch):
     import server.app as A
 
+    monkeypatch.setattr(A, "INTERVIEW_CATALOG", A.MEDIA / "missing-catalog.json")
     for sid, name, order, interview in (
         ("curated_b", "Second choice", 2, True),
         ("curated_a", "First choice", 1, True),
@@ -818,6 +820,82 @@ def test_interview_mode_lists_only_curated_songs_in_order(client, monkeypatch):
     assert [song["sid"] for song in songs] == ["curated_a", "curated_b"]
     assert [song["name"] for song in songs] == ["First choice", "Second choice"]
     assert [song["front_facing"] for song in songs] == [False, False]
+
+
+def test_interview_catalog_is_an_ordered_whitelist(client, monkeypatch):
+    import server.app as A
+
+    for sid in ("full_dynamite", "segment_b", "segment_a", "other_song"):
+        song = A.MEDIA / sid
+        song.mkdir()
+        np.save(song / "base_motion.npy", np.zeros((30, 139), dtype=np.float32))
+        (song / "meta.json").write_text(
+            json.dumps(
+                {
+                    "name": f"stale {sid}",
+                    "order": 99,
+                    "interview": True,
+                    "front_facing": sid.startswith("segment_"),
+                }
+            ),
+            encoding="utf-8",
+        )
+    catalog = A.MEDIA / "interview-catalog.json"
+    catalog.write_text(
+        json.dumps(
+            {
+                "catalog": [
+                    {"sid": "segment_a", "name": "First segment", "order": 1},
+                    {"sid": "segment_b", "name": "Second segment", "order": 2},
+                    {"sid": "other_song", "name": "Other approved song", "order": 3},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(A, "INTERVIEW_CATALOG", catalog)
+    monkeypatch.setenv("MAESTRO_INTERVIEW_MODE", "1")
+
+    songs = client.get("/api/songs").json()["songs"]
+
+    assert [song["sid"] for song in songs] == [
+        "segment_a",
+        "segment_b",
+        "other_song",
+    ]
+    assert [song["name"] for song in songs] == [
+        "First segment",
+        "Second segment",
+        "Other approved song",
+    ]
+    assert [song["front_facing"] for song in songs] == [True, True, False]
+
+
+def test_interview_catalog_fails_if_configured_media_is_missing(client, monkeypatch):
+    import server.app as A
+
+    song = A.MEDIA / "segment_a"
+    song.mkdir()
+    np.save(song / "base_motion.npy", np.zeros((30, 139), dtype=np.float32))
+    catalog = A.MEDIA / "interview-catalog.json"
+    catalog.write_text(
+        json.dumps(
+            {
+                "catalog": [
+                    {"sid": "segment_a", "name": "First segment", "order": 1},
+                    {"sid": "missing_segment", "name": "Missing segment", "order": 2},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(A, "INTERVIEW_CATALOG", catalog)
+    monkeypatch.setenv("MAESTRO_INTERVIEW_MODE", "1")
+
+    response = client.get("/api/songs")
+
+    assert response.status_code == 503
+    assert "missing_segment" in response.text
 
 
 def test_study_player_is_mounted_and_linked_from_editor(client):
@@ -1306,7 +1384,38 @@ def test_lists_named_motions_from_the_shared_manifest(client):
     assert clap["default_direction"] == "auto"
     assert clap["directions"] == ["forward", "left", "right"]
     assert clap["minimum_seconds"] > 0
+    assert clap["description"]
+    assert clap["preview_url"] == "/api/motions/clap_single/preview"
+    assert clap["preview_available"] is False
     assert clap["source"] and clap["license"] and clap["attribution"]
+    assert next(m for m in data["motions"] if m["id"] == "wave")["name"] == "Hand wave"
+    assert "90°" in next(m for m in data["motions"] if m["id"] == "turn_quarter")["name"]
+    assert "180°" in next(m for m in data["motions"] if m["id"] == "turn_half")["name"]
+
+
+def test_motion_preview_endpoint_is_explicit_when_missing_and_serves_generated_mp4(
+    client,
+    tmp_path,
+    monkeypatch,
+):
+    import server.app as A
+
+    missing = client.get("/api/motions/turn_half/preview")
+    assert missing.status_code == 404
+    assert "has not been generated" in missing.text
+    assert client.get("/api/motions/not_a_motion/preview").status_code == 404
+
+    previews = tmp_path / "generated-previews"
+    previews.mkdir()
+    payload = b"\x00\x00\x00\x18ftypmp42motion-example"
+    (previews / "turn_half.mp4").write_bytes(payload)
+    monkeypatch.setattr(A, "MOTION_PREVIEWS", previews)
+    available = client.get("/api/motions").json()["motions"]
+    assert next(m for m in available if m["id"] == "turn_half")["preview_available"]
+    response = client.get("/api/motions/turn_half/preview")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("video/mp4")
+    assert response.content == payload
 
 
 def test_named_beat_action_uses_the_strongest_window_beat(client):
@@ -1365,6 +1474,33 @@ def test_short_jump_window_keeps_enough_slack_to_land_on_a_fractional_beat(
     assert report["beat_error_frames"] <= 0.51
 
 
+@pytest.mark.parametrize(
+    "checkpoint,expected",
+    [
+        ({"interval": {"start_sec": 1.25, "end_sec": 2.75}}, (1.25, 2.75)),
+        ({"edit": {"window": [60, 150]}}, (2.0, 5.0)),
+        ({"edit": {"interval": {"start_frame": 90, "end_frame": 180}}}, (3.0, 6.0)),
+        ({"edit": {"window_sec": [4.5, 7.5]}}, (4.5, 7.5)),
+        ({"edit": {"a_sec": 9, "b_sec": 8}}, (8.0, 9.0)),
+    ],
+)
+def test_checkpoint_interval_normalizes_current_and_legacy_shapes(checkpoint, expected):
+    from server.app import _checkpoint_interval
+
+    result = _checkpoint_interval(checkpoint)
+    assert result is not None
+    assert (result["start_sec"], result["end_sec"]) == expected
+    assert all(np.isfinite(value) for value in result.values())
+
+
+def test_checkpoint_interval_omits_invalid_values_instead_of_emitting_nan():
+    from server.app import _checkpoint_interval
+
+    assert _checkpoint_interval({}) is None
+    assert _checkpoint_interval({"edit": {"window": [None, "undefined"]}}) is None
+    assert _checkpoint_interval({"interval": {"start_sec": float("nan"), "end_sec": 2}}) is None
+
+
 def test_edit_commits_and_moves_metrics(client):
     client.post("/api/session/sng")
     r = client.post("/api/session/sng/edit",
@@ -1375,6 +1511,53 @@ def test_edit_commits_and_moves_metrics(client):
     assert res["agent_summary"]
     assert res["metrics_after"]["energy"] < res["metrics_before"]["energy"]
     assert len(r["state"]["timeline"]) == 2 and r["state"]["can_undo"]
+    assert r["state"]["timeline"][-1]["interval"] == {
+        "start_sec": 3.0,
+        "end_sec": 6.0,
+        "start_frame": 90,
+        "end_frame": 180,
+    }
+
+
+def test_edit_from_older_checkpoint_creates_visible_branch_and_preserves_history_controls(client):
+    initial = client.post("/api/session/sng").json()
+    root = initial["head"]
+    first = client.post(
+        "/api/session/sng/edit",
+        json={"a_sec": 3, "b_sec": 6, "instruction": "more energetic"},
+    ).json()["state"]["head"]
+    second = client.post(
+        "/api/session/sng/edit",
+        json={"a_sec": 3, "b_sec": 6, "instruction": "calmer"},
+    ).json()["state"]["head"]
+    branched = client.post(
+        "/api/session/sng/edit",
+        json={
+            "a_sec": 3,
+            "b_sec": 6,
+            "instruction": "tighten to the beat",
+            "from_id": first,
+        },
+    ).json()["state"]
+
+    by_id = {item["id"]: item for item in branched["timeline"]}
+    branch_head = branched["head"]
+    assert by_id[branch_head]["parent_id"] == first
+    assert set(by_id[first]["children"]) == {second, branch_head}
+    assert by_id[second]["is_branch"] and by_id[branch_head]["is_branch"]
+    assert by_id[branch_head]["lineage"] == [root, first, branch_head]
+    assert branched["can_undo"] and not branched["can_redo"]
+
+    undone = client.post("/api/session/sng/undo").json()
+    assert undone["head"] == first and undone["can_redo"]
+    redone = client.post("/api/session/sng/redo").json()
+    assert redone["head"] == branch_head
+    restored = client.post("/api/session/sng/restore", json={"ckpt_id": second}).json()
+    assert restored["head"] == second
+    assert client.post(
+        "/api/session/sng/edit",
+        json={"a_sec": 1, "b_sec": 2, "instruction": "calmer", "from_id": "missing"},
+    ).status_code == 404
 
 
 def test_undo_redo_restore_endpoints(client):
@@ -1411,16 +1594,48 @@ def test_websocket_streams_progress_then_final(client):
     assert final["state"]["head"]
 
 
+def test_websocket_honors_selected_branch_base(client):
+    client.post("/api/session/sng")
+    first = client.post(
+        "/api/session/sng/edit",
+        json={"a_sec": 3, "b_sec": 6, "instruction": "more energetic"},
+    ).json()["state"]["head"]
+    later = client.post(
+        "/api/session/sng/edit",
+        json={"a_sec": 3, "b_sec": 6, "instruction": "calmer"},
+    ).json()["state"]["head"]
+
+    with client.websocket_connect("/api/session/sng/edit_ws") as ws:
+        ws.send_json({
+            "a_sec": 3,
+            "b_sec": 6,
+            "instruction": "tighten to the beat",
+            "from_id": first,
+        })
+        while True:
+            event = ws.receive_json()
+            if event["type"] == "error":
+                pytest.fail(event["message"])
+            if event["type"] == "final":
+                break
+
+    by_id = {item["id"]: item for item in event["state"]["timeline"]}
+    assert by_id[event["state"]["head"]]["parent_id"] == first
+    assert set(by_id[first]["children"]) == {later, event["state"]["head"]}
+
+
 def test_unknown_song_404(client):
     assert client.post("/api/session/nope").status_code == 404
 
 
-def test_editor_review_actions_explain_the_user_flow():
+def test_editor_review_actions_explain_the_user_flow(client):
     """The UI should expose review tasks, not ambiguous renderer implementation details."""
     from server.app import STATIC
 
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "app.js").read_text(encoding="utf-8")
+    css = (STATIC / "style.css").read_text(encoding="utf-8")
+    rendered = client.get("/").text
 
     assert "Review edit" in html
     assert "Changed body areas highlighted" in html
@@ -1433,10 +1648,21 @@ def test_editor_review_actions_explain_the_user_flow():
     assert 'startRender("window")' not in js
     assert 'id="motionSuggestions"' in html
     assert 'id="motionPicker"' in html
+    assert '<details id="motionPicker" class="motion-picker">' in html
+    assert '<details id="motionPicker" class="motion-picker" open>' not in html
+    assert 'id="motionPickerSummary"' in html
     assert "<strong>Common motions</strong>" in html
     assert 'aria-label="Common motions"' in html
     assert "20 supported common motions" not in html
     assert "/api/motions" in js
+    assert 'id="motionPreview"' in html
+    assert 'id="motionPreviewVideo"' in html
+    assert "openMotionPreview" in js
+    assert "preview_available" in js
+    assert "not a placeholder" in js
+    assert "/static/editor_utils.js" in html
+    assert "/static/editor_utils.js?v=" in rendered
+    assert (STATIC / "editor_utils.js").is_file()
     assert "clap to the right" in js
     assert "insertion is unavailable until it has its own visual audit" in js
     assert "follows the dance flow" in js
@@ -1460,11 +1686,26 @@ def test_editor_review_actions_explain_the_user_flow():
     assert "/browser-timing" in js
     assert "waitForMediaReady" in js
     assert "action applied, quality warning" in js
+    assert 'id="branchState"' in html
+    assert 'id="branchCancel"' in html
+    assert "selectBranchBase" in js
+    assert "from_id: fromId" in js
+    assert "checkpointLineage" in js
+    assert "formatCheckpointInterval" in js
+    assert "timelineFraction" in js
+    assert 'addEventListener("pointerdown"' in js
+    assert "setPointerCapture" in js
+    assert "ResizeObserver" in js
+    assert "requestAnimationFrame" in js
+    assert "overflow-y: auto; overscroll-behavior: contain" in css
+    assert "flex: 0 0 clamp(320px, 52vh, 720px)" in css
+    assert ".motion-picker[open] summary::before" in css
+    assert "@media (max-width: 900px)" in css
 
     tour = js[js.index("const TOUR_STEPS"):js.index("let tourIdx")]
     assert "\\u2014" not in tour and "—" not in tour
-    assert 'el: "motionPicker"' in tour
-    assert "slightly exaggerated so they read clearly" in tour
+    assert 'el: "motionPickerSummary"' in tour
+    assert "watch the exact editor example" in tour
     assert "strongest beat in the selected window" in tour
 
 

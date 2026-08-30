@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "source": {
+    "sid": "dynamite_43089",
+    "name": "Dynamite",
+    "artist": "BTS",
+    "fps": 30,
+    "frames": 6173,
+    "audio_sample_rate": 22050,
+    "audio_channels": 1,
+    "audio_sample_width_bytes": 2,
+    "audio_sha256": "505f55500a7a3923662b6f8f6808d8cc206da644237ba3ba3ba0f4fd8546ff5a",
+    "require_front_facing": true
+  },
+  "duration_bounds_seconds": {
+    "minimum": 25,
+    "maximum": 45
+  },
+  "evidence": [
+    {
+      "path": "experiments/user_study/stimuli/story-reports/fd_dynamite_43089_STORY_bestofk.json",
+      "sha256": "6d57f7665d154007771073c1490d858f7a54bc8f98e019157b2c5cbe5dd1283d",
+      "hash_mode": "canonical_json",
+      "purpose": "Approved 6173-frame story schedule, section roles, and authored cue ranges."
+    },
+    {
+      "path": "experiments/user_study/music/approved_songs.json",
+      "sha256": "ad1353be4f55cf2bddd53f77451fe93118d17a51af9a91370f022da35220d511",
+      "hash_mode": "canonical_json",
+      "purpose": "Approved Dynamite asset identity, duration, frame count, and audio hash."
+    },
+    {
+      "path": "experiments/user_study/stimuli/selection.json",
+      "sha256": "ea568e173051a88e00e84700bbd40870245269e3ff5d322783f1169137b63ef8",
+      "hash_mode": "canonical_json",
+      "purpose": "Front-facing interview review and retained Dynamite transition evidence."
+    }
+  ],
+  "interview_policy": {
+    "full_song_visible": false,
+    "reason": "The 205.8-second full take is omitted in interview mode so every Dynamite choice is a bounded editing exercise. The source directory remains untouched and available outside interview mode."
+  },
+  "segments": [
+    {
+      "sid": "dynamite_intro_first_drop",
+      "name": "Dynamite — Intro / First Drop",
+      "order": 1,
+      "start_frame": 0,
+      "end_frame": 1238,
+      "roles": [
+        "intro",
+        "drop"
+      ],
+      "boundary_basis": "Ends at the approved story boundary after the 9.0-second intro and first 32.2-second drop.",
+      "rationale": "Keeps the reviewed opening build and its complete first energetic handoff in one concise default demo."
+    },
+    {
+      "sid": "dynamite_climax_jump_drop",
+      "name": "Dynamite — Climax Drop (Jump)",
+      "order": 2,
+      "start_frame": 1238,
+      "end_frame": 2584,
+      "roles": [
+        "drop"
+      ],
+      "boundary_basis": "Ends at the approved global action-range boundary for the climax jump cue.",
+      "rationale": "Preserves the complete jump accent rather than cutting the authored motion at the midpoint of the long climax drop."
+    },
+    {
+      "sid": "dynamite_climax_punch_drop",
+      "name": "Dynamite — Climax Drop (Punch)",
+      "order": 3,
+      "start_frame": 2584,
+      "end_frame": 3892,
+      "roles": [
+        "drop"
+      ],
+      "boundary_basis": "Runs from the completed jump cue to the approved end of the long climax drop.",
+      "rationale": "Contains the approved late arm-punch accent and stops before the separate chest-pop phrase."
+    },
+    {
+      "sid": "dynamite_chorus_handoff",
+      "name": "Dynamite — Chorus Handoff",
+      "order": 4,
+      "start_frame": 3892,
+      "end_frame": 4823,
+      "roles": [
+        "drop",
+        "chorus",
+        "drop"
+      ],
+      "boundary_basis": "Spans the approved chest-pop drop and short chorus, ending seven recovery frames after the complete side-step cue.",
+      "rationale": "Names the actual multi-section handoff without presenting the entire 31-second choice as chorus."
+    },
+    {
+      "sid": "dynamite_final_drop_outro",
+      "name": "Dynamite — Final Drop / Outro",
+      "order": 5,
+      "start_frame": 4823,
+      "end_frame": 6173,
+      "roles": [
+        "drop",
+        "outro"
+      ],
+      "boundary_basis": "Uses the remaining approved final drop and complete 11.5-second outro, exactly 45 seconds.",
+      "rationale": "Retains the turn transition and the closing rise-and-reach resolution as one complete ending choice."
+    }
+  ],
+  "catalog": [
+    {
+      "sid": "dynamite_intro_first_drop",
+      "name": "Dynamite — Intro / First Drop",
+      "order": 1,
+      "kind": "segment"
+    },
+    {
+      "sid": "dynamite_climax_jump_drop",
+      "name": "Dynamite — Climax Drop (Jump)",
+      "order": 2,
+      "kind": "segment"
+    },
+    {
+      "sid": "dynamite_climax_punch_drop",
+      "name": "Dynamite — Climax Drop (Punch)",
+      "order": 3,
+      "kind": "segment"
+    },
+    {
+      "sid": "dynamite_chorus_handoff",
+      "name": "Dynamite — Chorus Handoff",
+      "order": 4,
+      "kind": "segment"
+    },
+    {
+      "sid": "dynamite_final_drop_outro",
+      "name": "Dynamite — Final Drop / Outro",
+      "order": 5,
+      "kind": "segment"
+    },
+    {
+      "sid": "can_t_stop_the_feeling_43322",
+      "name": "Can't Stop the Feeling!",
+      "order": 6,
+      "kind": "approved_full_song"
+    },
+    {
+      "sid": "uptown_funk_43352",
+      "name": "Uptown Funk",
+      "order": 7,
+      "kind": "approved_full_song"
+    },
+    {
+      "sid": "levitating_43228",
+      "name": "Levitating",
+      "order": 8,
+      "kind": "approved_full_song"
+    }
+  ]
+}

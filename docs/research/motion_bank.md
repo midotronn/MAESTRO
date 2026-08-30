@@ -153,6 +153,11 @@ than rewinding one — which is why a half turn spliced into a fixed window read
 measures around 2*pi of yaw. The invariant is worth stating plainly: **a motion may travel or turn
 inside the window, but it must give the root back before the window ends.**
 
+The editor now names these actions `Quarter turn (90°)` and `Half turn (180°)` and explains the
+handoff in the motion example. The half-turn source clip contains one 180° action; it is not
+duplicated. Its editor-composed example then shows the additional same-direction 180° root return,
+for a 360° window trajectory, so the visible behavior is explicit before a researcher uses it.
+
 There is a known edge to this. When the surrounding dance is *itself* turning hard, the closing
 rotation and the action's own turn partly cancel, and the action can end up short of its contract:
 across 17 windows of real backbone output, `turn_half` in `replace` mode failed validation once, on

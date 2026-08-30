@@ -31,15 +31,60 @@ on the real base motion; only the candidate window content is synthetic).
 Build a bank on a GPU box once with `files/build_window_bank.py <sid>` (see the session notes), then
 copy `bank_<sid>_*.npy` into `server/media/<sid>/bank/`.
 
+### Reproducible Dynamite interview sections
+
+The approved full Dynamite take remains the immutable source and is intentionally hidden from
+`MAESTRO_INTERVIEW_MODE`. The source-side catalog in
+`experiments/user_study/music/dynamite_editor_segments.json` instead exposes five 31–45 second
+choices first, followed by the other three approved songs. Since the editor opens the first API
+result, `Dynamite — Intro / First Drop` is the default.
+
+On the live pod, build or verify the section directories with:
+
+```bash
+cd /workspace/AgentLODGE
+python scripts/build_dynamite_editor_segments.py \
+  /workspace/AgentLODGE/server/media/dynamite_43089
+```
+
+The script discovers the canonical WAV at
+`/workspace/LODGE/data/finedance/music_wav/dynamite_43089.wav` (or accepts `--audio`), requires
+`ffmpeg` and `ffprobe`, slices frame/sample-exact assets and every compatible candidate-bank array,
+and atomically publishes sibling media directories. It verifies source/evidence hashes and is a
+no-op when existing manifests still match. Keep `MAESTRO_INTERVIEW_MODE=1` when running interviews;
+outside that mode the untouched full take remains available.
+
 ## API
 
 - `GET  /api/songs`
+- `GET  /api/motions`, `GET /api/motions/{motion_id}/preview`
 - `POST /api/session/{sid}` → duration, beats, timeline, metrics, preview URL
 - `POST /api/session/{sid}/edit` `{a_sec,b_sec,instruction[,from_id,k,max_cycles]}`
 - `WS   /api/session/{sid}/edit_ws` → streams live `cycle n/K` progress then the final result
 - `POST /api/session/{sid}/undo|redo`, `POST /api/session/{sid}/restore {ckpt_id}`
 - `GET  /api/session/{sid}/timeline`
 - `GET  /api/jobs/{sid}` → upload/generation stage, overall progress, elapsed time, and deferred-bank progress
+
+The History card has separate restore and **Branch** actions. Restore moves the current head as
+before; Branch leaves the current state visible, marks an older checkpoint as `from_id`, and makes
+the next REST or WebSocket edit a child of that checkpoint. Timeline responses include root-first
+`lineage`, `depth`, and branch metadata, plus a normalized seconds/frames interval for current and
+legacy checkpoint shapes.
+
+The common-motion catalog stays collapsed until opened. Clicking any of its 19 entries opens the
+description and the exact editor-composed example at
+`assets/motion_bank/previews/<motion-id>.mp4`. These are derived assets, not placeholders. Generate
+all examples once on the configured GPU pod with:
+
+```bash
+cd /workspace/AgentLODGE && RENDER_W=640 RENDER_H=640 RENDER_SAMPLES=16 \
+  ./.venv/bin/python scripts/generate_motion_previews.py
+```
+
+The script applies every manifest motion to a neutral host (including root handoff behavior),
+renders one fixed-camera Y-Bot reel, splits it deterministically into 19 MP4s, writes hashes, and
+fails if any output is missing. `python scripts/generate_motion_previews.py --check` verifies an
+existing set without rendering.
 
 ## Notes
 

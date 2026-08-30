@@ -80,7 +80,7 @@ preprocessing from 18.156s to 22.586s. The path therefore remains disabled by de
 To recheck a running pod without reinstalling anything:
 
 ```powershell
-.\scripts\pod.ps1 ssh "cd /workspace/AgentLODGE && WORKSPACE=/workspace bash scripts/setup_four_gpu_pod.sh --verify-only"
+.\scripts\pod.ps1 ssh "cd /workspace/AgentLODGE && WORKSPACE=/workspace AGENTLODGE_PUBLIC_PORT=8888 MAESTRO_PUBLIC_INTERVIEW_MODE=1 bash scripts/setup_four_gpu_pod.sh --verify-only"
 ```
 
 The internal server binds to `127.0.0.1:8011`. `setup4` also binds the interview-facing editor to

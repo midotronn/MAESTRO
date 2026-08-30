@@ -68,6 +68,7 @@ def normalize_name(value: str) -> str:
 class MotionSpec:
     id: str
     name: str
+    description: str
     aliases: tuple[str, ...]
     category: str
     clip: str
@@ -102,9 +103,9 @@ class MotionSpec:
     @classmethod
     def from_dict(cls, raw: dict) -> "MotionSpec":
         required = {
-            "id", "name", "aliases", "category", "clip", "fps", "frames", "source", "license",
-            "attribution", "stationary", "mirrorable", "repeatable", "event_frame",
-            "recommended_beats", "default_anchor", "validator", "composition",
+            "id", "name", "description", "aliases", "category", "clip", "fps", "frames",
+            "source", "license", "attribution", "stationary", "mirrorable", "repeatable",
+            "event_frame", "recommended_beats", "default_anchor", "validator", "composition",
         }
         missing = sorted(required - set(raw))
         if missing:
@@ -112,6 +113,9 @@ class MotionSpec:
         motion_id = str(raw["id"]).strip()
         if not re.fullmatch(r"[a-z][a-z0-9_]*", motion_id):
             raise ValueError(f"invalid motion id: {motion_id!r}")
+        description = str(raw["description"]).strip()
+        if not description:
+            raise ValueError(f"{motion_id}: description cannot be empty")
         aliases = tuple(str(x).strip() for x in raw["aliases"] if str(x).strip())
         if not aliases:
             raise ValueError(f"{motion_id}: aliases cannot be empty")
@@ -206,6 +210,7 @@ class MotionSpec:
         return cls(
             id=motion_id,
             name=str(raw["name"]).strip(),
+            description=description,
             aliases=aliases,
             category=str(raw["category"]).strip(),
             clip=str(raw["clip"]).strip(),
@@ -242,6 +247,7 @@ class MotionSpec:
         return {
             "id": self.id,
             "name": self.name,
+            "description": self.description,
             "aliases": list(self.aliases),
             "category": self.category,
             "frames": self.frames,

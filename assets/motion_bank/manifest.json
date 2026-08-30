@@ -1,10 +1,11 @@
 {
   "schema_version": 1,
-  "bank_version": "1.2.0",
+  "bank_version": "1.3.0",
   "motions": [
     {
       "id": "clap_single",
       "name": "Single clap",
+      "description": "Brings both hands together once at chest height; a left or right direction turns the gesture toward that side.",
       "aliases": ["clap", "single clap", "one clap", "applaud once"],
       "category": "gesture",
       "clip": "clips/clap_single.npy",
@@ -42,6 +43,7 @@
     {
       "id": "clap_repeat",
       "name": "Repeated claps",
+      "description": "Brings both hands together several times in a short rhythmic sequence.",
       "aliases": ["repeated claps", "clap repeatedly", "multiple claps", "keep clapping"],
       "category": "gesture",
       "clip": "clips/clap_repeat.npy",
@@ -81,6 +83,7 @@
     {
       "id": "clap_overhead",
       "name": "Overhead clap",
+      "description": "Raises both arms and brings the hands together above the head.",
       "aliases": ["overhead clap", "clap overhead", "clap above the head", "high clap"],
       "category": "gesture",
       "clip": "clips/clap_overhead.npy",
@@ -119,6 +122,7 @@
     {
       "id": "jump_two_foot",
       "name": "Two-foot jump",
+      "description": "Pushes off with both feet, lifts the whole body, and lands on both feet.",
       "aliases": ["jump", "two foot jump", "two-foot jump", "hop"],
       "category": "accent",
       "clip": "clips/jump_two_foot.npy",
@@ -155,6 +159,7 @@
     {
       "id": "jump_arms_up",
       "name": "Jump with arm raise",
+      "description": "Jumps with both feet while lifting both arms overhead for a celebratory accent.",
       "aliases": ["jump with arms up", "jump and raise arms", "celebration jump", "arms up jump"],
       "category": "accent",
       "clip": "clips/jump_arms_up.npy",
@@ -192,6 +197,7 @@
     {
       "id": "bounce_in_place",
       "name": "Bounce in place",
+      "description": "Pulses the knees and body vertically without travelling away from the current spot.",
       "aliases": ["bounce", "bounce in place", "bop", "pulse in place"],
       "category": "groove",
       "clip": "clips/bounce_in_place.npy",
@@ -227,7 +233,8 @@
     },
     {
       "id": "wave",
-      "name": "Wave",
+      "name": "Hand wave",
+      "description": "Raises one hand and waves it side to side; this is a hand gesture, not the torso ripple called a body roll.",
       "aliases": ["wave", "wave hello", "hand wave", "wave hand"],
       "category": "gesture",
       "clip": "clips/wave.npy",
@@ -257,6 +264,7 @@
     {
       "id": "point_side",
       "name": "Point to the side",
+      "description": "Extends one arm to point clearly to the selected left or right side.",
       "aliases": ["point", "point to the side", "point right", "point left"],
       "category": "gesture",
       "clip": "clips/point_side.npy",
@@ -287,6 +295,7 @@
     {
       "id": "chest_pop",
       "name": "Chest pop",
+      "description": "Adds one sharp chest hit by driving the upper torso forward and back.",
       "aliases": ["chest pop", "chest hit", "body pop", "pop the chest"],
       "category": "accent",
       "clip": "clips/chest_pop.npy",
@@ -314,6 +323,7 @@
     {
       "id": "arm_punch",
       "name": "Arm punch",
+      "description": "Extends one arm in a quick punch accent, using the selected left or right side.",
       "aliases": ["punch", "arm punch", "punch forward", "throw a punch"],
       "category": "accent",
       "clip": "clips/arm_punch.npy",
@@ -347,6 +357,7 @@
     {
       "id": "side_step",
       "name": "Side step",
+      "description": "Travels one step laterally to the selected left or right side.",
       "aliases": ["side step", "step sideways", "step to the side", "lateral step"],
       "category": "locomotion",
       "clip": "clips/side_step.npy",
@@ -380,6 +391,7 @@
     {
       "id": "step_touch",
       "name": "Step touch",
+      "description": "Steps sideways and brings the other foot in to touch, creating a complete side-to-side dance phrase.",
       "aliases": ["step touch", "step and touch", "side step touch", "touch step"],
       "category": "locomotion",
       "clip": "clips/step_touch.npy",
@@ -415,6 +427,7 @@
     {
       "id": "step_forward",
       "name": "Forward step",
+      "description": "Travels forward relative to the direction the dancer is currently facing.",
       "aliases": ["step forward", "forward step", "walk forward", "move forward"],
       "category": "locomotion",
       "clip": "clips/step_forward.npy",
@@ -444,6 +457,7 @@
     {
       "id": "step_backward",
       "name": "Backward step",
+      "description": "Travels backward relative to the direction the dancer is currently facing.",
       "aliases": ["step backward", "backward step", "walk backward", "move back"],
       "category": "locomotion",
       "clip": "clips/step_backward.npy",
@@ -472,7 +486,8 @@
     },
     {
       "id": "turn_quarter",
-      "name": "Quarter turn",
+      "name": "Quarter turn (90°)",
+      "description": "Turns 90° left or right to face the side, then eases back so the untouched choreography after the edit keeps its original facing.",
       "aliases": ["quarter turn", "turn ninety degrees", "90 degree turn", "turn to the side"],
       "category": "turn",
       "clip": "clips/turn_quarter.npy",
@@ -503,7 +518,8 @@
     },
     {
       "id": "turn_half",
-      "name": "Half turn",
+      "name": "Half turn (180°)",
+      "description": "Performs one authored 180° turn to face backward. In a fixed edit window it then continues another 180° in the same direction to hand the root facing back, so the visible window path is one full 360° rotation rather than a repeated clip.",
       "aliases": ["half turn", "spin", "turn around", "180 degree turn"],
       "category": "turn",
       "clip": "clips/turn_half.npy",
@@ -534,7 +550,8 @@
     },
     {
       "id": "body_roll",
-      "name": "Body roll",
+      "name": "Body roll (torso wave)",
+      "description": "Sends a sequential ripple through the torso and spine; this is the body-wave action, not a waving hand.",
       "aliases": ["body roll", "roll the body", "body wave", "torso roll"],
       "category": "body articulation",
       "clip": "clips/body_roll.npy",
@@ -563,6 +580,7 @@
     {
       "id": "crouch_drop",
       "name": "Crouch or drop",
+      "description": "Lowers the body by bending through the hips and knees, then returns to the surrounding stance.",
       "aliases": ["crouch", "drop down", "duck down", "go low"],
       "category": "level change",
       "clip": "clips/crouch_drop.npy",
@@ -592,6 +610,7 @@
     {
       "id": "rise_reach",
       "name": "Rise and reach",
+      "description": "Rises through the body while reaching both arms upward, with one arm leading the gesture.",
       "aliases": ["rise", "rise and reach", "stand and reach", "reach upward"],
       "category": "level change",
       "clip": "clips/rise_reach.npy",

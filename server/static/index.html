@@ -50,7 +50,7 @@
   <main class="grid">
     <!-- left: viewer + timeline + prompt -->
     <section class="stage-col">
-      <div class="viewer">
+      <div class="viewer" id="viewer">
         <video id="video" controls playsinline preload="auto"></video>
         <span class="viewer-tag" id="viewerTag">preview · base take</span>
       </div>
@@ -109,7 +109,7 @@
         <table id="cmpMetrics" class="metrics"></table>
       </div>
 
-      <div class="tl-wrap">
+      <div class="tl-wrap" id="tlWrap">
         <div class="timeline" id="timeline">
           <div class="beats" id="beats"></div>
           <div class="selection" id="selection"></div>
@@ -117,6 +117,13 @@
           <div class="ticks" id="ticks"></div>
         </div>
         <div class="tl-hint">Drag across the bar to pick the section to edit · the shaded band is your window</div>
+      </div>
+
+      <div id="branchState" class="branch-state" role="status" hidden>
+        <span class="branch-icon">⑂</span>
+        <span><strong>Next edit starts from <b id="branchBaseLabel"></b></strong>
+          <small id="branchLineage"></small></span>
+        <button id="branchCancel" type="button">Cancel branch</button>
       </div>
 
       <div class="prompt">
@@ -130,8 +137,8 @@
         <button id="apply" class="apply">Apply edit</button>
       </div>
       <details id="motionPicker" class="motion-picker">
-        <summary><strong>Common motions</strong><span>browse the full motion catalog</span></summary>
-        <p class="motion-picker-help">Click a motion to add it to your prompt. For directional motions, add left or right; without one, MAESTRO follows the dance flow. Named motions are slightly exaggerated, and beat-hit motions land on the strongest feasible beat.</p>
+        <summary id="motionPickerSummary"><strong>Common motions</strong><span>view <b id="motionCount">19</b> examples</span></summary>
+        <p class="motion-picker-help">Click a motion to watch its exact editor example, read what it does, and add it to your prompt. For directional motions, add left or right; without one, MAESTRO follows the dance flow.</p>
         <div id="motionSuggestions" class="chips" aria-label="Common motions"></div>
       </details>
     </section>
@@ -164,6 +171,27 @@
   </main>
 </div>
 
+<div id="motionPreview" class="motion-preview" role="dialog" aria-modal="true"
+     aria-labelledby="motionPreviewTitle" hidden>
+  <button id="motionPreviewBackdrop" class="motion-preview-backdrop" type="button"
+          aria-label="Close motion example"></button>
+  <section class="motion-preview-card">
+    <div class="motion-preview-head">
+      <div><span>Common motion example</span><h3 id="motionPreviewTitle"></h3></div>
+      <button id="motionPreviewClose" class="icon-btn" type="button" title="Close example">✕</button>
+    </div>
+    <div class="motion-preview-media">
+      <video id="motionPreviewVideo" controls muted loop playsinline preload="metadata"></video>
+      <div id="motionPreviewStatus" class="motion-preview-status"></div>
+    </div>
+    <p id="motionPreviewDescription" class="motion-preview-description"></p>
+    <p id="motionPreviewMeta" class="motion-preview-meta"></p>
+    <div class="motion-preview-actions">
+      <button id="motionPreviewUse" class="apply" type="button">Use this motion</button>
+    </div>
+  </section>
+</div>
+
 <!-- ─────────────── first-run walkthrough ─────────────── -->
 <div id="tour" class="tour" hidden>
   <div id="tourRing" class="tour-ring"></div>
@@ -178,6 +206,7 @@
     </div>
   </div>
 </div>
+<script src="/static/editor_utils.js"></script>
 <script src="/static/compare_highlight.js"></script>
 <script src="/static/app.js"></script>
 </body>

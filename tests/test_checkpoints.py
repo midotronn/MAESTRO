@@ -84,9 +84,18 @@ def test_ancestry_and_timeline():
     c0 = s.commit(_m(0))
     c1 = s.commit(_m(1))
     c2 = s.commit(_m(2))
+    fork = s.branch(c0.id, _m(3))
+    s.restore(c2.id)
     assert s.ancestry(c2.id) == [c0.id, c1.id, c2.id]
     tl = s.timeline()
-    assert len(tl) == 3 and any(e["is_head"] for e in tl)
+    assert len(tl) == 4 and any(e["is_head"] for e in tl)
+    by_id = {item["id"]: item for item in tl}
+    assert by_id[c2.id]["lineage"] == [c0.id, c1.id, c2.id]
+    assert by_id[c2.id]["depth"] == 2
+    assert by_id[c1.id]["is_ancestor_of_head"]
+    assert not by_id[fork.id]["is_ancestor_of_head"]
+    assert by_id[c1.id]["is_branch"] is True
+    assert by_id[fork.id]["is_branch"] is True
 
 
 def test_diff_reports_changed_span_and_metric_delta():

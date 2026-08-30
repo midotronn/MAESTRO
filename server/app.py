@@ -29,6 +29,7 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import os
 import secrets
 import shutil
@@ -66,6 +67,14 @@ HERE = Path(__file__).resolve().parent
 MEDIA = HERE / "media"
 STATIC = HERE / "static"
 SESSIONS = HERE / "sessions"
+MOTION_PREVIEWS = HERE.parent / "assets" / "motion_bank" / "previews"
+INTERVIEW_CATALOG = (
+    HERE.parent
+    / "experiments"
+    / "user_study"
+    / "music"
+    / "dynamite_editor_segments.json"
+)
 FPS = 30
 
 app = FastAPI(title="MAESTRO Interactive Editor")
@@ -391,6 +400,98 @@ def _load_session(sid: str) -> EditSession:
     return sess
 
 
+def _finite_number(value) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _raw_interval(value, default_unit: str = "frames") -> tuple[float, float, str] | None:
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        a, b = _finite_number(value[0]), _finite_number(value[1])
+        return (a, b, default_unit) if a is not None and b is not None else None
+    if not isinstance(value, dict):
+        return None
+    if isinstance(value.get("seconds"), (list, tuple)):
+        return _raw_interval(value["seconds"], "seconds")
+    if isinstance(value.get("frames"), (list, tuple)):
+        return _raw_interval(value["frames"], "frames")
+    unit = str(value.get("unit") or default_unit).strip().lower()
+    unit = "seconds" if unit == "s" or unit.startswith("sec") else "frames"
+    forms = (
+        ("start_sec", "end_sec", "seconds"),
+        ("a_sec", "b_sec", "seconds"),
+        ("start_seconds", "end_seconds", "seconds"),
+        ("start_frame", "end_frame", "frames"),
+        ("a_frame", "b_frame", "frames"),
+        ("startFrame", "endFrame", "frames"),
+        ("start", "end", unit),
+        ("a", "b", unit),
+        ("from", "to", unit),
+    )
+    for start_key, end_key, pair_unit in forms:
+        if start_key in value or end_key in value:
+            a, b = _finite_number(value.get(start_key)), _finite_number(value.get(end_key))
+            return (a, b, pair_unit) if a is not None and b is not None else None
+    return None
+
+
+def _checkpoint_interval(checkpoint: dict, fps: int = FPS) -> dict | None:
+    """Normalize current and legacy checkpoint interval shapes into one safe payload."""
+    edit = checkpoint.get("edit") if isinstance(checkpoint.get("edit"), dict) else {}
+    candidates = (
+        (checkpoint.get("interval"), "frames"),
+        (edit.get("interval_seconds"), "seconds"),
+        (edit.get("window_seconds"), "seconds"),
+        (edit.get("window_sec"), "seconds"),
+        (checkpoint.get("interval_seconds"), "seconds"),
+        (checkpoint.get("window_seconds"), "seconds"),
+        (checkpoint.get("window_sec"), "seconds"),
+        (edit, "frames"),
+        (checkpoint, "frames"),
+        (edit.get("window"), "frames"),
+        (edit.get("interval"), "frames"),
+        (edit.get("frame_interval"), "frames"),
+        (checkpoint.get("window"), "frames"),
+        (checkpoint.get("frame_interval"), "frames"),
+    )
+    raw = next(
+        (pair for value, unit in candidates if (pair := _raw_interval(value, unit)) is not None),
+        None,
+    )
+    if raw is None:
+        return None
+    start, end, unit = raw
+    rate = fps if fps > 0 else FPS
+    if unit != "seconds":
+        start, end = start / rate, end / rate
+    if end < start:
+        start, end = end, start
+    start, end = max(0.0, start), max(0.0, end)
+    n_frames = _finite_number(checkpoint.get("n_frames"))
+    if n_frames is not None and n_frames > 0:
+        duration = n_frames / rate
+        start = min(start, duration)
+        end = min(max(start, end), duration)
+    return {
+        "start_sec": round(start, 6),
+        "end_sec": round(end, 6),
+        "start_frame": int(round(start * rate)),
+        "end_frame": int(round(end * rate)),
+    }
+
+
+def _timeline_payload(sess: EditSession) -> list[dict]:
+    timeline = []
+    for checkpoint in sess.timeline():
+        item = dict(checkpoint)
+        item["interval"] = _checkpoint_interval(item, sess.assets.fps)
+        timeline.append(item)
+    return timeline
+
+
 def _session_state(sid: str, sess: EditSession) -> dict:
     head = sess.current()
     n = int(sess.current_motion().shape[0])
@@ -404,7 +505,7 @@ def _session_state(sid: str, sess: EditSession) -> dict:
         "agent_llm": bool(getattr(sess, "agent_llm", False)),
         "head": head.id if head else None,
         "metrics": head.metrics if head else {},
-        "timeline": sess.timeline(),
+        "timeline": _timeline_payload(sess),
         "preview_url": f"/api/session/{sid}/media/preview.mp4",
         "can_undo": sess.store.can_undo(),
         "can_redo": sess.store.can_redo(),
@@ -457,6 +558,10 @@ def index() -> HTMLResponse:
             return "1"
     html = html.replace("/static/app.js", f"/static/app.js?v={_v('app.js')}")
     html = html.replace(
+        "/static/editor_utils.js",
+        f"/static/editor_utils.js?v={_v('editor_utils.js')}",
+    )
+    html = html.replace(
         "/static/compare_highlight.js",
         f"/static/compare_highlight.js?v={_v('compare_highlight.js')}",
     )
@@ -479,6 +584,36 @@ def _song_metadata(d: Path) -> dict:
     return {}
 
 
+def _interview_catalog() -> dict[str, dict] | None:
+    configured = os.environ.get("MAESTRO_INTERVIEW_CATALOG", "").strip()
+    path = Path(configured) if configured else INTERVIEW_CATALOG
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        entries = payload["catalog"]
+        if not isinstance(entries, list) or not entries:
+            raise ValueError("catalog must be a non-empty list")
+        catalog: dict[str, dict] = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise ValueError("catalog entries must be objects")
+            sid = str(entry["sid"])
+            name = str(entry["name"])
+            order = float(entry["order"])
+            if not sid or not name or sid in catalog:
+                raise ValueError(f"invalid or duplicate catalog sid {sid!r}")
+            catalog[sid] = {"name": name, "order": order}
+        return catalog
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        logging.getLogger("uvicorn.error").error(
+            "Interview catalog %s is invalid; failing closed: %s",
+            path,
+            exc,
+        )
+        raise HTTPException(503, "the interview song catalog is invalid") from exc
+
+
 @app.get("/api/songs")
 def songs() -> dict:
     if not MEDIA.is_dir():
@@ -489,24 +624,53 @@ def songs() -> dict:
         "yes",
         "on",
     }
+    curated_catalog = _interview_catalog() if interview_mode else None
     out = []
+    resolved_catalog_sids: set[str] = set()
     for d in sorted(MEDIA.iterdir()):
         if d.is_dir() and (d / "base_motion.npy").exists():
             metadata = _song_metadata(d)
-            if interview_mode and metadata.get("interview") is not True:
-                continue
+            catalog_entry = None
+            if interview_mode:
+                if curated_catalog is None:
+                    if metadata.get("interview") is not True:
+                        continue
+                else:
+                    catalog_entry = curated_catalog.get(d.name)
+                    if catalog_entry is None:
+                        continue
+                    resolved_catalog_sids.add(d.name)
             try:
-                order = float(metadata.get("order", 1000))
+                order = float(
+                    catalog_entry["order"]
+                    if catalog_entry is not None
+                    else metadata.get("order", 1000)
+                )
             except (TypeError, ValueError):
                 order = 1000
             out.append(
                 {
                     "sid": d.name,
-                    "name": str(metadata.get("name") or d.name),
+                    "name": str(
+                        catalog_entry["name"]
+                        if catalog_entry is not None
+                        else metadata.get("name") or d.name
+                    ),
                     "has_bank": (d / "bank").is_dir(),
                     "front_facing": metadata.get("front_facing") is True,
                     "_order": order,
                 }
+            )
+    if curated_catalog is not None:
+        missing = sorted(set(curated_catalog) - resolved_catalog_sids)
+        if missing:
+            logging.getLogger("uvicorn.error").error(
+                "Interview catalog media is incomplete; missing: %s",
+                ", ".join(missing),
+            )
+            raise HTTPException(
+                503,
+                "interview song media is incomplete; missing: " + ", ".join(missing),
             )
     out.sort(key=lambda song: (song["_order"], song["name"].casefold(), song["sid"]))
     for song in out:
@@ -517,7 +681,34 @@ def songs() -> dict:
 @app.get("/api/motions")
 def motions() -> dict:
     bank = default_motion_bank()
-    return {"version": bank.version, "motions": bank.list_public()}
+    out = []
+    for motion in bank.list_public():
+        item = dict(motion)
+        preview = MOTION_PREVIEWS / f"{motion['id']}.mp4"
+        item["preview_url"] = f"/api/motions/{motion['id']}/preview"
+        item["preview_available"] = preview.is_file()
+        out.append(item)
+    return {"version": bank.version, "motions": out}
+
+
+@app.get("/api/motions/{motion_id}/preview")
+def motion_preview(motion_id: str) -> FileResponse:
+    try:
+        spec = default_motion_bank().resolve(motion_id)
+    except KeyError:
+        raise HTTPException(404, "unknown common motion") from None
+    path = MOTION_PREVIEWS / f"{spec.id}.mp4"
+    if not path.is_file():
+        raise HTTPException(
+            404,
+            "example video has not been generated on this host; run "
+            "scripts/generate_motion_previews.py on the GPU pod",
+        )
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @app.post("/api/upload")
@@ -624,8 +815,18 @@ def media(sid: str, name: str) -> FileResponse:
     return FileResponse(p)
 
 
-def _clamp_window(sess: EditSession, a_sec: float, b_sec: float) -> tuple[int, int]:
-    n = int(sess.current_motion().shape[0])
+def _clamp_window(
+    sess: EditSession,
+    a_sec: float,
+    b_sec: float,
+    *,
+    from_id: str | None = None,
+) -> tuple[int, int]:
+    try:
+        motion = sess.store.motion(from_id) if from_id else sess.current_motion()
+    except KeyError:
+        raise HTTPException(404, f"unknown branch-base checkpoint {from_id!r}") from None
+    n = int(motion.shape[0])
     a = int(max(0, min(round(a_sec * FPS), n - 2)))
     b = int(max(a + 1, min(round(b_sec * FPS), n)))
     return a, b
@@ -634,7 +835,7 @@ def _clamp_window(sess: EditSession, a_sec: float, b_sec: float) -> tuple[int, i
 @app.post("/api/session/{sid}/edit")
 def edit(sid: str, body: EditBody) -> dict:
     sess = _load_session(sid)
-    a, b = _clamp_window(sess, body.a_sec, body.b_sec)
+    a, b = _clamp_window(sess, body.a_sec, body.b_sec, from_id=body.from_id)
     if body.from_id:
         res = sess.edit_from(body.from_id, a, b, body.instruction,
                              k=body.k, max_cycles=body.max_cycles)
@@ -769,7 +970,7 @@ def restore(sid: str, body: RestoreBody) -> dict:
 @app.get("/api/session/{sid}/timeline")
 def timeline(sid: str) -> dict:
     sess = _load_session(sid)
-    return {"timeline": sess.timeline(), "head": sess.store.head}
+    return {"timeline": _timeline_payload(sess), "head": sess.store.head}
 
 
 @app.websocket("/api/session/{sid}/edit_ws")
@@ -779,7 +980,13 @@ async def edit_ws(ws: WebSocket, sid: str) -> None:
     try:
         req = await ws.receive_json()
         sess = _load_session(sid)
-        a, b = _clamp_window(sess, float(req["a_sec"]), float(req["b_sec"]))
+        from_id = req.get("from_id")
+        a, b = _clamp_window(
+            sess,
+            float(req["a_sec"]),
+            float(req["b_sec"]),
+            from_id=from_id,
+        )
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
 
@@ -788,8 +995,8 @@ async def edit_ws(ws: WebSocket, sid: str) -> None:
 
         async def run_edit():
             def _do():
-                if req.get("from_id"):
-                    return sess.edit_from(req["from_id"], a, b, req["instruction"],
+                if from_id:
+                    return sess.edit_from(from_id, a, b, req["instruction"],
                                           k=req.get("k"), max_cycles=req.get("max_cycles"),
                                           progress_cb=progress_cb)
                 return sess.edit(a, b, req["instruction"], k=req.get("k"),

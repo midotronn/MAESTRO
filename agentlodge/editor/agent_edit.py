@@ -874,7 +874,10 @@ def _llm_plan(instruction: str, ctx_metrics: dict, a_sec: float, b_sec: float,
 
     tool_lines = "\n".join(f"- {name}({spec.params}): {spec.doc}" for name, spec in TOOLS.items())
     _specs = default_motion_bank().specs
-    bank_lines = ", ".join(f"{s.id} ({s.name}; aliases: {', '.join(s.aliases)})" for s in _specs)
+    bank_lines = "\n".join(
+        f"- {s.id}: {s.name}. {s.description} Aliases: {', '.join(s.aliases)}"
+        for s in _specs
+    )
     repeatable = ", ".join(s.id for s in _specs if s.repeatable) or "none"
     mirrorable = ", ".join(s.id for s in _specs if s.mirrorable) or "none"
     directional = ", ".join(

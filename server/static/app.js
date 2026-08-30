@@ -1,11 +1,25 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
+const EDITOR_UTILS = globalThis.MaestroEditorUtils;
+if (!EDITOR_UTILS) throw new Error("editor utilities failed to load");
 const api = async (url, opts) => {
   const r = await fetch(url, opts);
   if (!r.ok) throw new Error((await r.text()) || r.statusText);
   return r.json();
 };
-let ST = { sid: null, fps: 30, dur: 0, nframes: 0, beats: 0, head: null, sel: null };
+let ST = {
+  sid: null,
+  fps: 30,
+  dur: 0,
+  nframes: 0,
+  beats: 0,
+  head: null,
+  sel: null,
+  timeline: [],
+  branchBase: null,
+};
+let MOTION_PREVIEW = null;
+let PLAYHEAD_RAF = 0;
 const CMP_HIGHLIGHT = {
   mode: "highlight",
   raf: 0,
@@ -640,6 +654,7 @@ async function runHistoryAction(label, endpoint) {
   activityStart("history", label, "Updating the current checkpoint", null);
   try {
     const st = await api(`/api/session/${ST.sid}/${endpoint}`, { method: "POST" });
+    ST.branchBase = null;
     applyState(st);
     activityDone("history", `${label} complete`);
     return st;
@@ -685,6 +700,16 @@ function wireControls() {
   if (cmpVer) cmpVer.onchange = () => { if (!$("compare").hidden) startCompare(); };
   $("undo").onclick = () => runHistoryAction("Undoing edit", "undo");
   $("redo").onclick = () => runHistoryAction("Redoing edit", "redo");
+  $("branchCancel").onclick = () => clearBranchBase(true);
+  $("motionPreviewClose").onclick = closeMotionPreview;
+  $("motionPreviewBackdrop").onclick = closeMotionPreview;
+  $("motionPreviewUse").onclick = useMotionPreview;
+  $("motionPreviewVideo").addEventListener("error", () => {
+    const video = $("motionPreviewVideo");
+    video.hidden = true;
+    $("motionPreviewStatus").textContent =
+      "This example video could not be loaded. The motion description and prompt action remain available.";
+  });
   $("reset").onclick = async () => {
     if (!confirm("Clear the edit history and start over from the original dance? This cannot be undone.")) return;
     activityStart("history", "Resetting edit history", "Restoring the original dance", null);
@@ -708,6 +733,9 @@ function wireControls() {
     }
   };
   $("instruction").addEventListener("keydown", (e) => { if (e.key === "Enter") runEdit(); });
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("motionPreview").hidden) closeMotionPreview();
+  });
   wireTour();
 }
 
@@ -718,14 +746,14 @@ const TOUR_STEPS = [
     text: "Drag across this bar to choose the window of the dance you want to change. The shaded band is your window." },
   { el: "instruction", title: "2 · Say what you want",
     text: "Describe the change in plain English, for example \u201cmake it more energetic\u201d, \u201ctighten to the beat\u201d, \u201cclap to the right\u201d, or \u201cwave here\u201d. Named actions replace motion in the selected window; insertion is unavailable until it has its own visual audit. If you omit a direction, MAESTRO follows the dance flow." },
-  { el: "motionPicker", title: "3 · Browse 20 supported motions",
-    text: "Open this catalog to see every common motion MAESTRO supports. Click one to add it to your prompt. Named motions are slightly exaggerated so they read clearly, and beat-hit motions land on the strongest beat in the selected window." },
+  { el: "motionPickerSummary", title: "3 · Browse 19 supported motions",
+    text: "Open this collapsed catalog when you need it. Click a motion to watch the exact editor example, read its meaning, and add it to your prompt. Beat-hit motions land on the strongest beat in the selected window." },
   { el: "apply", title: "4 · Apply the edit",
     text: "The agent plans the right tools, applies them, and verifies the result actually hit your goal. If needed, it refines the edit." },
   { el: "compareBtn", title: "5 · Review the result",
     text: "Review the edited dancer with changed body areas glowing cyan. Hold for the original or switch to side by side, all synchronized to the music." },
   { el: "history", title: "6 · Iterate freely",
-    text: "Every edit is a checkpoint. Undo, redo, compare versions, or reset to start over. Edit, listen, refine." },
+    text: "Every edit is a checkpoint. Restore one by clicking its row, or use its Branch button to make the next edit from that older state without deleting later work." },
   { el: "song", title: "That\u2019s it. Have fun!",
     text: "Switch songs here or upload your own. Tap the \u201c?\u201d in the top bar to see this again anytime." },
 ];
@@ -774,6 +802,63 @@ function maybeAutoTour() {
   if (!seen) setTimeout(startTour, 800);                    // once the first song has loaded in
 }
 
+function motionInstruction(motion) {
+  const phrase = (motion.aliases && motion.aliases[0]) || motion.name || motion.id;
+  return `add ${String(phrase).toLowerCase()} here`;
+}
+
+function closeMotionPreview() {
+  const panel = $("motionPreview"), video = $("motionPreviewVideo");
+  try { video.pause(); } catch (e) {}
+  video.removeAttribute("src");
+  video.load();
+  panel.hidden = true;
+  MOTION_PREVIEW = null;
+}
+
+function useMotionPreview() {
+  if (!MOTION_PREVIEW) return;
+  $("instruction").value = motionInstruction(MOTION_PREVIEW);
+  closeMotionPreview();
+  $("instruction").focus();
+}
+
+function openMotionPreview(motion) {
+  MOTION_PREVIEW = motion;
+  $("motionPreviewTitle").textContent = motion.name;
+  $("motionPreviewDescription").textContent = motion.description || "";
+  const timing = motion.default_anchor === "beat"
+    ? "The main action lands on the strongest feasible beat in the selected window."
+    : "The action is centered in the selected window.";
+  const direction = motion.directions && motion.directions.length
+    ? ` Directions: ${motion.directions.join(", ")}; auto follows the dance flow.`
+    : "";
+  $("motionPreviewMeta").textContent =
+    `${timing}${direction} The example uses this same manifest clip and editor composition path.`;
+
+  const panel = $("motionPreview"), video = $("motionPreviewVideo");
+  const status = $("motionPreviewStatus");
+  panel.hidden = false;
+  video.hidden = true;
+  video.removeAttribute("src");
+  status.textContent = "";
+  if (motion.preview_available) {
+    status.textContent = "Loading the editor example\u2026";
+    video.src = motion.preview_url;
+    video.hidden = false;
+    video.load();
+    video.addEventListener("canplay", () => {
+      if (MOTION_PREVIEW && MOTION_PREVIEW.id === motion.id) status.textContent = "";
+    }, { once: true });
+    video.play().catch(() => {});
+  } else {
+    status.textContent =
+      "Example video is not generated on this host yet. This is not a placeholder: the GPU-pod "
+      + "generation command produces the deterministic MP4 for this exact motion.";
+  }
+  $("motionPreviewClose").focus();
+}
+
 async function loadMotionBank() {
   const host = $("motionSuggestions");
   if (!host) return;
@@ -782,6 +867,7 @@ async function loadMotionBank() {
     const data = await api("/api/motions");
     host.innerHTML = "";
     const motions = data.motions || [];
+    $("motionCount").textContent = String(motions.length);
     motions.forEach((motion) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -793,11 +879,9 @@ async function loadMotionBank() {
       const direction = motion.directions && motion.directions.length
         ? ` · directions: ${motion.directions.join(", ")}; auto follows the dance flow`
         : "";
-      button.title = `${motion.category} · ${timing}${direction}`;
-      button.onclick = () => {
-        $("instruction").value = `add a ${motion.name.toLowerCase()} here`;
-        $("instruction").focus();
-      };
+      button.title = `${motion.description} · ${motion.category} · ${timing}${direction}`;
+      button.setAttribute("aria-label", `Watch ${motion.name} example`);
+      button.onclick = () => openMotionPreview(motion);
       host.appendChild(button);
     });
     activityDone("motion-catalog", `${motions.length} motions ready`);
@@ -876,6 +960,7 @@ async function openSession(sid) {
     return false;
   }
   ST.sid = sid;
+  ST.branchBase = null;
   applyState(st);
   activityUpdate("session", { progress: 55, detail: "Loading the dance preview\u2026" });
   const v = $("video");
@@ -900,10 +985,14 @@ function applyState(st, opts) {
   ST.fps = st.fps; ST.dur = st.duration; ST.nframes = st.n_frames; ST.beats = st.n_beats; ST.head = st.head;
   ST.generator = st.generator;
   ST.timeline = st.timeline || [];
+  if (ST.branchBase && !ST.timeline.some((c) => c.id === ST.branchBase)) ST.branchBase = null;
   setGenBadge(st.generator);
   $("undo").disabled = !st.can_undo; $("redo").disabled = !st.can_redo;
   drawBeatsTicks();
   renderHistory(st.timeline);
+  renderBranchState();
+  syncTimelineToVideo();
+  syncPlayhead();
   if (!$("compare").hidden) populateCmpVersions();          // keep the version picker current
   if (!opts.keepMetrics && st.metrics && st.metrics.energy !== undefined) showCurrentMetrics(st.metrics);
 }
@@ -920,8 +1009,56 @@ function setGenBadge(kind) {
   el.className = "genbadge " + (kind || "mock");
 }
 
+function checkpointDisplayLabel(checkpoint) {
+  if (!checkpoint) return "unknown checkpoint";
+  return checkpoint.label
+    ? String(checkpoint.label).replace(/\s*\[[^\]]*\]/, "").replace(/_/g, " ")
+    : "original";
+}
+
+function clearBranchBase(announce) {
+  const hadBase = ST.branchBase;
+  ST.branchBase = null;
+  renderBranchState();
+  renderHistory(ST.timeline);
+  if (announce && hadBase) toast("Branch selection cleared");
+}
+
+function selectBranchBase(checkpointId) {
+  const checkpoint = ST.timeline.find((item) => item.id === checkpointId);
+  if (!checkpoint || checkpoint.id === ST.head) return;
+  ST.branchBase = checkpoint.id;
+  renderBranchState();
+  renderHistory(ST.timeline);
+  toast(`Next edit will branch from ${checkpointDisplayLabel(checkpoint)}`);
+}
+
+function renderBranchState() {
+  const state = $("branchState");
+  if (!state) return;
+  const base = ST.timeline.find((item) => item.id === ST.branchBase);
+  if (!base || base.id === ST.head) {
+    state.hidden = true;
+    if (!base) ST.branchBase = null;
+    return;
+  }
+  const lineageIds = EDITOR_UTILS.checkpointLineage(ST.timeline, base.id);
+  const labels = lineageIds
+    .map((id) => checkpointDisplayLabel(ST.timeline.find((item) => item.id === id)))
+    .filter(Boolean);
+  $("branchBaseLabel").textContent = checkpointDisplayLabel(base);
+  $("branchLineage").textContent =
+    `${labels.join(" \u2192 ")}. The preview and metrics still show the current head until this edit is applied.`;
+  state.hidden = false;
+}
+
 // -------------------------------------------------------------- timeline drawing + selection
-function pct(sec) { return ST.dur ? (sec / ST.dur) * 100 : 0; }
+function pct(sec) {
+  const value = Number(sec);
+  return ST.dur && Number.isFinite(value)
+    ? Math.max(0, Math.min(100, (value / ST.dur) * 100))
+    : 0;
+}
 function drawBeatsTicks() {
   const ticks = $("ticks"); ticks.innerHTML = "";
   const step = ST.dur > 200 ? 30 : ST.dur > 60 ? 15 : 5;
@@ -940,16 +1077,96 @@ function setSel(a, b) {
   a = Math.max(0, Math.min(a, ST.dur)); b = Math.max(0, Math.min(b, ST.dur));
   ST.sel = [Math.min(a, b), Math.max(a, b)]; drawSelection();
 }
+
+function syncTimelineToVideo() {
+  const wrap = $("tlWrap"), viewer = $("viewer"), video = $("video");
+  if (!wrap || !viewer || !video) return;
+  const viewerRect = viewer.getBoundingClientRect();
+  const videoRect = video.getBoundingClientRect();
+  const media = EDITOR_UTILS.renderedMediaBox(videoRect, video.videoWidth, video.videoHeight);
+  const width = media.width > 0 ? media.width : viewerRect.width;
+  wrap.style.width = `${Math.max(1, Math.min(viewerRect.width, width))}px`;
+}
+
+function syncPlayhead() {
+  const video = $("video"), playhead = $("playhead");
+  if (!video || !playhead) return;
+  const mediaDuration = Number.isFinite(video.duration) && video.duration > 0
+    ? video.duration
+    : ST.dur;
+  const fraction = mediaDuration > 0
+    ? Math.max(0, Math.min(1, video.currentTime / mediaDuration))
+    : 0;
+  playhead.style.left = `${fraction * 100}%`;
+}
+
+function startPlayheadLoop() {
+  if (PLAYHEAD_RAF) return;
+  const tick = () => {
+    PLAYHEAD_RAF = 0;
+    syncPlayhead();
+    const video = $("video");
+    if (video && !video.paused && !video.ended) PLAYHEAD_RAF = requestAnimationFrame(tick);
+  };
+  PLAYHEAD_RAF = requestAnimationFrame(tick);
+}
+
 function wireTimeline() {
   const tl = $("timeline");
-  let dragging = false, startSec = 0;
-  const secAt = (e) => { const r = tl.getBoundingClientRect(); return ((e.clientX - r.left) / r.width) * ST.dur; };
-  tl.addEventListener("mousedown", (e) => { dragging = true; startSec = secAt(e); setSel(startSec, startSec); });
-  window.addEventListener("mousemove", (e) => { if (dragging) setSel(startSec, secAt(e)); });
-  window.addEventListener("mouseup", () => { dragging = false; });
+  let pointerId = null, startSec = 0;
+  const secAt = (e) => EDITOR_UTILS.timelineFraction(
+    e.clientX,
+    tl.getBoundingClientRect(),
+    {
+      clientLeft: tl.clientLeft,
+      clientWidth: tl.clientWidth,
+      offsetWidth: tl.offsetWidth,
+    },
+  ) * ST.dur;
+  const finishDrag = (e) => {
+    if (pointerId === null || (e && e.pointerId !== pointerId)) return;
+    if (e) setSel(startSec, secAt(e));
+    try { tl.releasePointerCapture(pointerId); } catch (err) {}
+    pointerId = null;
+  };
+  tl.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    e.preventDefault();
+    pointerId = e.pointerId;
+    startSec = secAt(e);
+    tl.setPointerCapture(pointerId);
+    setSel(startSec, startSec);
+  });
+  tl.addEventListener("pointermove", (e) => {
+    if (e.pointerId === pointerId) setSel(startSec, secAt(e));
+  });
+  tl.addEventListener("pointerup", finishDrag);
+  tl.addEventListener("pointercancel", finishDrag);
+  tl.addEventListener("lostpointercapture", () => { pointerId = null; });
   const v = $("video");
   wireMediaBuffering(v, "viewer-buffer", "Buffering dance preview");
-  v.addEventListener("timeupdate", () => { $("playhead").style.left = pct(v.currentTime) + "%"; });
+  ["loadedmetadata", "durationchange", "resize"].forEach((name) =>
+    v.addEventListener(name, () => {
+      syncTimelineToVideo();
+      syncPlayhead();
+    }));
+  ["timeupdate", "seeking", "seeked", "pause", "ended"].forEach((name) =>
+    v.addEventListener(name, syncPlayhead));
+  v.addEventListener("play", startPlayheadLoop);
+  if (typeof ResizeObserver === "function") {
+    const observer = new ResizeObserver(() => {
+      syncTimelineToVideo();
+      drawSelection();
+      syncPlayhead();
+    });
+    observer.observe($("viewer"));
+    observer.observe(v);
+  }
+  window.addEventListener("resize", () => {
+    syncTimelineToVideo();
+    drawSelection();
+    syncPlayhead();
+  });
   [$("aSec"), $("bSec")].forEach((inp) => inp.addEventListener("change", () => setSel(parseFloat($("aSec").value) || 0, parseFloat($("bSec").value) || 0)));
 }
 
@@ -1172,6 +1389,7 @@ function runEdit() {
   const instruction = $("instruction").value.trim();
   if (!instruction) { toast("Type an instruction"); return; }
   const [a, b] = ST.sel;
+  const fromId = ST.branchBase || null;
   $("apply").disabled = true; $("feedback").textContent = ""; $("feedback").className = "feedback";
   $("goal").innerHTML = "";
   setProgressBar("progbar", "agentProgWrap", null);
@@ -1183,7 +1401,7 @@ function runEdit() {
   let sent = false, finished = false, fallbackStarted = false;
   ws.onopen = () => {
     activityUpdate("edit", { progress: 3, detail: "Sending the edit request" });
-    ws.send(JSON.stringify({ a_sec: a, b_sec: b, instruction }));
+    ws.send(JSON.stringify({ a_sec: a, b_sec: b, instruction, from_id: fromId }));
     sent = true;
   };
   ws.onmessage = (msg) => {
@@ -1210,7 +1428,7 @@ function runEdit() {
       fallbackStarted = true;
       $("progtext").textContent = "socket unavailable; retrying over HTTP\u2026";
       activityUpdate("edit", { progress: null, detail: "Retrying the edit over HTTP" });
-      runEditHTTP(a, b, instruction);
+      runEditHTTP(a, b, instruction, fromId);
       return;
     }
     finished = true;
@@ -1222,11 +1440,11 @@ function runEdit() {
   };
 }
 
-async function runEditHTTP(a, b, instruction) {
+async function runEditHTTP(a, b, instruction, fromId) {
   try {
     const r = await api(`/api/session/${ST.sid}/edit`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ a_sec: a, b_sec: b, instruction }) });
+      body: JSON.stringify({ a_sec: a, b_sec: b, instruction, from_id: fromId }) });
     onFinal(r);
   } catch (e) {
     activityFail("edit", e.message);
@@ -1357,6 +1575,10 @@ function renderTrace(trace) {
 
 function onFinal(payload) {
   const res = payload.result, st = payload.state;
+  const branchBase = ST.branchBase
+    ? ST.timeline.find((checkpoint) => checkpoint.id === ST.branchBase)
+    : null;
+  ST.branchBase = null;
   setProgressBar("progbar", "agentProgWrap", 100);
   $("progtext").textContent = "";
   if (res.agent_summary) {
@@ -1378,7 +1600,11 @@ function onFinal(payload) {
   showMetrics(res.metrics_before, res.metrics_after);
   $("apply").disabled = false;
   activityDone("edit", res.ok ? "Edit applied and verified" : "Best-effort edit checkpointed");
-  toast(res.ok ? "Edit applied + checkpointed" : "Best-effort edit checkpointed");
+  if (branchBase) {
+    toast(`Branch created from ${checkpointDisplayLabel(branchBase)}`);
+  } else {
+    toast(res.ok ? "Edit applied + checkpointed" : "Best-effort edit checkpointed");
+  }
   // NOTE: to see the edit as video, hit 🎬 Render. Metric deltas + history reflect the edit now.
 }
 
@@ -1433,14 +1659,51 @@ function showCurrentMetrics(m) {
 
 function renderHistory(timeline) {
   const ol = $("history"); ol.innerHTML = "";
-  (timeline || []).slice().reverse().forEach((c) => {
-    const li = document.createElement("li"); if (c.is_head) li.className = "head";
+  const list = Array.isArray(timeline) ? timeline : [];
+  const byId = new Map(list.map((checkpoint) => [checkpoint.id, checkpoint]));
+  list.slice().reverse().forEach((c) => {
+    const li = document.createElement("li");
+    const classes = [];
+    if (c.is_head) classes.push("head");
+    if (c.id === ST.branchBase) classes.push("branch-base");
+    if (c.is_ancestor_of_head) classes.push("ancestor");
+    if (c.is_branch) classes.push("branch");
+    li.className = classes.join(" ");
+    li.tabIndex = 0;
+    li.setAttribute("aria-current", c.is_head ? "true" : "false");
+    const lineage = EDITOR_UTILS.checkpointLineage(list, c.id);
+    const statedDepth = Number(c.depth);
+    const depth = Math.min(
+      4,
+      Number.isFinite(statedDepth) ? Math.max(0, statedDepth) : Math.max(0, lineage.length - 1),
+    );
+    li.style.paddingLeft = `${8 + depth * 7}px`;
     const ed = c.edit || {};
-    const badge = ed.objective ? `<span class="badge2 ${ed.ok === false ? "bad" : ""}">${ed.objective.replace(/_/g, " ")}</span>` : "";
-    const win = ed.window ? `<small>${(ed.window[0] / ST.fps).toFixed(0)}-${(ed.window[1] / ST.fps).toFixed(0)}s</small>` : "";
-    const label = c.label ? c.label.replace(/\s*\[[^\]]*\]/, "").replace(/_/g, " ") : "original";
-    li.innerHTML = `<span class="dot"></span><span class="lbl">${label}${win}</span>${badge}`;
-    li.onclick = async () => {
+    const objective = ed.objective == null ? "" : String(ed.objective);
+    const badge = objective
+      ? `<span class="badge2 ${ed.ok === false ? "bad" : ""}">${escapeHtml(objective.replace(/_/g, " "))}</span>`
+      : "";
+    const interval = EDITOR_UTILS.formatCheckpointInterval(c, ST.fps, ST.dur);
+    const label = checkpointDisplayLabel(c);
+    const parent = c.parent_id ? byId.get(c.parent_id) : null;
+    const parentText = parent ? `from ${checkpointDisplayLabel(parent)}` : "history root";
+    const branchBadge = c.is_branch ? `<span class="lineage-badge">branch</span>` : "";
+    const children = Array.isArray(c.children) ? c.children : [];
+    const forkBadge = children.length > 1
+      ? `<span class="lineage-badge">forks ${children.length}</span>`
+      : "";
+    const branchButton = c.is_head
+      ? `<button class="branch-btn current" type="button" disabled>Current</button>`
+      : `<button class="branch-btn" type="button" aria-pressed="${c.id === ST.branchBase}">`
+        + `${c.id === ST.branchBase ? "Selected" : "Branch"}</button>`;
+    li.innerHTML = `<span class="dot"></span><span class="history-copy">`
+      + `<span class="history-title"><span class="lbl">${escapeHtml(label)}</span>`
+      + `${interval ? `<small>${escapeHtml(interval)}</small>` : ""}${badge}</span>`
+      + `<span class="history-lineage">${escapeHtml(parentText)}${branchBadge}${forkBadge}</span></span>`
+      + branchButton;
+
+    const restore = async () => {
+      if (c.id === ST.head) return;
       activityStart("history", "Restoring version", `Loading ${c.label || "original"}`, null);
       try {
         const state = await api(`/api/session/${ST.sid}/restore`, {
@@ -1448,6 +1711,7 @@ function renderHistory(timeline) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ckpt_id: c.id }),
         });
+        ST.branchBase = null;
         applyState(state);
         activityDone("history", `${c.label || "Original"} restored`);
         toast("Rolled back to: " + (c.label || "original"));
@@ -1456,6 +1720,21 @@ function renderHistory(timeline) {
         toast("Restore failed: " + e.message);
       }
     };
+    li.onclick = restore;
+    li.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        restore();
+      }
+    };
+    const button = li.querySelector(".branch-btn:not(.current)");
+    if (button) {
+      button.onclick = (e) => {
+        e.stopPropagation();
+        selectBranchBase(c.id);
+      };
+      button.onkeydown = (e) => e.stopPropagation();
+    }
     ol.appendChild(li);
   });
 }
