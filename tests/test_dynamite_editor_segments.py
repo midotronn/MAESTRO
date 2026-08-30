@@ -325,7 +325,7 @@ def test_bad_preview_validation_publishes_nothing(tmp_path, monkeypatch):
     assert not list(source.parent.glob(".dynamite_fixture.segments-*.staging"))
 
 
-def test_production_config_tracks_approved_story_and_catalog_order():
+def test_production_config_tracks_approved_story_and_dynamite_only_catalog():
     config = builder._load_config(builder.DEFAULT_CONFIG)
     story_path = (
         ROOT
@@ -336,11 +336,6 @@ def test_production_config_tracks_approved_story_and_catalog_order():
         / "fd_dynamite_43089_STORY_bestofk.json"
     )
     story = json.loads(story_path.read_text(encoding="utf-8"))
-    approved = json.loads(
-        (
-            ROOT / "experiments" / "user_study" / "music" / "approved_songs.json"
-        ).read_text(encoding="utf-8")
-    )
     segments = config["segments"]
 
     assert [(segment["start_frame"], segment["end_frame"]) for segment in segments] == [
@@ -367,15 +362,8 @@ def test_production_config_tracks_approved_story_and_catalog_order():
     assert (segments[4]["end_frame"] - segments[4]["start_frame"]) / 30 == 45
 
     catalog = sorted(config["catalog"], key=lambda entry: entry["order"])
-    assert [entry["sid"] for entry in catalog[:5]] == [
-        segment["sid"] for segment in segments
-    ]
-    approved_other_sids = [
-        song["study_pod_sid"]
-        for song in sorted(approved["songs"], key=lambda song: song["order"])
-        if song["study_pod_sid"] != config["source"]["sid"]
-    ]
-    assert [entry["sid"] for entry in catalog[5:]] == approved_other_sids
+    assert [entry["sid"] for entry in catalog] == [segment["sid"] for segment in segments]
+    assert all(entry["kind"] == "segment" for entry in catalog)
     assert config["interview_policy"]["full_song_visible"] is False
     assert config["source"]["sid"] not in {entry["sid"] for entry in catalog}
 

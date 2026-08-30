@@ -36,8 +36,8 @@ copy `bank_<sid>_*.npy` into `server/media/<sid>/bank/`.
 The approved full Dynamite take remains the immutable source and is intentionally hidden from
 `MAESTRO_INTERVIEW_MODE`. The source-side catalog in
 `experiments/user_study/music/dynamite_editor_segments.json` instead exposes five 31–45 second
-choices first, followed by the other three approved songs. Since the editor opens the first API
-result, `Dynamite — Intro / First Drop` is the default.
+choices and no other songs. Since the editor opens the first API result,
+`Dynamite — Intro / First Drop` is the default.
 
 On the live pod, build or verify the section directories with:
 

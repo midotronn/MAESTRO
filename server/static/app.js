@@ -743,7 +743,7 @@ function wireControls() {
 const TOUR_KEY = "maestro_onboarded_v1";
 const TOUR_STEPS = [
   { el: "timeline", title: "1 · Pick the part to edit",
-    text: "Drag across this bar to choose the window of the dance you want to change. The shaded band is your window." },
+    text: "Drag across this bar to choose the window of the dance you want to change. The preview pauses at the shaded window's start so the displayed frame matches the start marker." },
   { el: "instruction", title: "2 · Say what you want",
     text: "Describe the change in plain English, for example \u201cmake it more energetic\u201d, \u201ctighten to the beat\u201d, \u201cclap to the right\u201d, or \u201cwave here\u201d. Named actions replace motion in the selected window; insertion is unavailable until it has its own visual audit. If you omit a direction, MAESTRO follows the dance flow." },
   { el: "motionPickerSummary", title: "3 · Browse 19 supported motions",
@@ -1073,9 +1073,22 @@ function drawSelection() {
   s.style.display = "block"; s.style.left = pct(a) + "%"; s.style.width = (pct(b) - pct(a)) + "%";
   $("aSec").value = a.toFixed(1); $("bSec").value = b.toFixed(1);
 }
+function seekPreviewToSelectionStart() {
+  const video = $("video");
+  const start = ST.sel && Number(ST.sel[0]);
+  if (!video || video.readyState < 1 || !Number.isFinite(start)) return;
+  video.pause();
+  const mediaDuration = Number.isFinite(video.duration) && video.duration > 0
+    ? video.duration
+    : ST.dur;
+  video.currentTime = Math.max(0, Math.min(start, mediaDuration));
+  syncPlayhead();
+}
 function setSel(a, b) {
   a = Math.max(0, Math.min(a, ST.dur)); b = Math.max(0, Math.min(b, ST.dur));
-  ST.sel = [Math.min(a, b), Math.max(a, b)]; drawSelection();
+  ST.sel = [Math.min(a, b), Math.max(a, b)];
+  drawSelection();
+  seekPreviewToSelectionStart();
 }
 
 function syncTimelineToVideo() {

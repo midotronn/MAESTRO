@@ -136,24 +136,6 @@
       "name": "Dynamite — Final Drop / Outro",
       "order": 5,
       "kind": "segment"
-    },
-    {
-      "sid": "can_t_stop_the_feeling_43322",
-      "name": "Can't Stop the Feeling!",
-      "order": 6,
-      "kind": "approved_full_song"
-    },
-    {
-      "sid": "uptown_funk_43352",
-      "name": "Uptown Funk",
-      "order": 7,
-      "kind": "approved_full_song"
-    },
-    {
-      "sid": "levitating_43228",
-      "name": "Levitating",
-      "order": 8,
-      "kind": "approved_full_song"
     }
   ]
 }
