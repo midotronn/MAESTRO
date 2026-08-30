@@ -1,8 +1,8 @@
 {
-  "validated_at": "2026-08-30T17:14:47-05:00",
+  "validated_at": "2026-08-30T18:32:15-05:00",
   "study_content_commit": "076411d9753442581d07f2a68dd35a9d785b2931",
-  "production_release_commit": "2b3909e799ee092877794ef0e87b93bc0388b2f2",
-  "deployment_commit": "2b3909e799ee092877794ef0e87b93bc0388b2f2",
+  "production_release_commit": "0580648ab34412ea152277c06e5f463fe883cc12",
+  "deployment_commit": "0580648ab34412ea152277c06e5f463fe883cc12",
   "rollback_snapshot": "/workspace/maestro-backups/study-player-before-v15-20260827T212344",
   "editor_base": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net",
   "website": {
@@ -26,10 +26,10 @@
   },
   "pod": {
     "id": "eg25wp3e2ho1rg",
-    "checkout_commit": "2b3909e799ee092877794ef0e87b93bc0388b2f2",
+    "checkout_commit": "0580648ab34412ea152277c06e5f463fe883cc12",
     "checkout_clean": true,
     "host": "213.173.109.45",
-    "ssh_port": 34088,
+    "ssh_port": 12179,
     "internal_port": 8011,
     "public_port": 8888,
     "healthy_workers": 10,
@@ -89,6 +89,36 @@
       "decoded_audio_complete": true,
       "aac_timing_tolerance_frames": 1
     },
+    "full_song_review": {
+      "available": true,
+      "source_frames": 6173,
+      "duration_seconds": 205.769,
+      "sections": 5,
+      "edited_sections_at_validation": 1,
+      "current_signature": "99e01092faf4a889ee75",
+      "render_elapsed_seconds": 38,
+      "rendered_video_bytes": 42448616,
+      "sha256": "9243085dcbfdf742b03c38d70566134be9e8a9ed84d25bc3d56a535801d81a7d",
+      "video_codec": "h264",
+      "video_frames": 6173,
+      "video_dimensions": [
+        1080,
+        1080
+      ],
+      "audio_codec": "aac",
+      "audio_sample_rate": 22050,
+      "audio_duration_seconds": 205.682,
+      "audio_mean_volume_db": -10.4,
+      "http_byte_range_verified": true,
+      "preview_persists_across_service_restart": true,
+      "section_boundaries_visual_verified": true,
+      "previous_next_navigation_verified": true,
+      "direct_section_navigation_verified": true,
+      "responsive_500px_verified": true,
+      "browser_playback_verified": true,
+      "post_restart_browser_verified": true,
+      "browser_errors": 0
+    },
     "motion_examples": {
       "bank_version": "1.3.1",
       "count": 19,
@@ -146,7 +176,9 @@
       },
       "half_turn_authored_degrees": 180,
       "half_turn_window_path_degrees": 360,
-      "half_turn_behavior_documented": true
+      "half_turn_behavior_documented": true,
+      "section_position_updates_before_preview_load": true,
+      "section_navigation_locked_while_loading": true
     },
     "validation_session": {
       "sid": "dynamite_climax_punch_drop",
@@ -253,6 +285,25 @@
       "responsive_500px_verified": true,
       "strict_four_gpu_verify_passed": true,
       "validation_session_reset_to_root": true,
+      "failed": 0
+    },
+    "full_song_review_release": {
+      "local_python_passed": 90,
+      "local_javascript_passed": 6,
+      "mock_browser_passed": true,
+      "pod_python_passed": 89,
+      "pod_python_skipped": 1,
+      "strict_four_gpu_verify_passed": true,
+      "live_render_passed": true,
+      "live_browser_passed": true,
+      "live_playback_passed": true,
+      "full_song_frames_verified": 6173,
+      "full_song_audio_verified": true,
+      "full_song_http_range_verified": true,
+      "full_song_restart_persistence_verified": true,
+      "post_restart_live_browser_passed": true,
+      "desktop_layout_verified": true,
+      "responsive_500px_verified": true,
       "failed": 0
     }
   },
