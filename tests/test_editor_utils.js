@@ -5,6 +5,7 @@ const test = require("node:test");
 const {
   checkpointInterval,
   checkpointLineage,
+  checkpointTree,
   formatCheckpointInterval,
   renderedMediaBox,
   timelineFraction,
@@ -33,6 +34,7 @@ test("checkpoint intervals normalize every persisted shape without error text", 
     {},
     { edit: null },
     { edit: { window: [null, "nope"] } },
+    { edit: { interval: { start_frame: null, end_frame: 90 } } },
     { interval: { start_sec: Number.NaN, end_sec: 2 } },
   ]) {
     assert.equal(formatCheckpointInterval(checkpoint, 30, 20), "");
@@ -70,4 +72,48 @@ test("checkpoint lineage is root first for backend and legacy timeline shapes", 
   assert.deepEqual(checkpointLineage(timeline, "b"), ["root", "a", "b"]);
   assert.deepEqual(checkpointLineage(timeline, "fork"), ["root", "a", "fork"]);
   assert.deepEqual(checkpointLineage(timeline, "missing"), []);
+});
+
+test("checkpoint tree is root first and groups descendants beneath each branch", () => {
+  const timeline = [
+    { id: "root", parent_id: null, children: ["first", "other"] },
+    { id: "first", parent_id: "root", children: ["head", "legacy"] },
+    { id: "head", parent_id: "first", children: [] },
+    { id: "legacy", parent_id: "first", children: [] },
+    { id: "other", parent_id: "root", children: [] },
+  ];
+  const tree = checkpointTree(timeline);
+  assert.deepEqual(
+    tree.map((node) => ({
+      id: node.checkpoint.id,
+      children: node.children.map((child) => ({
+        id: child.checkpoint.id,
+        children: child.children.map((grandchild) => grandchild.checkpoint.id),
+      })),
+    })),
+    [
+      {
+        id: "root",
+        children: [
+          { id: "first", children: ["head", "legacy"] },
+          { id: "other", children: [] },
+        ],
+      },
+    ],
+  );
+});
+
+test("checkpoint tree includes malformed or cyclic checkpoints once", () => {
+  const tree = checkpointTree([
+    { id: "orphan", parent_id: "missing" },
+    { id: "a", parent_id: "b" },
+    { id: "b", parent_id: "a" },
+  ]);
+  const ids = [];
+  const visit = (nodes) => nodes.forEach((node) => {
+    ids.push(node.checkpoint.id);
+    visit(node.children);
+  });
+  visit(tree);
+  assert.deepEqual(ids.sort(), ["a", "b", "orphan"]);
 });

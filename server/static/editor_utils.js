@@ -7,6 +7,7 @@
   "use strict";
 
   const number = (value) => {
+    if (value === null || value === "" || typeof value === "boolean") return null;
     const parsed = typeof value === "number" ? value : Number(value);
     return Number.isFinite(parsed) ? parsed : null;
   };
@@ -175,9 +176,76 @@
     return lineage.reverse();
   }
 
+  function checkpointTree(timeline) {
+    const source = Array.isArray(timeline) ? timeline : [];
+    const checkpoints = [];
+    const byId = new Map();
+    source.forEach((checkpoint, sourceIndex) => {
+      if (!checkpoint || checkpoint.id == null || byId.has(checkpoint.id)) return;
+      const entry = { checkpoint, sourceIndex };
+      checkpoints.push(entry);
+      byId.set(checkpoint.id, entry);
+    });
+
+    const childrenByParent = new Map();
+    checkpoints.forEach((entry) => {
+      const parentId = entry.checkpoint.parent_id;
+      if (!parentId || parentId === entry.checkpoint.id || !byId.has(parentId)) return;
+      if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
+      childrenByParent.get(parentId).push(entry);
+    });
+
+    const compare = (parentId) => {
+      const declared = byId.get(parentId)?.checkpoint?.children;
+      const declaredOrder = new Map(
+        (Array.isArray(declared) ? declared : []).map((id, index) => [id, index]),
+      );
+      return (left, right) => {
+        const leftDeclared = declaredOrder.has(left.checkpoint.id);
+        const rightDeclared = declaredOrder.has(right.checkpoint.id);
+        if (leftDeclared !== rightDeclared) return leftDeclared ? -1 : 1;
+        if (leftDeclared) {
+          return declaredOrder.get(left.checkpoint.id) - declaredOrder.get(right.checkpoint.id);
+        }
+        const leftTs = number(left.checkpoint.ts);
+        const rightTs = number(right.checkpoint.ts);
+        if (leftTs !== null && rightTs !== null && leftTs !== rightTs) return leftTs - rightTs;
+        return left.sourceIndex - right.sourceIndex;
+      };
+    };
+    childrenByParent.forEach((children, parentId) => children.sort(compare(parentId)));
+
+    const roots = checkpoints
+      .filter((entry) => {
+        const parentId = entry.checkpoint.parent_id;
+        return !parentId || parentId === entry.checkpoint.id || !byId.has(parentId);
+      })
+      .sort((left, right) => left.sourceIndex - right.sourceIndex);
+    const visited = new Set();
+    const build = (entry) => {
+      if (!entry || visited.has(entry.checkpoint.id)) return null;
+      visited.add(entry.checkpoint.id);
+      return {
+        checkpoint: entry.checkpoint,
+        children: (childrenByParent.get(entry.checkpoint.id) || [])
+          .map(build)
+          .filter(Boolean),
+      };
+    };
+    const tree = roots.map(build).filter(Boolean);
+    checkpoints.forEach((entry) => {
+      if (!visited.has(entry.checkpoint.id)) {
+        const node = build(entry);
+        if (node) tree.push(node);
+      }
+    });
+    return tree;
+  }
+
   return {
     checkpointInterval,
     checkpointLineage,
+    checkpointTree,
     formatCheckpointInterval,
     renderedMediaBox,
     timelineFraction,

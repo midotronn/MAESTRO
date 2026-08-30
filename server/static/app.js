@@ -1673,24 +1673,27 @@ function showCurrentMetrics(m) {
 function renderHistory(timeline) {
   const ol = $("history"); ol.innerHTML = "";
   const list = Array.isArray(timeline) ? timeline : [];
-  const byId = new Map(list.map((checkpoint) => [checkpoint.id, checkpoint]));
-  list.slice().reverse().forEach((c) => {
+  const tree = EDITOR_UTILS.checkpointTree(list);
+
+  const appendCheckpoint = (node, container, parentNode, depth) => {
+    const c = node.checkpoint;
+    const parent = parentNode ? parentNode.checkpoint : null;
+    const siblings = parentNode ? parentNode.children : tree;
+    const siblingIndex = Math.max(0, siblings.indexOf(node));
+    const children = node.children;
     const li = document.createElement("li");
     const classes = [];
+    classes.push("history-node");
+    if (!parent) classes.push("root");
+    if (children.length) classes.push("has-children");
+    if (children.length > 1) classes.push("has-fork");
     if (c.is_head) classes.push("head");
     if (c.id === ST.branchBase) classes.push("branch-base");
     if (c.is_ancestor_of_head) classes.push("ancestor");
     if (c.is_branch) classes.push("branch");
     li.className = classes.join(" ");
-    li.tabIndex = 0;
-    li.setAttribute("aria-current", c.is_head ? "true" : "false");
-    const lineage = EDITOR_UTILS.checkpointLineage(list, c.id);
-    const statedDepth = Number(c.depth);
-    const depth = Math.min(
-      4,
-      Number.isFinite(statedDepth) ? Math.max(0, statedDepth) : Math.max(0, lineage.length - 1),
-    );
-    li.style.paddingLeft = `${8 + depth * 7}px`;
+    li.dataset.checkpointId = c.id;
+    li.dataset.depth = String(depth);
     const ed = c.edit || {};
     const objective = ed.objective == null ? "" : String(ed.objective);
     const badge = objective
@@ -1698,22 +1701,35 @@ function renderHistory(timeline) {
       : "";
     const interval = EDITOR_UTILS.formatCheckpointInterval(c, ST.fps, ST.dur);
     const label = checkpointDisplayLabel(c);
-    const parent = c.parent_id ? byId.get(c.parent_id) : null;
-    const parentText = parent ? `from ${checkpointDisplayLabel(parent)}` : "history root";
-    const branchBadge = c.is_branch ? `<span class="lineage-badge">branch</span>` : "";
-    const children = Array.isArray(c.children) ? c.children : [];
+    const displayLabel = parent ? label : "Original dance";
+    const relationship = parent
+      ? siblings.length > 1
+        ? `Branch ${siblingIndex + 1} of ${siblings.length} from ${checkpointDisplayLabel(parent)}`
+        : `After ${checkpointDisplayLabel(parent)}`
+      : "Starting point";
     const forkBadge = children.length > 1
-      ? `<span class="lineage-badge">forks ${children.length}</span>`
+      ? `<span class="lineage-badge">${children.length} branches</span>`
+      : "";
+    const currentBadge = c.is_head
+      ? `<span class="history-current">Current</span>`
       : "";
     const branchButton = c.is_head
-      ? `<button class="branch-btn current" type="button" disabled>Current</button>`
-      : `<button class="branch-btn" type="button" aria-pressed="${c.id === ST.branchBase}">`
-        + `${c.id === ST.branchBase ? "Selected" : "Branch"}</button>`;
-    li.innerHTML = `<span class="dot"></span><span class="history-copy">`
-      + `<span class="history-title"><span class="lbl">${escapeHtml(label)}</span>`
-      + `${interval ? `<small>${escapeHtml(interval)}</small>` : ""}${badge}</span>`
-      + `<span class="history-lineage">${escapeHtml(parentText)}${branchBadge}${forkBadge}</span></span>`
-      + branchButton;
+      ? ""
+      : `<button class="branch-btn" type="button" aria-pressed="${c.id === ST.branchBase}" `
+        + `aria-label="Branch next edit from ${escapeHtml(displayLabel)}">`
+        + `${c.id === ST.branchBase ? "Selected" : "Branch here"}</button>`;
+    li.innerHTML = `<div class="history-row" aria-current="${c.is_head ? "true" : "false"}">`
+      + `<span class="history-marker" aria-hidden="true"></span><span class="history-copy">`
+      + `<span class="history-title"><span class="lbl">${escapeHtml(displayLabel)}</span>${currentBadge}</span>`
+      + `<span class="history-lineage"><span>${escapeHtml(relationship)}</span>`
+      + `${interval ? `<small>${escapeHtml(interval)}</small>` : ""}${badge}${forkBadge}</span></span>`
+      + `<span class="history-actions">${branchButton}</span></div>`;
+    const row = li.querySelector(".history-row");
+    if (!c.is_head) {
+      row.tabIndex = 0;
+      row.setAttribute("role", "button");
+      row.setAttribute("aria-label", `Restore ${displayLabel}${interval ? `, ${interval}` : ""}`);
+    }
 
     const restore = async () => {
       if (c.id === ST.head) return;
@@ -1733,14 +1749,14 @@ function renderHistory(timeline) {
         toast("Restore failed: " + e.message);
       }
     };
-    li.onclick = restore;
-    li.onkeydown = (e) => {
+    row.onclick = restore;
+    row.onkeydown = (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         restore();
       }
     };
-    const button = li.querySelector(".branch-btn:not(.current)");
+    const button = row.querySelector(".branch-btn");
     if (button) {
       button.onclick = (e) => {
         e.stopPropagation();
@@ -1748,8 +1764,27 @@ function renderHistory(timeline) {
       };
       button.onkeydown = (e) => e.stopPropagation();
     }
-    ol.appendChild(li);
-  });
+    container.appendChild(li);
+
+    if (children.length) {
+      const group = document.createElement("ol");
+      group.className = `history-children ${children.length > 1 ? "fork-group" : "linear-group"}`;
+      group.setAttribute("aria-label", `Versions after ${displayLabel}`);
+      children.forEach((child) => appendCheckpoint(child, group, node, depth + 1));
+      li.appendChild(group);
+    }
+  };
+
+  tree.forEach((node) => appendCheckpoint(node, ol, null, 0));
+  const current = ol.querySelector(".history-node.head > .history-row");
+  if (current) {
+    requestAnimationFrame(() => {
+      const listBox = ol.getBoundingClientRect();
+      const rowBox = current.getBoundingClientRect();
+      if (rowBox.bottom > listBox.bottom) ol.scrollTop += rowBox.bottom - listBox.bottom + 8;
+      if (rowBox.top < listBox.top) ol.scrollTop -= listBox.top - rowBox.top + 8;
+    });
+  }
 }
 
 init().catch((e) => toast("init failed: " + e.message));
