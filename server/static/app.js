@@ -1145,8 +1145,8 @@ async function loadSongs(maxAttempts = 20) {
   return [];
 }
 
-function updateSectionNavigation() {
-  const index = SONGS.findIndex((song) => song.sid === ST.sid);
+function updateSectionNavigation(sid = ST.sid) {
+  const index = SONGS.findIndex((song) => song.sid === sid);
   const total = SONGS.length;
   $("sectionPosition").textContent =
     index >= 0 && total ? `Section ${index + 1} of ${total}` : "Section";
@@ -1196,6 +1196,7 @@ async function openSession(sid) {
   const label = sel && sel.selectedOptions.length ? sel.selectedOptions[0].textContent : sid;
   activityStart("session", "Loading song", `Opening ${label}`, 8);
   if (sel) sel.disabled = true;
+  updateSectionNavigation(sid);
   let st = null;
   for (let i = 0; i < 4 && !st; i++) {
     try { st = await api(`/api/session/${sid}`, { method: "POST" }); }
@@ -1208,7 +1209,11 @@ async function openSession(sid) {
     }                                                            // pod may still be warming
   }
   if (!st) {
-    if (sel) sel.disabled = false;
+    if (sel) {
+      sel.value = ST.sid;
+      sel.disabled = false;
+    }
+    updateSectionNavigation();
     activityFail("session", `Could not open ${label}`);
     toast(`Couldn't open ${sid} \u2014 please refresh in a moment.`);
     return false;
