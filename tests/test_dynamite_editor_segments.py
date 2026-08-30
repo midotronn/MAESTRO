@@ -196,7 +196,9 @@ def _fake_media_tools(
             "has_audio": True,
             "audio_sample_rate": payload["sample_rate"],
             "audio_channels": payload["channels"],
-            "audio_duration_seconds": payload["video_frames"] / payload["fps"],
+            "audio_duration_seconds": (
+                payload["video_frames"] / payload["fps"] - 7 / payload["sample_rate"]
+            ),
             "video_duration_seconds": payload["video_frames"] / payload["fps"],
             "format_duration_seconds": payload["video_frames"] / payload["fps"],
         }

@@ -920,13 +920,14 @@ def _build_segment(
         )
     expected_duration = frames / fps
     audio_duration = preview_probe["audio_duration_seconds"]
+    aac_duration_tolerance = 1024 / audio.sample_rate
     if (
         audio_duration is None
-        or abs(audio_duration - expected_duration) > 1 / audio.sample_rate
+        or abs(audio_duration - expected_duration) > aac_duration_tolerance
     ):
         raise BuildError(
             f"{segment['sid']} preview audio timeline is {audio_duration}, "
-            f"expected {expected_duration:.9f}s"
+            f"expected {expected_duration:.9f}s within one AAC frame"
         )
     decoded_audio_samples = _count_decoded_audio_samples(
         preview,
