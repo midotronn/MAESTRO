@@ -88,6 +88,12 @@ def _run_gpu_guard(
         environment.pop("NVIDIA_VISIBLE_DEVICES", None)
     environment.pop("LD_PRELOAD", None)
     environment.pop("AGENTLODGE_RENDER_MULTI_GPU", None)
+    environment.pop("AGENTLODGE_EGL_SELECTOR_SHIM", None)
+    if validate_shim:
+        environment["AGENTLODGE_EGL_SELECTOR_SHIM"] = _bash_path(
+            bash,
+            tmp_path / "missing-selector.so",
+        )
     if requested is not None:
         environment["AGENTLODGE_GPU_INDEX"] = requested
     return subprocess.run(

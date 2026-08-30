@@ -1,13 +1,15 @@
 {
-  "validated_at": "2026-08-27T22:36:19-05:00",
+  "validated_at": "2026-08-30T14:44:00-05:00",
   "study_content_commit": "076411d9753442581d07f2a68dd35a9d785b2931",
-  "deployment_commit": "cb87362c87032c0392b366aecf8d69de3704925b",
+  "deployment_commit": "7352af1c6d55df3a7e9f9b369822d19636283842",
   "rollback_snapshot": "/workspace/maestro-backups/study-player-before-v15-20260827T212344",
   "editor_base": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net",
   "website": {
     "url": "https://midotronn.github.io/MAESTRO/",
     "config_url": "https://midotronn.github.io/MAESTRO/static/data/config.json",
     "resolved_editor_url": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/",
+    "resolved_editor_buttons": 2,
+    "browser_errors": 0,
     "status": "passed"
   },
   "generation": {
@@ -23,49 +25,118 @@
   },
   "pod": {
     "id": "eg25wp3e2ho1rg",
-    "ssh_port": 33054,
+    "host": "213.173.109.45",
+    "ssh_port": 34088,
     "internal_port": 8011,
     "public_port": 8888,
     "healthy_workers": 10,
     "expected_workers": 10,
+    "public_songs": 8,
+    "study_player": true,
+    "planner_configured": true,
+    "planner_verified": true,
+    "planner_model": "gpt-4o",
+    "strict_verify_status": "FOUR_GPU_POD_READY",
+    "temporary_segment_files_absent": true,
     "status": "passed"
   },
   "editor": {
-    "default_song_sid": "dynamite_43089",
-    "default_song_name": "Dynamite",
+    "default_song_sid": "dynamite_intro_first_drop",
+    "default_song_name": "Dynamite — Intro / First Drop",
     "browser_default_verified": true,
     "songs": [
       {
-        "sid": "dynamite_43089",
-        "name": "Dynamite",
-        "duration_seconds": 205.768,
-        "browser_ready_state": 4,
-        "generator": "live pod"
+        "sid": "dynamite_intro_first_drop",
+        "name": "Dynamite — Intro / First Drop",
+        "duration_seconds": 41.266667,
+        "browser_playback_verified": true
+      },
+      {
+        "sid": "dynamite_climax_jump_drop",
+        "name": "Dynamite — Climax Drop (Jump)",
+        "duration_seconds": 44.866667,
+        "browser_playback_verified": true
+      },
+      {
+        "sid": "dynamite_climax_punch_drop",
+        "name": "Dynamite — Climax Drop (Punch)",
+        "duration_seconds": 43.6,
+        "browser_playback_verified": true
+      },
+      {
+        "sid": "dynamite_chorus_handoff",
+        "name": "Dynamite — Chorus Handoff",
+        "duration_seconds": 31.033333,
+        "browser_playback_verified": true
+      },
+      {
+        "sid": "dynamite_final_drop_outro",
+        "name": "Dynamite — Final Drop / Outro",
+        "duration_seconds": 45.0,
+        "browser_playback_verified": true
       },
       {
         "sid": "can_t_stop_the_feeling_43322",
         "name": "Can't Stop the Feeling!",
         "duration_seconds": 236.135,
-        "browser_ready_state": 4,
-        "generator": "live pod"
+        "browser_playback_verified": true
       },
       {
         "sid": "uptown_funk_43352",
         "name": "Uptown Funk",
         "duration_seconds": 268.201,
-        "browser_ready_state": 4,
-        "generator": "live pod"
+        "browser_playback_verified": true
       },
       {
         "sid": "levitating_43228",
         "name": "Levitating",
         "duration_seconds": 202.068,
-        "browser_ready_state": 4,
-        "generator": "live pod"
+        "browser_playback_verified": true
       }
     ],
+    "dynamite_segments": {
+      "count": 5,
+      "atomic_build": true,
+      "idempotent_rebuild_verified": true,
+      "full_source_preserved": true,
+      "decoded_audio_complete": true,
+      "aac_timing_tolerance_frames": 1
+    },
+    "motion_examples": {
+      "count": 19,
+      "available": 19,
+      "browser_dialogs_opened": 19,
+      "duration_range_seconds": [
+        5.6,
+        5.9
+      ],
+      "total_bytes": 1895563,
+      "generated_with_motion_bank_apply": true
+    },
+    "feedback_release": {
+      "legacy_intervals_normalized": true,
+      "malformed_intervals_render_blank": true,
+      "branchable_history_verified": true,
+      "branch_lineage_verified": true,
+      "timeline_tracks_rendered_video_box": true,
+      "playhead_midpoint_percent": 50,
+      "desktop_layout_stable": true,
+      "desktop_viewer_height_pixels": 468,
+      "narrow_layout_stable": true,
+      "narrow_viewer_height_pixels": 558,
+      "motion_catalog_collapsed_by_default": true,
+      "half_turn_authored_degrees": 180,
+      "half_turn_window_path_degrees": 360,
+      "half_turn_behavior_documented": true
+    },
+    "validation_session": {
+      "sid": "dynamite_climax_punch_drop",
+      "checkpoint_count_after_reset": 1,
+      "head_is_root": true
+    },
     "study_link": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/study/",
     "project_link": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/project/",
+    "browser_errors": 0,
     "status": "passed"
   },
   "study_player": {
@@ -74,40 +145,57 @@
     "excerpt_duration_seconds": 16,
     "comparisons": 6,
     "published_videos": 6,
+    "browser_verified_durations_seconds": [
+      16,
+      16,
+      16,
+      16,
+      16,
+      16
+    ],
     "source_mix": {
       "Dynamite": 2,
       "Uptown Funk": 4
     },
     "fixed_for_all_participants": true,
     "balanced_lane_positions": true,
-    "range_requests_passed": 6,
-    "browser_ready_state": 4,
-    "playback_duration_seconds": 16,
+    "response_form_link_verified": true,
+    "browser_errors": 0,
     "status": "passed"
   },
   "response_form": {
     "url": "https://docs.google.com/forms/d/e/1FAIpQLSdNsCS2AHE-uB02KnrOzz9_D9M8L03zHxWvmjfVCc4Ar_jfyg/viewform",
     "title": "MAESTRO Expert Study",
+    "accepting_responses": true,
+    "form_items": 33,
+    "response_prompts": 28,
+    "response_fields": 52,
+    "responses_at_verification": 1,
+    "optional_dance_quality_question": true,
+    "optional_dance_quality_help_verified": true,
+    "participant_approval_status_text_absent": true,
+    "public_browser_path_verified": true,
     "status": "passed"
   },
   "tests": {
-    "local_affected": {
-      "passed": 79,
+    "local_release": {
+      "python_passed": 108,
+      "javascript_passed": 4,
       "failed": 0
     },
-    "pod_affected": {
-      "passed": 78,
-      "skipped": 1,
-      "failed": 0
+    "pod_release_focused": {
+      "passed": 723,
+      "skipped": 2,
+      "failed": 0,
+      "duration_seconds": 357.97
     },
     "pod_full": {
-      "passed": 1113,
+      "passed": 1133,
       "skipped": 2,
-      "environment_specific_failures": [
-        "tests/test_render_multigpu.py::test_gpu_guard_rejects_missing_selector_shim"
-      ],
-      "failure_note": "The guard test expects the selector shim to be absent, but the configured production pod intentionally has the real shim installed. All other full-suite tests passed."
+      "failed": 0,
+      "duration_seconds": 455.67
     }
   },
+  "launch_blockers": [],
   "status": "passed"
 }
