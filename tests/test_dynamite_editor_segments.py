@@ -394,7 +394,8 @@ def test_ffmpeg_command_uses_frame_and_sample_exact_filters(tmp_path):
 
     assert "trim=start_frame=123:end_frame=456,setpts=N/(30*TB)" in command
     assert "atrim=start_sample=0:end_sample=244755,asetpts=PTS-STARTPTS" in command
-    assert command[command.index("-frames:v") + 1] == "333"
+    assert "-frames:v" not in command
+    assert command[command.index("-t") + 1] == "11.100000000"
     assert command[command.index("-ar") + 1] == "22050"
     assert command[-1].endswith("preview.mp4")
 
