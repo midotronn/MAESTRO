@@ -1,8 +1,8 @@
 {
-  "validated_at": "2026-08-30T15:31:41-05:00",
+  "validated_at": "2026-08-30T16:51:05-05:00",
   "study_content_commit": "076411d9753442581d07f2a68dd35a9d785b2931",
-  "production_release_commit": "d527586af15549f31fefa70b6e1fae4190ed7d5e",
-  "deployment_commit": "d527586af15549f31fefa70b6e1fae4190ed7d5e",
+  "production_release_commit": "4ad11c13e5fa0e81e2c907c436db14fe72ffe122",
+  "deployment_commit": "4ad11c13e5fa0e81e2c907c436db14fe72ffe122",
   "rollback_snapshot": "/workspace/maestro-backups/study-player-before-v15-20260827T212344",
   "editor_base": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net",
   "website": {
@@ -26,7 +26,7 @@
   },
   "pod": {
     "id": "eg25wp3e2ho1rg",
-    "checkout_commit": "d527586af15549f31fefa70b6e1fae4190ed7d5e",
+    "checkout_commit": "4ad11c13e5fa0e81e2c907c436db14fe72ffe122",
     "checkout_clean": true,
     "host": "213.173.109.45",
     "ssh_port": 34088,
@@ -90,6 +90,7 @@
       "aac_timing_tolerance_frames": 1
     },
     "motion_examples": {
+      "bank_version": "1.3.1",
       "count": 19,
       "available": 19,
       "browser_dialogs_opened": 19,
@@ -97,8 +98,18 @@
         5.6,
         5.9
       ],
-      "total_bytes": 1895563,
-      "generated_with_motion_bank_apply": true
+      "total_bytes": 1887793,
+      "generated_with_motion_bank_apply": true,
+      "overhead_clap": {
+        "sha256": "acc2a571ddc0bd5c6c6e75ea9042650f695a4ee80ca416c259e1468c24def886",
+        "bytes": 63903,
+        "duration_seconds": 5.6,
+        "dimensions": [
+          640,
+          640
+        ],
+        "full_body_visible": true
+      }
     },
     "feedback_release": {
       "legacy_intervals_normalized": true,
@@ -116,6 +127,16 @@
       "narrow_layout_stable": true,
       "narrow_viewer_height_pixels": 558,
       "motion_catalog_collapsed_by_default": true,
+      "overhead_clap_wrist_gap_meters": 0.05,
+      "overhead_clap_ordered_in_all_directions": true,
+      "overhead_clap_requested_intensity_tested": 1.0,
+      "overhead_clap_effective_intensity": 0.5,
+      "motion_preview_card_width_pixels": 900,
+      "motion_preview_media_pixels": {
+        "desktop_1440x900": 648,
+        "narrow_800x900": 648,
+        "desktop_1440x1000": 720
+      },
       "half_turn_authored_degrees": 180,
       "half_turn_window_path_degrees": 360,
       "half_turn_behavior_documented": true
@@ -181,10 +202,10 @@
       "duration_seconds": 357.97
     },
     "pod_full": {
-      "passed": 1133,
+      "passed": 1142,
       "skipped": 2,
       "failed": 0,
-      "duration_seconds": 455.67
+      "duration_seconds": 416.81
     },
     "dynamite_only_timeline_update": {
       "python_passed": 89,
@@ -192,6 +213,26 @@
       "mock_browser_passed": true,
       "live_browser_passed": true,
       "study_player_regression_passed": true,
+      "failed": 0
+    },
+    "overhead_clap_preview_fix": {
+      "local_python_passed": 4,
+      "local_javascript_passed": 4,
+      "pod_targeted_passed": 25,
+      "pod_motion_bank_passed": 606,
+      "pod_motion_bank_skipped": 1,
+      "pod_audit_agent_passed": 118,
+      "pod_server_passed": 83,
+      "pod_server_skipped": 1,
+      "pod_full_passed": 1142,
+      "pod_full_skipped": 2,
+      "mock_browser_passed": true,
+      "live_browser_passed": true,
+      "live_maximum_intensity_edit_passed": true,
+      "strict_four_gpu_verify_passed": true,
+      "study_player_regression_passed": true,
+      "website_links_passed": true,
+      "form_regression_passed": true,
       "failed": 0
     }
   },
