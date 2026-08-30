@@ -664,6 +664,8 @@ def test_setup_and_launcher_wire_selector_without_global_preload():
     assert 'AGENTLODGE_FILAMENT_FAST_GROUNDING:-0' in four_gpu_server
     assert 'AGENTLODGE_FILAMENT_FOOT_GROUNDING:-1' in four_gpu_server
     assert 'AGENTLODGE_SLA_HOST:-127.0.0.1' in four_gpu_server
+    assert "MAESTRO_GENERATION_ENV_FILE" in four_gpu_server
+    assert '. "$GENERATION_ENV_FILE"' in four_gpu_server
     assert 'AGENTLODGE_SLA_PORT="$AGENTLODGE_PUBLIC_PORT"' in setup_four
     assert 'MAESTRO_INTERVIEW_MODE="${MAESTRO_PUBLIC_INTERVIEW_MODE:-0}"' in setup_four
     assert "AGENTLODGE_PUBLIC_PORT='$publicPort'" in pod_helper

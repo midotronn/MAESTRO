@@ -2,6 +2,13 @@
 set -euo pipefail
 
 WORKSPACE="${WORKSPACE:-/workspace}"
+GENERATION_ENV_FILE="${MAESTRO_GENERATION_ENV_FILE:-$WORKSPACE/.maestro_generation.env}"
+if [ -f "$GENERATION_ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$GENERATION_ENV_FILE"
+  set +a
+fi
 ROOT="$WORKSPACE/AgentLODGE"
 LOG="${AGENTLODGE_SLA_LOG:-$WORKSPACE/maestro-sla-server.log}"
 PID_FILE="${AGENTLODGE_SLA_PID_FILE:-$WORKSPACE/maestro-sla-server.pid}"
