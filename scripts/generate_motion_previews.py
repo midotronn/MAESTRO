@@ -2,8 +2,9 @@
 """Render deterministic per-motion editor examples through the canonical Y-Bot pod renderer.
 
 The examples use ``MotionBank.apply`` on a neutral host, not the raw clips, so they show the same
-composition and root-residual behavior a researcher sees after an editor action. One reel is
-rendered and then split into 19 MP4 files to avoid paying Blender startup for every motion.
+composition and root-residual behavior a researcher sees after an editor action. A full build uses
+one reel for all 19 motions; ``--motion-id`` regenerates one changed example and refreshes the
+complete manifest without rerendering the other 18.
 """
 
 from __future__ import annotations
@@ -53,11 +54,15 @@ def _preview_window(bank: MotionBank, motion_id: str) -> tuple[np.ndarray, dict]
     return held.astype(np.float32), report
 
 
-def build_preview_reel(bank: MotionBank | None = None) -> tuple[np.ndarray, list[dict]]:
+def build_preview_reel(
+    bank: MotionBank | None = None,
+    motion_ids: tuple[str, ...] | None = None,
+) -> tuple[np.ndarray, list[dict]]:
     bank = bank or MotionBank()
     reel = np.zeros((0, 139), dtype=np.float32)
     spans: list[dict] = []
-    for spec in bank.specs:
+    specs = bank.specs if motion_ids is None else tuple(bank.resolve(item) for item in motion_ids)
+    for spec in specs:
         example, report = _preview_window(bank, spec.id)
         if reel.shape[0]:
             bridge = np.repeat(example[:1], BRIDGE_FRAMES, axis=0)
@@ -156,10 +161,15 @@ def _split_reel(ffmpeg: str, reel: Path, output_dir: Path, spans: list[dict]) ->
             raise RuntimeError(f"ffmpeg did not produce a usable preview: {output}")
 
 
-def verify_previews(output_dir: Path, bank: MotionBank | None = None) -> list[str]:
+def verify_previews(
+    output_dir: Path,
+    bank: MotionBank | None = None,
+    motion_ids: tuple[str, ...] | None = None,
+) -> list[str]:
     bank = bank or MotionBank()
+    specs = bank.specs if motion_ids is None else tuple(bank.resolve(item) for item in motion_ids)
     failures = []
-    for spec in bank.specs:
+    for spec in specs:
         path = output_dir / f"{spec.id}.mp4"
         if not path.is_file() or path.stat().st_size < 1024:
             failures.append(spec.id)
@@ -176,18 +186,24 @@ def main() -> int:
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=640)
     parser.add_argument("--samples", type=int, default=16)
+    parser.add_argument(
+        "--motion-id",
+        help="Regenerate one motion preview and refresh the complete preview manifest.",
+    )
     parser.add_argument("--keep-build", action="store_true")
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
 
     output_dir = args.output_dir.resolve()
     bank = MotionBank()
+    selected = (bank.resolve(args.motion_id).id,) if args.motion_id else None
     if args.check:
-        failures = verify_previews(output_dir, bank)
+        failures = verify_previews(output_dir, bank, selected)
         if failures:
             print("Missing or invalid motion previews: " + ", ".join(failures), file=sys.stderr)
             return 1
-        print(f"Verified {len(bank.specs)} motion previews in {output_dir}")
+        count = len(bank.specs) if selected is None else len(selected)
+        print(f"Verified {count} motion previews in {output_dir}")
         return 0
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -197,7 +213,7 @@ def main() -> int:
     build_dir.mkdir(parents=True)
     reel_path = build_dir / "motion_previews.npy"
     reel_video = build_dir / "motion_previews.mp4"
-    reel, spans = build_preview_reel(bank)
+    reel, spans = build_preview_reel(bank, selected)
     np.save(reel_path, reel)
     (build_dir / "motion_previews.json").write_text(
         json.dumps({"fps": FPS, "frames": len(reel), "spans": spans}, indent=2),
@@ -216,6 +232,10 @@ def main() -> int:
     if failures:
         raise RuntimeError("preview generation incomplete: " + ", ".join(failures))
 
+    if selected is not None:
+        _, manifest_spans = build_preview_reel(bank)
+    else:
+        manifest_spans = spans
     manifest = {
         "schema_version": PREVIEW_SCHEMA,
         "bank_version": bank.version,
@@ -228,7 +248,7 @@ def main() -> int:
                 "sha256": _sha256(output_dir / f"{span['id']}.mp4"),
                 "bytes": (output_dir / f"{span['id']}.mp4").stat().st_size,
             }
-            for span in spans
+            for span in manifest_spans
         ],
     }
     (output_dir / "manifest.json").write_text(

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "bank_version": "1.3.0",
+  "bank_version": "1.3.1",
   "motions": [
     {
       "id": "clap_single",
@@ -116,7 +116,8 @@
         "event_pose_joints": [13, 14, 16, 17, 18, 19, 20, 21],
         "phase_joints": [13, 14, 16, 17, 18, 19, 20, 21],
         "phase_blend_frames": 14,
-        "intensity_lock_frames": [27, 28, 29, 30, 31, 32, 33]
+        "intensity_lock_frames": [27, 28, 29, 30, 31, 32, 33],
+        "maximum_intensity": 0.5
       }
     },
     {

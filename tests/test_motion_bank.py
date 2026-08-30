@@ -128,6 +128,12 @@ def _clap_hand_alignment(motion, frame):
     return float(left_palm @ right_palm), float(left_fingers @ right_fingers)
 
 
+def _wrist_lateral_separation(joints):
+    lateral = joints[:, 16] - joints[:, 17]
+    lateral /= np.linalg.norm(lateral, axis=1, keepdims=True)
+    return np.sum((joints[:, 20] - joints[:, 21]) * lateral, axis=1)
+
+
 def test_manifest_has_nineteen_valid_redistributable_motions():
     bank = default_motion_bank()
     assert len(bank.specs) == 19
@@ -153,6 +159,9 @@ def test_motion_preview_reel_contains_one_composed_example_for_every_manifest_en
     assert [span["id"] for span in spans] == [spec.id for spec in bank.specs]
     assert all(span["end"] > span["start"] for span in spans)
     assert all(span["repeats"] == 1 for span in spans)
+    single, single_spans = build_preview_reel(bank, ("clap_overhead",))
+    assert single.shape[1] == 139
+    assert [span["id"] for span in single_spans] == ["clap_overhead"]
 
 
 @needs_fk
@@ -655,6 +664,9 @@ def test_named_motions_default_to_a_slight_exaggeration():
     for spec in bank.specs:
         _out, report = bank.apply(base, spec.id, beats=np.arange(0, 180, 15))
         assert report["intensity"] == pytest.approx(0.65), spec.id
+        assert report["requested_intensity"] == pytest.approx(0.65), spec.id
+        expected = 0.5 if spec.id == "clap_overhead" else 0.65
+        assert report["effective_intensity"] == pytest.approx(expected), spec.id
 
 
 def test_rise_reach_has_time_to_read_as_a_planted_level_change():
@@ -816,9 +828,15 @@ def test_default_clap_exaggeration_preserves_safe_contact(motion_id):
     boosted_delta = np.linalg.norm(_matrix_to_axis_angle(
         boosted_rot[:, joints] @ np.swapaxes(base_rot[:, joints], -1, -2)
     ), axis=-1)
-    assert float(np.sqrt(np.mean(boosted_delta ** 2))) > (
-        1.005 * float(np.sqrt(np.mean(neutral_delta ** 2)))
-    )
+    boosted_rms = float(np.sqrt(np.mean(boosted_delta ** 2)))
+    neutral_rms = float(np.sqrt(np.mean(neutral_delta ** 2)))
+    spec = default_motion_bank().resolve(motion_id)
+    if spec.maximum_intensity is None:
+        assert boosted_rms > 1.005 * neutral_rms
+    else:
+        assert boosted_rms == pytest.approx(neutral_rms)
+        assert boosted_report["requested_intensity"] == pytest.approx(0.65)
+        assert boosted_report["effective_intensity"] == pytest.approx(spec.maximum_intensity)
     assert boosted_report["event_frame"] == neutral_report["event_frame"]
 
 
@@ -1451,7 +1469,10 @@ def test_clap_regression_keeps_dancing_and_makes_visible_contact(motion_id):
             + float((after_global[event, 21] @ np.array([-1.0, 0.0, 0.0]))[2])
         )
 
-        assert gap < 0.01, (motion_id, direction, gap)
+        if motion_id == "clap_overhead":
+            assert 0.04 < gap < 0.07, (motion_id, direction, gap)
+        else:
+            assert gap < 0.01, (motion_id, direction, gap)
         assert palm_dot < -0.98, (motion_id, direction, palm_dot)
         assert finger_dot > 0.98, (motion_id, direction, finger_dot)
         if motion_id == "clap_overhead":
@@ -2527,6 +2548,64 @@ def test_the_overhead_clap_actually_clears_the_head():
 
 
 @needs_fk
+@pytest.mark.parametrize("direction", ["forward", "left", "right"])
+def test_the_overhead_clap_palms_meet_without_the_wrists_crossing(direction):
+    from server.fk import compute_poses
+
+    bank = default_motion_bank()
+    spec = bank.resolve("clap_overhead")
+    clip = bank.load_clip(spec, direction=direction)
+    joints = compute_poses(clip)["fk_joints"]
+    raised = np.minimum(joints[:, 20, 2], joints[:, 21, 2]) > joints[:, 15, 2]
+    separation = _wrist_lateral_separation(joints)
+    assert raised.any()
+    assert float(separation[raised].min()) > 0.04, (direction, separation[raised])
+    gap = float(np.linalg.norm(
+        joints[spec.event_frame, 20] - joints[spec.event_frame, 21]
+    ))
+    assert 0.04 < gap < 0.07, (direction, gap)
+
+
+@needs_fk
+@pytest.mark.parametrize("direction", ["forward", "left", "right"])
+@pytest.mark.parametrize("requested_intensity", [0.65, 1.0])
+def test_composed_overhead_clap_caps_intensity_before_the_hands_can_cross(
+    direction,
+    requested_intensity,
+):
+    from server.fk import compute_poses
+
+    case = np.load(_CLAP_REGRESSION)
+    bank = default_motion_bank()
+    output, report = bank.apply(
+        case["host"].astype(np.float32),
+        "clap_overhead",
+        beats=case["beats"],
+        beat_strengths=case["beat_strengths"],
+        direction=direction,
+        intensity=requested_intensity,
+    )
+    assert report["intensity"] == pytest.approx(requested_intensity)
+    assert report["requested_intensity"] == pytest.approx(requested_intensity)
+    assert report["effective_intensity"] == pytest.approx(0.5)
+    assert report["maximum_intensity"] == pytest.approx(0.5)
+
+    joints = compute_poses(output)["fk_joints"]
+    start, end = report["action_range"]
+    raised = np.minimum(joints[:, 20, 2], joints[:, 21, 2]) > joints[:, 15, 2]
+    in_action = np.zeros(len(joints), dtype=bool)
+    in_action[start:end] = True
+    raised &= in_action
+    separation = _wrist_lateral_separation(joints)
+    assert raised.any()
+    assert float(separation[raised].min()) > 0.04, (
+        direction,
+        requested_intensity,
+        separation[raised],
+    )
+
+
+@needs_fk
 def test_the_overhead_clap_keeps_the_hands_continuous_with_the_forearms():
     from agentlodge.dance.transition import _matrix_to_axis_angle
     from server.fk import compute_poses
@@ -2584,7 +2663,7 @@ def test_jump_arms_up_is_a_wide_v_not_an_overhead_clap_on_the_real_host():
         clap_joints[clap_event, 20] - clap_joints[clap_event, 21]
     ))
     assert jump_gap > 0.65, jump_gap
-    assert clap_gap < 0.01, clap_gap
+    assert 0.04 < clap_gap < 0.07, clap_gap
     assert jump_gap > clap_gap + 0.60
     assert float(
         min(jump_joints[jump_event, 20, 2], jump_joints[jump_event, 21, 2])

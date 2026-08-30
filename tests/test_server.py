@@ -1389,6 +1389,8 @@ def test_lists_named_motions_from_the_shared_manifest(client):
     assert clap["preview_available"] is False
     assert clap["source"] and clap["license"] and clap["attribution"]
     assert next(m for m in data["motions"] if m["id"] == "wave")["name"] == "Hand wave"
+    overhead = next(m for m in data["motions"] if m["id"] == "clap_overhead")
+    assert overhead["composition"]["maximum_intensity"] == 0.5
     assert "90°" in next(m for m in data["motions"] if m["id"] == "turn_quarter")["name"]
     assert "180°" in next(m for m in data["motions"] if m["id"] == "turn_half")["name"]
 

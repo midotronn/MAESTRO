@@ -392,7 +392,7 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
   background: rgba(15,18,28,.64); cursor: default;
 }
 .motion-preview-card {
-  position: relative; z-index: 1; width: min(620px, 94vw); max-height: 92vh; overflow-y: auto;
+  position: relative; z-index: 1; width: min(900px, 96vw); max-height: 96vh; overflow-y: auto;
   border: 1px solid var(--line2); border-radius: 16px; padding: 16px;
   background: var(--card); box-shadow: 0 24px 70px rgba(10,15,30,.35);
 }
@@ -404,8 +404,9 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
 }
 .motion-preview-head h3 { margin: 3px 0 0; font: 700 20px/1.25 var(--head-font); }
 .motion-preview-media {
-  position: relative; display: grid; place-items: center; width: 100%; min-height: 180px;
-  aspect-ratio: 16 / 10; overflow: hidden; border: 1px solid var(--line);
+  position: relative; display: grid; place-items: center;
+  width: min(100%, 72vh, 760px); aspect-ratio: 1; margin-inline: auto;
+  overflow: hidden; border: 1px solid var(--line);
   border-radius: 12px; background: #edf0f7;
 }
 .motion-preview-media video { width: 100%; height: 100%; object-fit: contain; background: #111827; }
@@ -643,7 +644,6 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
   .branch-state small { white-space: normal; }
   .motion-preview { padding: 9px; }
   .motion-preview-card { width: 100%; padding: 13px; }
-  .motion-preview-media { min-height: 150px; aspect-ratio: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

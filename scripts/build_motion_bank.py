@@ -357,6 +357,10 @@ def _solve_arm(
 # was composed onto asymmetric real choreography, even though the canonical stance still passed
 # its wrist-distance check.
 _CLAP_HALF_GAP = 0.003
+# Overhead palms need more room because their wrist centers sit side by side above the head.
+# Reusing the chest-clap gap makes the hand meshes pass through one another even when the wrist
+# joints technically remain ordered.
+_CLAP_OVERHEAD_HALF_GAP = 0.025
 
 # Where the palms meet. In the template frame the shoulders sit at y=+0.083 and the chest
 # (spine3) at y=-0.057, so a clap belongs a little BELOW the chest line. This was authored at
@@ -451,7 +455,7 @@ def _clap_arms(
     # The palms meet at the midline, so each WRIST stops half a hand short of it. Aiming both
     # hands at x=0 asks two wrists to occupy one point: the solver obliges, the forearms pass
     # through each other, and the clap reads as folded, tangled arms rather than a clap.
-    half = _CLAP_HALF_GAP
+    half = _CLAP_OVERHEAD_HALF_GAP if overhead else _CLAP_HALF_GAP
     # Keep the overhead target above the head but inside both arms' reachable intersection.
     # The old (0.62, 0.18) target sat about 7 cm beyond full extension, so each arm stopped on
     # its own reach boundary and the palms could never meet.

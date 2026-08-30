@@ -92,6 +92,7 @@ class MotionSpec:
     carry_root_rotation: bool
     event_pose_joints: tuple[int, ...]
     intensity_lock_frames: tuple[int, ...]
+    maximum_intensity: float | None
     phase_joints: tuple[int, ...]
     phase_blend_frames: int | None
     minimum_frames: int
@@ -136,6 +137,11 @@ class MotionSpec:
         )
         if any(frame < 0 or frame >= int(raw["frames"]) for frame in intensity_lock_frames):
             raise ValueError(f"{motion_id}: intensity lock frame lies outside clip")
+        maximum_intensity = composition.get("maximum_intensity")
+        if maximum_intensity is not None:
+            maximum_intensity = float(maximum_intensity)
+            if not np.isfinite(maximum_intensity) or not 0.0 <= maximum_intensity <= 1.0:
+                raise ValueError(f"{motion_id}: maximum_intensity must be between 0 and 1")
         phase_joints = tuple(int(x) for x in composition.get("phase_joints", ()))
         if not set(phase_joints).issubset(set(absolute) | set(additive)):
             raise ValueError(f"{motion_id}: phase joints must be owned by the motion")
@@ -234,6 +240,7 @@ class MotionSpec:
             carry_root_rotation=carry_root_rotation,
             event_pose_joints=event_pose,
             intensity_lock_frames=intensity_lock_frames,
+            maximum_intensity=maximum_intensity,
             phase_joints=phase_joints,
             phase_blend_frames=phase_blend_frames,
             minimum_frames=minimum_frames,
@@ -268,6 +275,7 @@ class MotionSpec:
                 "carry_root_rotation": self.carry_root_rotation,
                 "event_pose_joints": list(self.event_pose_joints),
                 "intensity_lock_frames": list(self.intensity_lock_frames),
+                "maximum_intensity": self.maximum_intensity,
                 "phase_joints": list(self.phase_joints),
                 "phase_blend_frames": self.phase_blend_frames,
             },
@@ -369,11 +377,16 @@ class MotionBank:
         resolved_anchor = spec.default_anchor if anchor is None else str(anchor).strip().lower()
         if resolved_anchor not in _VALID_ANCHORS:
             raise ValueError(f"unsupported motion-bank anchor: {anchor!r}")
-        resolved_intensity = float(np.clip(
+        requested_intensity = float(np.clip(
             DEFAULT_MOTION_INTENSITY if intensity is None else intensity,
             0.0,
             1.0,
         ))
+        effective_intensity = (
+            requested_intensity
+            if spec.maximum_intensity is None
+            else min(requested_intensity, spec.maximum_intensity)
+        )
         legacy_mirror = bool(mirror) and direction is None
         direction_request = (
             spec.canonical_direction
@@ -422,7 +435,7 @@ class MotionBank:
             for frame in spec.intensity_lock_frames
         )
         source_event = (count // 2) * spec.frames + spec.event_frame
-        gain = 0.7 + 0.6 * resolved_intensity
+        gain = 0.7 + 0.6 * effective_intensity
         if abs(gain - 1.0) > 1e-6:
             neutral_raw = raw
             raw = accentuate(
@@ -548,7 +561,10 @@ class MotionBank:
             "natural_direction": natural_direction,
             "counterflow_turn_degrees": counterflow_turn,
             "counterflow_turn_joints": list(counterflow_turn_joints),
-            "intensity": resolved_intensity,
+            "intensity": requested_intensity,
+            "requested_intensity": requested_intensity,
+            "effective_intensity": effective_intensity,
+            "maximum_intensity": spec.maximum_intensity,
             "repeats": count,
             "source": spec.source,
             "license": spec.license,

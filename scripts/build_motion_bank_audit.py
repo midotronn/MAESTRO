@@ -954,6 +954,8 @@ def _machine_checks(
         host_global = _global_joint_rotations(host)
         gaps = np.linalg.norm(joints[:, 20] - joints[:, 21], axis=-1)
         contact_frames = _declared_clap_contacts(spec, report, gaps)
+        contact_min = 0.04 if spec.id == "clap_overhead" else 0.0
+        contact_max = 0.07 if spec.id == "clap_overhead" else 0.01
         palm = np.array([0.0, -1.0, 0.0], dtype=np.float32)
         left_axis = np.array([1.0, 0.0, 0.0], dtype=np.float32)
         right_axis = np.array([-1.0, 0.0, 0.0], dtype=np.float32)
@@ -1004,10 +1006,13 @@ def _machine_checks(
         checks.extend([
             {
                 "name": "visible_palm_contact",
-                "passed": bool(contact_frames) and all(gap < 0.01 for gap in contact_gaps),
+                "passed": bool(contact_frames) and all(
+                    contact_min < gap < contact_max for gap in contact_gaps
+                ),
                 "detail": (
                     f"contact frames {list(contact_frames)}, wrist gaps "
-                    f"{[round(gap, 4) for gap in contact_gaps]} m (all must be < 0.0100 m)"
+                    f"{[round(gap, 4) for gap in contact_gaps]} m "
+                    f"(all must be between {contact_min:.4f} and {contact_max:.4f} m)"
                 ),
             },
             {
@@ -1043,7 +1048,8 @@ def _machine_checks(
             },
         ])
         action_gaps = gaps[start:end]
-        closure_mask = action_gaps < 0.02
+        closure_limit = 0.07 if spec.id == "clap_overhead" else 0.02
+        closure_mask = action_gaps < closure_limit
         # A one-frame near-contact excursion is still one physical clap, not a second
         # contact. Bridge it only while the hands remain within 10 cm; repeated claps
         # still need a visibly wider separation between their distinct closure runs.
@@ -1072,7 +1078,7 @@ def _machine_checks(
                 "name": "readable_clap_contact_timing",
                 "passed": bool(timing_passed),
                 "detail": (
-                    f"closure runs {list(closure_runs)} at < 0.0200 m; expected "
+                    f"closure runs {list(closure_runs)} at < {closure_limit:.4f} m; expected "
                     f"{expected_runs} run(s), each at least 3 frames with visible separation"
                 ),
             },
@@ -1089,6 +1095,25 @@ def _machine_checks(
         ])
         if spec.id == "clap_overhead":
             event = int(report["event_frame"])
+            lateral = joints[:, 16] - joints[:, 17]
+            lateral /= np.linalg.norm(lateral, axis=1, keepdims=True) + 1e-9
+            wrist_order = np.sum((joints[:, 20] - joints[:, 21]) * lateral, axis=1)
+            raised = (
+                np.minimum(joints[:, 20, 2], joints[:, 21, 2]) > joints[:, 15, 2]
+            )
+            raised[:start] = False
+            raised[end:] = False
+            minimum_wrist_order = (
+                float(np.min(wrist_order[raised])) if np.any(raised) else float("-inf")
+            )
+            checks.append({
+                "name": "ordered_overhead_hands",
+                "passed": bool(np.any(raised) and minimum_wrist_order > 0.04),
+                "detail": (
+                    "minimum body-lateral left/right wrist separation while both hands "
+                    f"are above the head: {minimum_wrist_order:.4f} m"
+                ),
+            })
             pre_candidates = np.arange(
                 max(start, event - 10),
                 max(start, event - 2) + 1,

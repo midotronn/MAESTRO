@@ -239,8 +239,11 @@ readable at full-body scale. `auto` follows the host flow without changing torso
 user explicitly requests the opposite side, the upper spine may turn up to 14 degrees into that
 counter-flow direction; root travel, feet, and lower-body rhythm remain source-identical. This
 avoids the rejected shortcut where every directional clap rotated the chest about 40 degrees
-toward the camera and visually stopped the dance. Clap fingers now use a relaxed forward-up diagonal instead
-of a nearly vertical hand pose, and hierarchy-aware arm IK pins every contact to a 6 mm wrist gap.
+toward the camera and visually stopped the dance. Clap fingers now use a relaxed forward-up diagonal
+instead of a nearly vertical hand pose. Hierarchy-aware arm IK pins chest-height claps to a 6 mm
+wrist gap. The overhead clap uses a 50 mm gap because its opposed palm meshes meet before the wrist
+centers do; its manifest also caps composition intensity at the neutral `0.5` level so exaggeration
+cannot drive one hand through the other. Reports retain both the requested and effective intensity.
 Existing asymmetric
 motions such as waves, points, punches, lateral steps, and turns use their mirror capability behind
 the semantic direction parameter. The planner cannot invent a side when the user did not request
