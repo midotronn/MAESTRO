@@ -1,8 +1,8 @@
 {
-  "validated_at": "2026-08-30T14:46:14-05:00",
+  "validated_at": "2026-08-30T15:31:41-05:00",
   "study_content_commit": "076411d9753442581d07f2a68dd35a9d785b2931",
-  "production_release_commit": "7352af1c6d55df3a7e9f9b369822d19636283842",
-  "deployment_commit": "8c98f741cf7e56d62931ee866f3fe965c2bc8128",
+  "production_release_commit": "d527586af15549f31fefa70b6e1fae4190ed7d5e",
+  "deployment_commit": "d527586af15549f31fefa70b6e1fae4190ed7d5e",
   "rollback_snapshot": "/workspace/maestro-backups/study-player-before-v15-20260827T212344",
   "editor_base": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net",
   "website": {
@@ -26,7 +26,7 @@
   },
   "pod": {
     "id": "eg25wp3e2ho1rg",
-    "checkout_commit": "8c98f741cf7e56d62931ee866f3fe965c2bc8128",
+    "checkout_commit": "d527586af15549f31fefa70b6e1fae4190ed7d5e",
     "checkout_clean": true,
     "host": "213.173.109.45",
     "ssh_port": 34088,
@@ -34,7 +34,7 @@
     "public_port": 8888,
     "healthy_workers": 10,
     "expected_workers": 10,
-    "public_songs": 8,
+    "public_songs": 5,
     "study_player": true,
     "planner_configured": true,
     "planner_verified": true,
@@ -77,26 +77,10 @@
         "name": "Dynamite — Final Drop / Outro",
         "duration_seconds": 45.0,
         "browser_playback_verified": true
-      },
-      {
-        "sid": "can_t_stop_the_feeling_43322",
-        "name": "Can't Stop the Feeling!",
-        "duration_seconds": 236.135,
-        "browser_playback_verified": true
-      },
-      {
-        "sid": "uptown_funk_43352",
-        "name": "Uptown Funk",
-        "duration_seconds": 268.201,
-        "browser_playback_verified": true
-      },
-      {
-        "sid": "levitating_43228",
-        "name": "Levitating",
-        "duration_seconds": 202.068,
-        "browser_playback_verified": true
       }
     ],
+    "dynamite_only_catalog": true,
+    "non_dynamite_editor_media_hidden": true,
     "dynamite_segments": {
       "count": 5,
       "atomic_build": true,
@@ -123,6 +107,10 @@
       "branch_lineage_verified": true,
       "timeline_tracks_rendered_video_box": true,
       "playhead_midpoint_percent": 50,
+      "selection_start_preview_sync": true,
+      "selection_validation_start_seconds": 10.3,
+      "selection_validation_preview_seconds": 10.273028,
+      "selection_validation_playhead_percent": 24.8943,
       "desktop_layout_stable": true,
       "desktop_viewer_height_pixels": 468,
       "narrow_layout_stable": true,
@@ -197,6 +185,14 @@
       "skipped": 2,
       "failed": 0,
       "duration_seconds": 455.67
+    },
+    "dynamite_only_timeline_update": {
+      "python_passed": 89,
+      "javascript_passed": 4,
+      "mock_browser_passed": true,
+      "live_browser_passed": true,
+      "study_player_regression_passed": true,
+      "failed": 0
     }
   },
   "launch_blockers": [],
