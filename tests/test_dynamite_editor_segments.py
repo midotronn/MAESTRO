@@ -364,7 +364,9 @@ def test_production_config_tracks_approved_story_and_dynamite_only_catalog():
     catalog = sorted(config["catalog"], key=lambda entry: entry["order"])
     assert [entry["sid"] for entry in catalog] == [segment["sid"] for segment in segments]
     assert all(entry["kind"] == "segment" for entry in catalog)
-    assert config["interview_policy"]["full_song_visible"] is False
+    assert config["interview_policy"]["full_song_visible"] is True
+    assert config["interview_policy"]["full_song_editable"] is False
+    assert config["interview_policy"]["review_composes_current_section_heads"] is True
     assert config["source"]["sid"] not in {entry["sid"] for entry in catalog}
 
 

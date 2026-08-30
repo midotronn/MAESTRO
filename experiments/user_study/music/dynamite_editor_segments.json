@@ -37,8 +37,10 @@
     }
   ],
   "interview_policy": {
-    "full_song_visible": false,
-    "reason": "The 205.8-second full take is omitted in interview mode so every Dynamite choice is a bounded editing exercise. The source directory remains untouched and available outside interview mode."
+    "full_song_visible": true,
+    "full_song_editable": false,
+    "review_composes_current_section_heads": true,
+    "reason": "The 205.8-second full take remains outside the editable catalog. Participants edit bounded sections, then the full-song review combines the current version of all five sections with the original full-length audio."
   },
   "segments": [
     {

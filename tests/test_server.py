@@ -1641,12 +1641,20 @@ def test_editor_review_actions_explain_the_user_flow(client):
 
     assert "Review edit" in html
     assert "Changed body areas highlighted" in html
-    assert "Render full dance" in html
-    assert "Slower, for the final review" in html
+    assert "Review full song" in html
+    assert "Combines all 5 sections" in html
+    assert 'id="prevSection"' in html
+    assert 'id="nextSection"' in html
+    assert 'id="fullReview"' in html
+    assert 'id="fullReviewSections"' in html
+    assert 'id="fullReviewVideo"' in html
+    assert 'id="fullReviewRender"' in html
     assert 'rel="icon"' in html
     assert (STATIC / "favicon.svg").is_file()
     assert 'id="renderBtn"' not in html
-    assert "startFullRender" in js
+    assert "startFullSongReview" in js
+    assert "/api/full-song-review" in js
+    assert "openReviewSection" in js
     assert 'startRender("window")' not in js
     assert 'id="motionSuggestions"' in html
     assert 'id="motionPicker"' in html
@@ -1841,6 +1849,134 @@ def test_full_render_passes_song_audio_to_accelerated_renderer(client, monkeypat
     assert captured["frames"] == 300
     assert captured["scope"] == "full"
     assert captured["audio_wav"] == str(audio)
+
+
+def test_full_song_review_composes_current_heads_and_tracks_staleness(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    import server.app as A
+    import server.rendering as R
+
+    media = A.MEDIA
+    sections = [
+        ("review_intro", 0, 6, 1.0),
+        ("review_outro", 6, 12, 2.0),
+    ]
+    for sid, start, end, value in sections:
+        directory = media / sid
+        directory.mkdir(parents=True)
+        np.save(directory / "base_motion.npy", np.full((end - start, 139), value, np.float32))
+        (directory / "preview.mp4").write_bytes(b"preview")
+        (directory / "meta.json").write_text(
+            json.dumps({"name": sid, "front_facing": True}),
+            encoding="utf-8",
+        )
+    source = media / "review_full"
+    source.mkdir()
+    np.save(source / "base_motion.npy", np.zeros((12, 139), np.float32))
+    (source / "preview.mp4").write_bytes(b"preview")
+    (source / "review_full.wav").write_bytes(b"wav")
+    (source / "meta.json").write_text(
+        json.dumps({"name": "Review full", "front_facing": True}),
+        encoding="utf-8",
+    )
+    config = tmp_path / "review.json"
+    config.write_text(
+        json.dumps(
+            {
+                "source": {
+                    "sid": "review_full",
+                    "name": "Review full",
+                    "artist": "Test",
+                    "fps": 30,
+                    "frames": 12,
+                },
+                "segments": [
+                    {
+                        "sid": sid,
+                        "name": sid,
+                        "order": index,
+                        "start_frame": start,
+                        "end_frame": end,
+                    }
+                    for index, (sid, start, end, _value) in enumerate(sections, start=1)
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(A, "INTERVIEW_CATALOG", config)
+    monkeypatch.setattr(A, "_full_song_review_signature", None)
+    R._RJOBS.clear()
+
+    intro = A._load_session("review_intro")
+    edited_intro = intro.current_motion().copy()
+    edited_intro[:, 0] = 9
+    intro.store.commit(edited_intro, label="edited intro")
+
+    captured = {}
+
+    def fake_start(sid, motion, media_dir, *, scope="window", a=None, b=None, audio_wav=None):
+        captured.update(
+            sid=sid,
+            motion=np.asarray(motion).copy(),
+            media_dir=Path(media_dir),
+            scope=scope,
+            audio_wav=audio_wav,
+        )
+        R._set(sid, status="queued", progress=3, message="queued")
+
+    monkeypatch.setattr(R, "start_render", fake_start)
+
+    before = client.get("/api/full-song-review")
+    assert before.status_code == 200
+    before_payload = before.json()
+    assert before_payload["edited_sections"] == 1
+    assert before_payload["total_sections"] == 2
+    assert [section["edited"] for section in before_payload["sections"]] == [True, False]
+
+    started = client.post("/api/full-song-review")
+    assert started.status_code == 200
+    assert captured["sid"] == A.FULL_SONG_REVIEW_JOB
+    assert captured["scope"] == "full"
+    assert captured["audio_wav"] == str(source / "review_full.wav")
+    assert captured["motion"].shape == (12, 139)
+    np.testing.assert_array_equal(captured["motion"][:6], edited_intro)
+    np.testing.assert_array_equal(
+        captured["motion"][6:],
+        A._load_session("review_outro").current_motion(),
+    )
+
+    review_dir = A._full_song_review_dir()
+    review_dir.mkdir(parents=True, exist_ok=True)
+    (review_dir / "edited.mp4").write_bytes(b"full review")
+    R._set(A.FULL_SONG_REVIEW_JOB, status="done", progress=100, video="edited.mp4")
+    ready = client.get("/api/full-song-review").json()
+    assert ready["render"]["ready"] is True
+    assert ready["render"]["stale"] is False
+    video = client.get(
+        ready["render"]["video_url"],
+    )
+    assert video.status_code == 200
+    assert video.content == b"full review"
+    assert A._full_song_review_manifest_path().is_file()
+
+    A._full_song_review_signature = None
+    R._RJOBS.clear()
+    restored = client.get("/api/full-song-review").json()
+    assert restored["render"]["ready"] is True
+    assert restored["render"]["status"] == "done"
+
+    outro = A._load_session("review_outro")
+    edited_outro = outro.current_motion().copy()
+    edited_outro[:, 1] = 8
+    outro.store.commit(edited_outro, label="edited outro")
+    stale = client.get("/api/full-song-review").json()
+    assert stale["edited_sections"] == 2
+    assert stale["render"]["ready"] is False
+    assert stale["render"]["stale"] is True
 
 
 def test_compare_after_edit_renders_before_and_after(client, monkeypatch):

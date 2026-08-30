@@ -33,6 +33,7 @@ import math
 import os
 import secrets
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -76,9 +77,12 @@ INTERVIEW_CATALOG = (
     / "dynamite_editor_segments.json"
 )
 FPS = 30
+FULL_SONG_REVIEW_JOB = "dynamite_full_song_review"
 
 app = FastAPI(title="MAESTRO Interactive Editor")
 _sessions: dict[str, EditSession] = {}
+_full_song_review_lock = threading.Lock()
+_full_song_review_signature: str | None = None
 _PLANNER_STATUS: dict[str, object] = {
     "configured": False,
     "verified": False,
@@ -614,6 +618,222 @@ def _interview_catalog() -> dict[str, dict] | None:
         raise HTTPException(503, "the interview song catalog is invalid") from exc
 
 
+def _full_song_review_config() -> dict:
+    try:
+        payload = json.loads(INTERVIEW_CATALOG.read_text(encoding="utf-8"))
+        source = payload["source"]
+        segments = sorted(payload["segments"], key=lambda item: int(item["order"]))
+        if (
+            not isinstance(source, dict)
+            or not isinstance(segments, list)
+            or not segments
+            or int(source["fps"]) != FPS
+        ):
+            raise ValueError("source and ordered segments are required")
+        expected_start = 0
+        for order, segment in enumerate(segments, start=1):
+            start = int(segment["start_frame"])
+            end = int(segment["end_frame"])
+            if int(segment["order"]) != order or start != expected_start or end <= start:
+                raise ValueError("segments must be contiguous and ordered")
+            expected_start = end
+        if expected_start != int(source["frames"]):
+            raise ValueError("segments do not cover the full source motion")
+        return {"source": source, "segments": segments}
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        logging.getLogger("uvicorn.error").error(
+            "Full-song review configuration %s is invalid: %s",
+            INTERVIEW_CATALOG,
+            exc,
+        )
+        raise HTTPException(503, "full-song review is not configured correctly") from exc
+
+
+def _full_song_review_dir() -> Path:
+    return MEDIA / "_dynamite_full_song_review"
+
+
+def _full_song_review_manifest_path() -> Path:
+    return _full_song_review_dir() / "review_manifest.json"
+
+
+def _read_full_song_review_manifest() -> dict | None:
+    path = _full_song_review_manifest_path()
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or not isinstance(payload.get("signature"), str):
+            raise ValueError("signature is missing")
+        return payload
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        logging.getLogger("uvicorn.error").warning(
+            "Ignoring invalid full-song review manifest %s: %s",
+            path,
+            exc,
+        )
+        return None
+
+
+def _write_full_song_review_manifest(signature: str, sections: list[dict]) -> None:
+    directory = _full_song_review_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    path = _full_song_review_manifest_path()
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(6)}.tmp")
+    temporary.write_text(
+        json.dumps(
+            {
+                "signature": signature,
+                "video": "edited.mp4",
+                "generated_at": time.time(),
+                "sections": [
+                    {
+                        "sid": section["sid"],
+                        "head": section["head"],
+                    }
+                    for section in sections
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
+def _full_song_review_composition(
+    *,
+    include_motion: bool = False,
+) -> tuple[dict, list[dict], str, np.ndarray | None]:
+    config = _full_song_review_config()
+    source = config["source"]
+    sections = []
+    identity = []
+    motions = []
+    for segment in config["segments"]:
+        sid = str(segment["sid"])
+        session = _load_session(sid)
+        head = session.current()
+        if head is None:
+            raise HTTPException(409, f"{sid} has no current version")
+        expected_frames = int(segment["end_frame"]) - int(segment["start_frame"])
+        actual_frames = int(head.n_frames)
+        if actual_frames != expected_frames:
+            raise HTTPException(
+                409,
+                f"{sid} has {actual_frames} frames; expected {expected_frames} for full-song review",
+            )
+        if include_motion:
+            motion = np.asarray(session.current_motion(), dtype=np.float32)
+            if motion.shape[0] != expected_frames:
+                raise HTTPException(
+                    409,
+                    f"{sid} current motion has {motion.shape[0]} frames; expected {expected_frames}",
+                )
+            motions.append(motion)
+        sections.append(
+            {
+                "sid": sid,
+                "name": str(segment["name"]),
+                "order": int(segment["order"]),
+                "start_frame": int(segment["start_frame"]),
+                "end_frame": int(segment["end_frame"]),
+                "start_sec": round(int(segment["start_frame"]) / FPS, 3),
+                "end_sec": round(int(segment["end_frame"]) / FPS, 3),
+                "duration_sec": round(expected_frames / FPS, 3),
+                "head": head.id,
+                "head_label": head.label or "original",
+                "edited": head.parent_id is not None,
+                "checkpoint_count": len(session.store),
+            }
+        )
+        identity.append(
+            {
+                "sid": sid,
+                "head": head.id,
+                "frames": actual_frames,
+            }
+        )
+    signature = hashlib.sha256(
+        json.dumps(
+            {
+                "source": str(source["sid"]),
+                "frames": int(source["frames"]),
+                "sections": identity,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()[:20]
+    composite = np.concatenate(motions, axis=0) if include_motion else None
+    if composite is not None and composite.shape[0] != int(source["frames"]):
+        raise HTTPException(
+            409,
+            f"full-song composition has {composite.shape[0]} frames; expected {source['frames']}",
+        )
+    return config, sections, signature, composite
+
+
+def _full_song_review_payload() -> dict:
+    global _full_song_review_signature
+
+    config, sections, signature, _ = _full_song_review_composition()
+    with _full_song_review_lock:
+        active_signature = _full_song_review_signature
+    job = rendering.get_render_job(FULL_SONG_REVIEW_JOB)
+    video_path = _full_song_review_dir() / "edited.mp4"
+    manifest = _read_full_song_review_manifest()
+    cached_signature = manifest.get("signature") if manifest else None
+    completed = (
+        job.get("status") == "done"
+        and active_signature == signature
+        and video_path.is_file()
+    )
+    if completed and cached_signature != signature:
+        _write_full_song_review_manifest(signature, sections)
+        cached_signature = signature
+    if active_signature is None and cached_signature is not None:
+        with _full_song_review_lock:
+            if _full_song_review_signature is None:
+                _full_song_review_signature = cached_signature
+            active_signature = _full_song_review_signature
+    ready = cached_signature == signature and video_path.is_file()
+    stale_signature = active_signature or cached_signature
+    stale = stale_signature is not None and stale_signature != signature
+    render_state = dict(job)
+    if ready and render_state.get("status") not in {"queued", "rendering"}:
+        render_state.update(status="done", progress=100, message="ready")
+    render_state.update(
+        {
+            "signature": active_signature,
+            "ready": ready,
+            "stale": stale,
+            "video_url": (
+                f"/api/full-song-review/media/edited.mp4?signature={signature}"
+                if ready
+                else None
+            ),
+        }
+    )
+    source = config["source"]
+    return {
+        "source": {
+            "sid": str(source["sid"]),
+            "name": str(source["name"]),
+            "artist": str(source.get("artist") or ""),
+            "frames": int(source["frames"]),
+            "duration_sec": round(int(source["frames"]) / FPS, 3),
+        },
+        "sections": sections,
+        "edited_sections": sum(1 for section in sections if section["edited"]),
+        "total_sections": len(sections),
+        "signature": signature,
+        "render": render_state,
+    }
+
+
 @app.get("/api/songs")
 def songs() -> dict:
     if not MEDIA.is_dir():
@@ -676,6 +896,69 @@ def songs() -> dict:
     for song in out:
         song.pop("_order", None)
     return {"songs": out}
+
+
+@app.get("/api/full-song-review")
+def full_song_review_status() -> dict:
+    return _full_song_review_payload()
+
+
+@app.post("/api/full-song-review")
+def start_full_song_review() -> dict:
+    global _full_song_review_signature
+
+    config, _sections, signature, motion = _full_song_review_composition(
+        include_motion=True,
+    )
+    assert motion is not None
+    source_sid = str(config["source"]["sid"])
+    audio_wav = _song_wav(source_sid)
+    if not audio_wav:
+        raise HTTPException(503, "the full Dynamite audio is unavailable")
+    with _full_song_review_lock:
+        job = rendering.get_render_job(FULL_SONG_REVIEW_JOB)
+        manifest = _read_full_song_review_manifest()
+        cached = (
+            manifest is not None
+            and manifest.get("signature") == signature
+            and (_full_song_review_dir() / "edited.mp4").is_file()
+        )
+        if cached:
+            _full_song_review_signature = signature
+        elif job.get("status") in {"queued", "rendering"}:
+            if _full_song_review_signature != signature:
+                raise HTTPException(
+                    409,
+                    "an older full-song preview is still rendering; wait for it to finish, then update",
+                )
+        else:
+            _full_song_review_manifest_path().unlink(missing_ok=True)
+            _full_song_review_signature = signature
+            review_dir = _full_song_review_dir()
+            review_dir.mkdir(parents=True, exist_ok=True)
+            rendering.start_render(
+                FULL_SONG_REVIEW_JOB,
+                motion,
+                review_dir,
+                scope="full",
+                audio_wav=audio_wav,
+            )
+    return _full_song_review_payload()
+
+
+@app.get("/api/full-song-review/media/{name}")
+def full_song_review_media(name: str, signature: str) -> FileResponse:
+    if name != "edited.mp4":
+        raise HTTPException(404, "unknown full-song review media")
+    state = _full_song_review_payload()
+    if signature != state["signature"] or not state["render"]["ready"]:
+        raise HTTPException(409, "the full-song preview is outdated or still rendering")
+    path = _full_song_review_dir() / name
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/motions")

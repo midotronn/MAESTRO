@@ -20,6 +20,11 @@ let ST = {
 };
 let MOTION_PREVIEW = null;
 let PLAYHEAD_RAF = 0;
+let SONGS = [];
+let FULL_REVIEW_STATE = null;
+let FULL_REVIEW_POLL_TIMER = 0;
+let FULL_REVIEW_REFRESH_TIMER = 0;
+let FULL_REVIEW_COMPLETED_SIGNATURE = null;
 const CMP_HIGHLIGHT = {
   mode: "highlight",
   raf: 0,
@@ -225,75 +230,285 @@ function wireMediaBuffering(video, activityId, label) {
   video.addEventListener("canplay", resumed);
 }
 
-// -------------------------------------------------------------- render the complete edited dance (Blender/pod)
-async function startFullRender() {
-  ST.lastRenderScope = "full";
-  $("fullRenderBtn").disabled = true;
-  const st = $("renderStatus"); st.style.display = "block"; st.className = "render-status";
-  st.textContent = "starting the full-dance render with music\u2026";
-  setProgressBar("renderProg", "renderProgWrap", 3);
-  activityStart("render", "Rendering full dance", "Starting full-quality render", 3);
+// -------------------------------------------------------------- review all edited Dynamite sections as one song
+function clockLabel(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function shortSectionName(name) {
+  const parts = String(name || "").split("\u2014");
+  return (parts.length > 1 ? parts.slice(1).join("\u2014") : parts[0]).trim();
+}
+
+function setFullReviewPlaceholder(icon, title, detail) {
+  const placeholder = $("fullReviewPlaceholder");
+  placeholder.querySelector("span").textContent = icon;
+  placeholder.querySelector("strong").textContent = title;
+  placeholder.querySelector("p").textContent = detail;
+}
+
+function updateFullReviewButton(state) {
+  const button = $("fullRenderBtn");
+  if (!button) return;
+  const meta = $("fullReviewButtonMeta");
+  const ready = !!state?.render?.ready;
+  button.classList.toggle("ready", ready);
+  if (!state) {
+    meta.textContent = "Combines all 5 sections";
+    return;
+  }
+  meta.textContent = ready
+    ? "Current 5-section preview ready"
+    : `${state.edited_sections} of ${state.total_sections} sections edited`;
+}
+
+function renderFullReview(state) {
+  if (!state) return;
+  const render = state.render || {};
+  const running = render.status === "queued" || render.status === "rendering";
+  const currentSid = ST.sid;
+  $("fullReviewTitle").textContent = `${state.source.name} \u2014 full song`;
+  $("fullReviewCount").textContent =
+    `${state.edited_sections} of ${state.total_sections} sections edited`;
+  $("fullReviewSummary").textContent = render.ready
+    ? "This preview matches every section\u2019s current history state."
+    : state.edited_sections
+      ? "Edited sections use their current version; the rest stay original."
+      : "No section has been edited yet, so every section is still original.";
+  $("fullReviewMediaTag").textContent =
+    `full song \u00b7 ${clockLabel(state.source.duration_sec)}`;
+
+  const sectionHost = $("fullReviewSections");
+  sectionHost.innerHTML = state.sections.map((section) => {
+    const current = section.sid === currentSid;
+    const status = current ? "Current" : section.edited ? "Edited" : "Original";
+    return `<button class="full-review-section ${section.edited ? "edited" : ""} ${current ? "current" : ""}" `
+      + `type="button" data-sid="${escapeHtml(section.sid)}" `
+      + `aria-label="Edit section ${section.order}: ${escapeHtml(shortSectionName(section.name))}, ${status}">`
+      + `<span class="full-review-section-number">${String(section.order).padStart(2, "0")}</span>`
+      + `<span class="full-review-section-copy"><strong>${escapeHtml(shortSectionName(section.name))}</strong>`
+      + `<small>${clockLabel(section.start_sec)}\u2013${clockLabel(section.end_sec)} \u00b7 `
+      + `${section.edited ? "current edit" : "original choreography"}</small></span>`
+      + `<span class="full-review-section-state">${status}</span></button>`;
+  }).join("");
+  sectionHost.querySelectorAll("[data-sid]").forEach((button) => {
+    button.onclick = () => openReviewSection(button.dataset.sid);
+  });
+
+  const video = $("fullReviewVideo");
+  const placeholder = $("fullReviewPlaceholder");
+  const status = $("fullReviewStatus");
+  const progressWrap = $("fullReviewProgWrap");
+  const renderButton = $("fullReviewRender");
+  if (render.ready && render.video_url) {
+    placeholder.hidden = true;
+    video.hidden = false;
+    if (video.dataset.signature !== state.signature) {
+      video.dataset.signature = state.signature;
+      video.src = `${render.video_url}&t=${Date.now()}`;
+      video.load();
+    }
+    status.className = "full-review-status ok";
+    status.textContent = `\u2714 Full-song preview ready${render.elapsed ? ` in ${render.elapsed}s` : ""}.`;
+    progressWrap.hidden = true;
+    renderButton.disabled = true;
+    renderButton.textContent = "Preview up to date";
+  } else {
+    try { video.pause(); } catch (e) {}
+    video.hidden = true;
+    placeholder.hidden = false;
+    renderButton.disabled = running;
+    if (running) {
+      const staleTitle = render.stale
+        ? "Finishing an older full-song preview"
+        : "Building your continuous full-song preview";
+      const staleDetail = render.stale
+        ? "Your section choices changed during rendering. When this finishes, update once to include them."
+        : "MAESTRO is rendering the current version of all five sections with the full song audio.";
+      setFullReviewPlaceholder("\u25b6", staleTitle, staleDetail);
+      status.className = "full-review-status";
+      status.textContent = render.stale
+        ? "Current edits will need one update after this render finishes."
+        : render.message || "Rendering the full song\u2026";
+      setProgressBar("fullReviewProg", "fullReviewProgWrap", Number(render.progress || 0));
+      renderButton.textContent = "Building preview\u2026";
+    } else if (render.stale) {
+      setFullReviewPlaceholder(
+        "\u21bb",
+        "Your section choices changed",
+        "Update the preview to include the current history state from every section.",
+      );
+      status.className = "full-review-status";
+      status.textContent = "The previous full-song preview is out of date.";
+      progressWrap.hidden = true;
+      renderButton.textContent = "Update full-song preview";
+    } else if (render.status === "error") {
+      setFullReviewPlaceholder(
+        "!",
+        "The preview could not be completed",
+        "Your section edits are safe. Try the full-song render again.",
+      );
+      status.className = "full-review-status bad";
+      status.textContent = render.message || "Full-song render failed.";
+      progressWrap.hidden = true;
+      renderButton.textContent = "Try again";
+    } else {
+      setFullReviewPlaceholder(
+        "\u25b6",
+        "See all five sections as one continuous dance",
+        "Create a preview when you are ready. It uses each section\u2019s current history state and the full Dynamite audio.",
+      );
+      status.className = "full-review-status";
+      status.textContent = "Ready to combine the five current section versions.";
+      progressWrap.hidden = true;
+      renderButton.textContent = "Create full-song preview";
+    }
+  }
+  updateFullReviewButton(state);
+}
+
+async function loadFullReviewState(showError = false) {
   try {
-    await api(`/api/session/${ST.sid}/render`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scope: "full" }) });
-    pollRender();
+    const state = await api("/api/full-song-review");
+    FULL_REVIEW_STATE = state;
+    updateFullReviewButton(state);
+    if (!$("fullReview").hidden) renderFullReview(state);
+    return state;
   } catch (e) {
-    st.textContent = "\u26a0 " + e.message;
-    st.className = "render-status bad";
-    $("renderProgWrap").hidden = true;
-    $("fullRenderBtn").disabled = false;
-    activityFail("render", e.message);
+    $("fullReviewButtonMeta").textContent = "Full-song review unavailable";
+    $("fullRenderBtn").classList.remove("ready");
+    if (!$("fullReview").hidden) {
+      $("fullReviewStatus").className = "full-review-status bad";
+      $("fullReviewStatus").textContent = `\u26a0 ${e.message}`;
+    }
+    if (showError) toast("Full-song review unavailable: " + e.message);
+    return null;
   }
 }
 
-async function pollRender() {
-  let j;
-  try { j = await api(`/api/session/${ST.sid}/render`); }
-  catch (e) {
-    activityUpdate("render", { detail: "Reconnecting to render status\u2026" });
-    setTimeout(pollRender, 1000);
+function scheduleFullReviewRefresh() {
+  clearTimeout(FULL_REVIEW_REFRESH_TIMER);
+  FULL_REVIEW_REFRESH_TIMER = setTimeout(() => loadFullReviewState(false), 250);
+}
+
+async function openFullReview() {
+  const dialog = $("fullReview");
+  dialog.hidden = false;
+  document.body.classList.add("modal-open");
+  $("fullReviewCount").textContent = "Loading section status\u2026";
+  $("fullReviewSummary").textContent = "Checking each section\u2019s current history state.";
+  $("fullReviewSections").innerHTML = "";
+  $("fullReviewStatus").className = "full-review-status";
+  $("fullReviewStatus").textContent = "Loading full-song review\u2026";
+  const state = await loadFullReviewState(true);
+  if (state) renderFullReview(state);
+  $("fullReviewClose").focus();
+}
+
+function closeFullReview() {
+  const dialog = $("fullReview");
+  if (dialog.hidden) return;
+  try { $("fullReviewVideo").pause(); } catch (e) {}
+  dialog.hidden = true;
+  document.body.classList.remove("modal-open");
+  $("fullRenderBtn").focus();
+}
+
+async function openReviewSection(sid) {
+  const select = $("song");
+  if (!sid || ![...select.options].some((option) => option.value === sid)) {
+    $("fullReviewStatus").className = "full-review-status bad";
+    $("fullReviewStatus").textContent = "That section is not available in the editor.";
     return;
   }
-  const st = $("renderStatus");
-  st.textContent = (j.status === "rendering" ? "\u{1F3AC} " : "") + (j.message || j.status);
-  setProgressBar("renderProg", "renderProgWrap", Number(j.progress || 0));
-  activityUpdate("render", {
-    progress: Number(j.progress || 0),
-    detail: j.message || j.status,
-  });
-  if (j.status === "done") {
-    const v = $("video");
-    v.src = `/api/session/${ST.sid}/media/${j.video}?t=` + Date.now();
-    v.load();
-    activityUpdate("render", { progress: 96, detail: "Loading the rendered video\u2026" });
-    const mediaReady = await waitForMediaReady(
-      [v],
-      "render",
-      96,
-      100,
-      "Loading the rendered video\u2026",
-    );
-    v.play().catch(() => {});
-    $("viewerTag").textContent = ST.lastRenderScope === "full" ? "full dance + music" : "edited render";
-    st.className = "render-status ok";
-    st.textContent = `\u2714 full dance ready${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
-    $("renderProgWrap").hidden = true;
-    $("fullRenderBtn").disabled = false;
-    activityDone("render", mediaReady ? "Full dance ready" : "Render ready; video is still buffering");
-    toast("Full dance ready");
-    setTimeout(() => { st.style.display = "none"; }, 5000);
+  closeFullReview();
+  select.value = sid;
+  await openSession(sid);
+  if (window.innerWidth <= 900) window.scrollTo({ top: 0, behavior: "smooth" });
+  else document.querySelector(".stage-col").scrollTop = 0;
+}
+
+async function pollFullSongReview() {
+  clearTimeout(FULL_REVIEW_POLL_TIMER);
+  const state = await loadFullReviewState(false);
+  if (!state) {
+    activityUpdate("full-song-render", { detail: "Reconnecting to full-song render status\u2026" });
+    FULL_REVIEW_POLL_TIMER = setTimeout(pollFullSongReview, 1200);
     return;
   }
-  if (j.status === "error") {
-    st.className = "render-status bad"; st.textContent = "\u26a0 " + (j.message || "render failed");
-    $("renderProgWrap").hidden = true;
-    $("fullRenderBtn").disabled = false;
-    activityFail("render", j.message || "Render failed");
-    toast("Render failed");
+  const render = state.render || {};
+  if (render.status === "queued" || render.status === "rendering") {
+    activityUpdate("full-song-render", {
+      progress: Number(render.progress || 0),
+      detail: render.message || "Rendering the full song\u2026",
+    });
+    FULL_REVIEW_POLL_TIMER = setTimeout(pollFullSongReview, 1000);
     return;
   }
-  setTimeout(pollRender, 1000);
+  if (render.ready) {
+    if (FULL_REVIEW_COMPLETED_SIGNATURE !== state.signature) {
+      FULL_REVIEW_COMPLETED_SIGNATURE = state.signature;
+      let mediaReady = true;
+      if (!$("fullReview").hidden) {
+        const video = $("fullReviewVideo");
+        activityUpdate("full-song-render", {
+          progress: 96,
+          detail: "Loading the full-song preview\u2026",
+        });
+        mediaReady = await waitForMediaReady(
+          [video],
+          "full-song-render",
+          96,
+          100,
+          "Loading the full-song preview\u2026",
+          30000,
+        );
+        video.play().catch(() => {});
+      }
+      activityDone(
+        "full-song-render",
+        mediaReady ? "Full-song preview ready" : "Preview ready; video is still buffering",
+      );
+      toast("Full Dynamite preview ready");
+    }
+    return;
+  }
+  if (render.stale && render.status === "done") {
+    activityDone("full-song-render", "Older preview finished; update needed");
+    if (!$("fullReview").hidden) toast("Section edits changed \u2014 update the full-song preview");
+    return;
+  }
+  if (render.status === "error") {
+    activityFail("full-song-render", render.message || "Full-song render failed");
+    toast("Full-song preview failed");
+  }
+}
+
+async function startFullSongReview() {
+  $("fullReviewRender").disabled = true;
+  $("fullReviewStatus").className = "full-review-status";
+  $("fullReviewStatus").textContent = "Preparing all five current section versions\u2026";
+  setProgressBar("fullReviewProg", "fullReviewProgWrap", 3);
+  activityStart(
+    "full-song-render",
+    "Rendering full Dynamite",
+    "Combining the current version from all five sections",
+    3,
+  );
+  try {
+    const state = await api("/api/full-song-review", { method: "POST" });
+    FULL_REVIEW_STATE = state;
+    FULL_REVIEW_COMPLETED_SIGNATURE = null;
+    renderFullReview(state);
+    pollFullSongReview();
+  } catch (e) {
+    $("fullReviewRender").disabled = false;
+    $("fullReviewStatus").className = "full-review-status bad";
+    $("fullReviewStatus").textContent = `\u26a0 ${e.message}`;
+    $("fullReviewProgWrap").hidden = true;
+    activityFail("full-song-render", e.message);
+  }
 }
 
 // -------------------------------------------------------------- before/after window comparison
@@ -669,7 +884,21 @@ function wireControls() {
   wireTimeline();
   wireUpload();
   $("apply").onclick = runEdit;
-  $("fullRenderBtn").onclick = startFullRender;
+  $("fullRenderBtn").onclick = openFullReview;
+  $("prevSection").onclick = () => moveSection(-1);
+  $("nextSection").onclick = () => moveSection(1);
+  $("fullReviewBackdrop").onclick = closeFullReview;
+  $("fullReviewClose").onclick = closeFullReview;
+  $("fullReviewContinue").onclick = closeFullReview;
+  $("fullReviewRender").onclick = startFullSongReview;
+  $("fullReviewVideo").addEventListener("error", () => {
+    $("fullReviewVideo").dataset.signature = "";
+    $("fullReviewStatus").className = "full-review-status bad";
+    $("fullReviewStatus").textContent =
+      "The full-song video could not be loaded. Your section edits are safe; reload the preview.";
+    $("fullReviewRender").disabled = false;
+    $("fullReviewRender").textContent = "Reload full-song preview";
+  });
   $("compareBtn").onclick = startCompare;
   $("cmpModeHighlight").onclick = () => setCompareMode("highlight");
   $("cmpModeSide").onclick = () => setCompareMode("side");
@@ -734,6 +963,10 @@ function wireControls() {
   };
   $("instruction").addEventListener("keydown", (e) => { if (e.key === "Enter") runEdit(); });
   window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("fullReview").hidden) {
+      closeFullReview();
+      return;
+    }
     if (e.key === "Escape" && !$("motionPreview").hidden) closeMotionPreview();
   });
   wireTour();
@@ -754,8 +987,10 @@ const TOUR_STEPS = [
     text: "Review the edited dancer with changed body areas glowing cyan. Hold for the original or switch to side by side, all synchronized to the music." },
   { el: "history", title: "6 · Iterate freely",
     text: "Every edit is a checkpoint. Restore one by clicking its row, or use its Branch button to make the next edit from that older state without deleting later work." },
+  { el: "fullRenderBtn", title: "7 · Review the full song",
+    text: "When you are satisfied, combine the current version from all five Dynamite sections into one continuous full-song preview. From the review, jump straight back to any section that needs more work." },
   { el: "song", title: "That\u2019s it. Have fun!",
-    text: "Switch songs here or upload your own. Tap the \u201c?\u201d in the top bar to see this again anytime." },
+    text: "Use the previous and next arrows or this section menu to move through Dynamite in order. Tap the \u201c?\u201d in the top bar to see this again anytime." },
 ];
 let tourIdx = 0;
 
@@ -910,6 +1145,24 @@ async function loadSongs(maxAttempts = 20) {
   return [];
 }
 
+function updateSectionNavigation() {
+  const index = SONGS.findIndex((song) => song.sid === ST.sid);
+  const total = SONGS.length;
+  $("sectionPosition").textContent =
+    index >= 0 && total ? `Section ${index + 1} of ${total}` : "Section";
+  $("prevSection").disabled = index <= 0;
+  $("nextSection").disabled = index < 0 || index >= total - 1;
+}
+
+async function moveSection(delta) {
+  const index = SONGS.findIndex((song) => song.sid === ST.sid);
+  const target = SONGS[index + delta];
+  if (!target) return;
+  const select = $("song");
+  select.value = target.sid;
+  await openSession(target.sid);
+}
+
 async function init() {
   activityStart("startup", "Starting MAESTRO", "Loading songs and editor services", 5);
   const sel = $("song");
@@ -924,6 +1177,7 @@ async function init() {
     toast("Couldn't load songs \u2014 the editor may still be starting. Please refresh in a moment.");
     return;
   }
+  SONGS = songs;
   activityUpdate("startup", { progress: 55, detail: "Opening the first song" });
   sel.disabled = false;
   songs.forEach((s) => { const o = document.createElement("option"); o.value = s.sid; o.textContent = s.name || s.sid; sel.appendChild(o); });
@@ -961,6 +1215,7 @@ async function openSession(sid) {
   }
   ST.sid = sid;
   ST.branchBase = null;
+  updateSectionNavigation();
   applyState(st);
   activityUpdate("session", { progress: 55, detail: "Loading the dance preview\u2026" });
   const v = $("video");
@@ -975,6 +1230,7 @@ async function openSession(sid) {
     12000,
   );
   if (sel) sel.disabled = false;
+  updateSectionNavigation();
   activityDone("session", mediaReady ? `${label} ready` : `${label} loaded; preview is buffering`);
   toast(`Loaded ${sid}: ${st.duration}s, ${st.n_beats} beats, ${st.generator} generator`);
   return true;
@@ -995,6 +1251,7 @@ function applyState(st, opts) {
   syncPlayhead();
   if (!$("compare").hidden) populateCmpVersions();          // keep the version picker current
   if (!opts.keepMetrics && st.metrics && st.metrics.energy !== undefined) showCurrentMetrics(st.metrics);
+  scheduleFullReviewRefresh();
 }
 
 const GEN_INFO = {
@@ -1381,6 +1638,7 @@ async function pollJob(sid, name, browserTiming = null) {
       activityDone(activityId, `${name} is ready`);
       if (j.bank_status === "building") watchBank(sid, name, j);
       const { songs } = await api("/api/songs");
+      SONGS = songs;
       const sel = $("song"); sel.innerHTML = "";
       songs.forEach((s) => { const o = document.createElement("option"); o.value = s.sid;
         o.textContent = s.name || s.sid; sel.appendChild(o); });

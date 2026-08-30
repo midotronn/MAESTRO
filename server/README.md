@@ -33,10 +33,14 @@ copy `bank_<sid>_*.npy` into `server/media/<sid>/bank/`.
 
 ### Reproducible Dynamite interview sections
 
-The approved full Dynamite take remains the immutable source and is intentionally hidden from
-`MAESTRO_INTERVIEW_MODE`. The source-side catalog in
+The approved full Dynamite take remains the immutable source and is intentionally absent from the
+editable `MAESTRO_INTERVIEW_MODE` catalog. The source-side catalog in
 `experiments/user_study/music/dynamite_editor_segments.json` instead exposes five 31–45 second
-choices and no other songs. Since the editor opens the first API result,
+choices and no other songs. The **Review full song** flow concatenates the current checkpoint head
+from each contiguous section and renders the resulting 205.8-second choreography with the original
+full-length audio. Untouched sections therefore remain original, while edited sections appear in
+their exact song positions. A signature manifest preserves a completed preview across service
+restarts while those section heads remain unchanged. Since the editor opens the first API result,
 `Dynamite — Intro / First Drop` is the default.
 
 On the live pod, build or verify the section directories with:
@@ -58,6 +62,7 @@ outside that mode the untouched full take remains available.
 
 - `GET  /api/songs`
 - `GET  /api/motions`, `GET /api/motions/{motion_id}/preview`
+- `GET|POST /api/full-song-review`, `GET /api/full-song-review/media/edited.mp4`
 - `POST /api/session/{sid}` → duration, beats, timeline, metrics, preview URL
 - `POST /api/session/{sid}/edit` `{a_sec,b_sec,instruction[,from_id,k,max_cycles]}`
 - `WS   /api/session/{sid}/edit_ws` → streams live `cycle n/K` progress then the final result

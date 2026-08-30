@@ -20,10 +20,16 @@
       <span id="genbadge" class="genbadge" title="">offline</span>
     </div>
     <div class="tools">
-      <label class="song">
-        <span>Song</span>
-        <select id="song"></select>
-      </label>
+      <div class="section-switcher" aria-label="Dynamite section navigation">
+        <button id="prevSection" class="section-step" type="button" title="Previous section"
+                aria-label="Open previous section">‹</button>
+        <label class="song">
+          <span id="sectionPosition">Section</span>
+          <select id="song"></select>
+        </label>
+        <button id="nextSection" class="section-step" type="button" title="Next section"
+                aria-label="Open next section">›</button>
+      </div>
       <button id="uploadBtn" class="ghost-btn" title="Upload your own song (processed on the GPU pod)">＋ Upload</button>
       <input type="file" id="uploadInput" accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" hidden />
       <div class="hist-btns">
@@ -64,13 +70,11 @@
             <span class="review-icon">⇄</span>
             <span><strong>Review edit</strong><small>Changed body areas highlighted</small></span>
           </button>
-          <button id="fullRenderBtn" class="review-btn" title="Render the complete edited dance with its music for a final review">
-            <span class="review-icon">♪</span>
-            <span><strong>Render full dance</strong><small>Slower, for the final review</small></span>
+          <button id="fullRenderBtn" class="review-btn full-song-btn" title="Review the current versions of all five Dynamite sections as one full song">
+            <span class="review-icon">▶</span>
+            <span><strong>Review full song</strong><small id="fullReviewButtonMeta">Combines all 5 sections</small></span>
           </button>
         </div>
-        <div id="renderStatus" class="render-status"></div>
-        <div id="renderProgWrap" class="progwrap render-prog" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><div id="renderProg" class="progbar"></div></div>
       </div>
 
       <div id="compare" class="compare" hidden>
@@ -169,6 +173,49 @@
       </div>
     </aside>
   </main>
+</div>
+
+<div id="fullReview" class="full-review" role="dialog" aria-modal="true"
+     aria-labelledby="fullReviewTitle" hidden>
+  <button id="fullReviewBackdrop" class="full-review-backdrop" type="button"
+          aria-label="Close full-song review"></button>
+  <section class="full-review-card">
+    <header class="full-review-head">
+      <div>
+        <span>Final choreography review</span>
+        <h2 id="fullReviewTitle">Dynamite — full song</h2>
+        <p>MAESTRO joins the current version from every section in song order. Sections you have not edited stay original.</p>
+      </div>
+      <button id="fullReviewClose" class="icon-btn" type="button" title="Close full-song review">✕</button>
+    </header>
+    <div class="full-review-body">
+      <div class="full-review-stage">
+        <div class="full-review-media">
+          <video id="fullReviewVideo" controls playsinline preload="metadata" hidden></video>
+          <div id="fullReviewPlaceholder" class="full-review-placeholder">
+            <span>▶</span>
+            <strong>See all five sections as one continuous dance</strong>
+            <p>Create a preview when you are ready. It uses each section’s current history state and the full Dynamite audio.</p>
+          </div>
+          <span id="fullReviewMediaTag" class="viewer-tag">full song · 3:26</span>
+        </div>
+      </div>
+      <aside class="full-review-side">
+        <div class="full-review-summary">
+          <strong id="fullReviewCount">Loading section status…</strong>
+          <span id="fullReviewSummary">Untouched sections use the original choreography.</span>
+        </div>
+        <nav id="fullReviewSections" class="full-review-sections" aria-label="Dynamite sections"></nav>
+        <div id="fullReviewStatus" class="full-review-status" role="status"></div>
+        <div id="fullReviewProgWrap" class="progwrap full-review-prog" role="progressbar"
+             aria-valuemin="0" aria-valuemax="100" hidden><div id="fullReviewProg" class="progbar"></div></div>
+        <div class="full-review-actions">
+          <button id="fullReviewContinue" class="ghost-btn" type="button">Continue editing</button>
+          <button id="fullReviewRender" class="apply" type="button">Create full-song preview</button>
+        </div>
+      </aside>
+    </div>
+  </section>
 </div>
 
 <div id="motionPreview" class="motion-preview" role="dialog" aria-modal="true"
