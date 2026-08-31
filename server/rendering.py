@@ -1928,6 +1928,32 @@ def _compare_warm(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
     return bool(enc.get("before") and enc.get("after"))
 
 
+def _restore_configured_render_pool(sid: str) -> bool:
+    """Return warm Blender daemons to the production quality after a preview render."""
+    from server import warm_render as wr
+
+    if not wr.on_pod():
+        return True
+    _cset(
+        sid,
+        progress=98,
+        message="restoring the full-quality render service\u2026",
+    )
+    try:
+        ready = wr.ensure_configured_pool(wait_ready=60)
+    except Exception as exc:  # noqa: BLE001 - surface a failed readiness restore to the job
+        logger.error("could not restore the configured warm render pool: %s", exc)
+        return False
+    if ready != wr.POOL_SIZE:
+        logger.error(
+            "configured warm render pool restored only %d/%d daemons",
+            ready,
+            wr.POOL_SIZE,
+        )
+        return False
+    return True
+
+
 def _compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
                     media_dir: Path, *, audio_wav: str | None = None,
                     audio_start: float = 0.0, audio_dur: float = 0.0) -> None:
@@ -1955,20 +1981,37 @@ def _compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarra
     audio_thread.start()
     # Fast path: warm Blender pool (editor co-located on the pod). Falls through to the cold ssh
     # render below if the pool is unavailable or fails.
+    warm_ready = False
+    warm_error: Exception | None = None
     try:
-        if _compare_warm(
+        warm_ready = _compare_warm(
             sid,
             before_motion,
             after_motion,
             media_dir,
-        ):
-            audio_thread.join()
-            _cset(sid, status="done", progress=100, message="ready",
-                  before_video="cmp_before.mp4", after_video="cmp_after.mp4",
-                  audio=audio_result["name"], elapsed=round(time.time() - started))
-            return
+        )
     except Exception as exc:  # noqa: BLE001 - never let the warm path break compare; fall back
-        logger.warning("warm compare path errored (%s); using cold render", exc)
+        warm_error = exc
+    if not _restore_configured_render_pool(sid):
+        audio_thread.join()
+        _cset(
+            sid,
+            status="error",
+            progress=0,
+            message=(
+                "The full-quality render service did not recover after preparing the comparison. "
+                "Try again after the service is ready."
+            ),
+        )
+        return
+    if warm_ready:
+        audio_thread.join()
+        _cset(sid, status="done", progress=100, message="ready",
+              before_video="cmp_before.mp4", after_video="cmp_after.mp4",
+              audio=audio_result["name"], elapsed=round(time.time() - started))
+        return
+    if warm_error is not None:
+        logger.warning("warm compare path errored (%s); using cold render", warm_error)
     try:
         _cset(sid, status="rendering", progress=8, message="checking the GPU pod\u2026")
         reachable = False

@@ -459,6 +459,59 @@ def test_compare_warm_preserves_window_quality_defaults(tmp_path, monkeypatch):
         assert "video_path" not in call
 
 
+def test_compare_render_restores_configured_pool_before_ready(tmp_path, monkeypatch):
+    import server.rendering as rendering
+
+    events = []
+    monkeypatch.setattr(
+        rendering,
+        "pod_config",
+        lambda: SimpleNamespace(host="127.0.0.1"),
+    )
+    monkeypatch.setattr(
+        rendering,
+        "_compare_warm",
+        lambda *_args, **_kwargs: events.append("compare") or True,
+    )
+    monkeypatch.setattr(
+        rendering,
+        "_restore_configured_render_pool",
+        lambda _sid: events.append("restore") or True,
+    )
+    monkeypatch.setattr(rendering, "_extract_window_audio", lambda *_args: None)
+    monkeypatch.setattr(
+        rendering,
+        "_cset",
+        lambda _sid, **kwargs: events.append(("status", kwargs.get("status"))),
+    )
+
+    motion = np.zeros((2, 139), dtype=np.float32)
+    rendering._compare_render("sng", motion, motion, tmp_path)
+
+    assert events[:2] == ["compare", "restore"]
+    assert events[-1] == ("status", "done")
+
+
+def test_compare_pool_restore_requires_every_configured_daemon(monkeypatch):
+    import server.rendering as rendering
+    import server.warm_render as warm_render
+
+    calls = []
+    monkeypatch.setattr(warm_render, "on_pod", lambda: True)
+    monkeypatch.setattr(warm_render, "POOL_SIZE", 6)
+    monkeypatch.setattr(
+        warm_render,
+        "ensure_configured_pool",
+        lambda **kwargs: calls.append(kwargs) or 6,
+    )
+    monkeypatch.setattr(rendering, "_cset", lambda *_args, **_kwargs: None)
+
+    assert rendering._restore_configured_render_pool("sng")
+    assert calls == [{"wait_ready": 60}]
+    monkeypatch.setattr(warm_render, "ensure_configured_pool", lambda **_kwargs: 5)
+    assert not rendering._restore_configured_render_pool("sng")
+
+
 def test_sparse_projected_joints_are_interpolated_for_highlights(tmp_path):
     import server.rendering as rendering
 
