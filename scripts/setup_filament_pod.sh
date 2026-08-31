@@ -150,7 +150,7 @@ if [ ! -f "$IBL" ] || [ ! -f "$FILAMENT_HEADER" ] || [ ! -f "$FILAMENT_LIBRARY" 
   archive="/tmp/filament-${FILAMENT_TAG#v}-linux.tgz"
   curl -fL --retry 10 --retry-delay 3 --retry-all-errors \
     -o "$archive" \
-    "https://github.com/google/filament/releases/download/$FILAMENT_TAG/filament-${FILAMENT_TAG#v}-linux.tgz"
+    "https://github.com/google/filament/releases/download/$FILAMENT_TAG/filament-$FILAMENT_TAG-linux.tgz"
   echo "$FILAMENT_RELEASE_SHA256  $archive" | sha256sum -c -
   rm -rf "$ROOT/filament"
   tar --no-same-owner -xzf "$archive" -C "$ROOT" filament
