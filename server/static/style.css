@@ -259,8 +259,10 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
 .compare-head h2 { margin: 3px 0 4px; font: 750 22px/1.25 var(--head-font); }
 .compare-head p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .compare-toolbar {
-  display: flex; align-items: end; justify-content: space-between; gap: 14px; padding: 13px 1px 10px;
+  display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between;
+  gap: 14px; padding: 13px 1px 10px;
 }
+.cmp-toolbar-options { display: flex; align-items: center; justify-content: flex-end; gap: 9px; }
 .cmp-ver {
   min-width: 0; display: flex; flex-direction: column; gap: 4px;
   color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .04em;
@@ -274,6 +276,24 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
   flex: none; padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px;
   background: var(--card2); color: var(--muted); font-size: 10.5px; font-weight: 650;
 }
+.cmp-highlight-toggle {
+  flex: none; display: grid; grid-template-columns: auto auto; align-items: center; gap: 7px;
+  padding: 6px 9px; border: 1px solid var(--line2); border-radius: 10px;
+  background: var(--card2); color: var(--muted); cursor: pointer; text-align: left; transition: .12s;
+}
+.cmp-highlight-toggle > i, .cmp-highlight-badge > i {
+  width: 9px; height: 9px; border-radius: 50%; background: #18d3ee;
+  box-shadow: 0 0 9px rgba(24,211,238,.9);
+}
+.cmp-highlight-toggle span { display: flex; flex-direction: column; gap: 1px; }
+.cmp-highlight-toggle strong { color: inherit; font-size: 10.5px; line-height: 1.1; }
+.cmp-highlight-toggle small { color: var(--faint); font-size: 8.5px; line-height: 1.1; }
+.cmp-highlight-toggle:hover:not(:disabled) { border-color: #18bcd4; color: #087d91; }
+.cmp-highlight-toggle.active {
+  border-color: rgba(24,211,238,.62); color: #087d91; background: rgba(24,211,238,.11);
+  box-shadow: 0 0 0 2px rgba(24,211,238,.08);
+}
+.cmp-highlight-toggle:disabled { opacity: .48; cursor: not-allowed; }
 .compare-status { min-height: 24px; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .compare-status.ok { color: var(--ok); }
 .compare-status.bad { color: var(--warn); }
@@ -295,6 +315,9 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
 }
 .cmp-vids figure.original { border-color: rgba(75,112,190,.42); }
 .cmp-vids figure.edited { border-color: rgba(108,76,224,.55); }
+.cmp-vids figure.edited.highlight-enabled {
+  border-color: rgba(24,211,238,.68); box-shadow: 0 0 0 2px rgba(24,211,238,.09);
+}
 .cmp-vids figcaption {
   display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 8px 10px;
   background: var(--card2); color: var(--text);
@@ -311,6 +334,21 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
 .cmp-vids video {
   width: 100%; height: auto; aspect-ratio: 1; object-fit: contain; background: #111827; display: block;
 }
+.cmp-video-stage { position: relative; aspect-ratio: 1; overflow: hidden; background: #111827; }
+.cmp-video-stage video { position: absolute; inset: 0; width: 100%; height: 100%; }
+#cmpHighlightCanvas {
+  position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
+}
+#cmpHighlightCanvas[hidden] { display: none; }
+.cmp-highlight-badge {
+  position: absolute; right: 8px; bottom: 8px; z-index: 2; display: flex; align-items: center;
+  max-width: calc(100% - 16px); gap: 6px; padding: 5px 8px; overflow: hidden;
+  border: 1px solid rgba(255,255,255,.16); border-radius: 999px;
+  background: rgba(15,23,42,.8); color: #dffcff; backdrop-filter: blur(5px);
+  font-size: 9px; line-height: 1; white-space: nowrap; text-overflow: ellipsis;
+}
+.cmp-highlight-badge[hidden] { display: none; }
+.cmp-highlight-badge > i { flex: none; width: 8px; height: 8px; }
 .cmp-change-summary {
   min-height: 20px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.45;
   text-align: center;
@@ -334,7 +372,9 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
   .compare-head p { font-size: 11px; }
   .compare-toolbar { align-items: stretch; flex-direction: column; gap: 7px; }
   .cmp-ver select { width: 100%; min-width: 0; }
-  .cmp-window { align-self: flex-start; }
+  .cmp-toolbar-options { justify-content: space-between; }
+  .cmp-window { align-self: center; }
+  .cmp-highlight-toggle { min-width: 0; }
   .cmp-vids { gap: 6px; }
   .cmp-vids figcaption { align-items: flex-start; flex-direction: column; gap: 1px; padding: 6px 7px; }
   .cmp-ctl { display: grid; grid-template-columns: auto 1fr; gap: 7px; }

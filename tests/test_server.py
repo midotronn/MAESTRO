@@ -1642,7 +1642,7 @@ def test_editor_review_actions_explain_the_user_flow(client):
     rendered = client.get("/").text
 
     assert "Compare original &amp; edited" in html
-    assert "Synchronized side by side" in js
+    assert "Side by side + optional highlight" in js
     assert "Review full song" in html
     assert "Combines all 5 sections" in html
     assert 'id="prevSection"' in html
@@ -1682,6 +1682,9 @@ def test_editor_review_actions_explain_the_user_flow(client):
     assert 'id="cmpContent"' in html
     assert 'id="cmpBefore"' in html
     assert 'id="cmpAfter"' in html
+    assert 'id="cmpHighlightToggle"' in html
+    assert 'id="cmpHighlightCanvas"' in html
+    assert "Cyan overlay on Edited" in html
     assert 'id="cmpChangeSummary"' in html
     assert 'id="cmpTime"' in html
     assert "Both clips show the same edit window" in html
@@ -1690,7 +1693,7 @@ def test_editor_review_actions_explain_the_user_flow(client):
     assert "setupCompareVideos" in js
     assert "compareAncestors" in js
     assert "updateCompareAvailability" in js
-    assert "renderCompareHighlight" not in js
+    assert "renderCompareHighlight" in js
     assert 'id="activityCenter"' in html
     assert 'id="agentProgWrap"' in html
     assert "activityStart" in js

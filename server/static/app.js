@@ -28,6 +28,12 @@ let FULL_REVIEW_COMPLETED_SIGNATURE = null;
 let COMPARE_POLL_TIMER = 0;
 let COMPARE_CONTEXT = null;
 let COMPARE_LOADING = false;
+const CMP_HIGHLIGHT = {
+  enabled: false,
+  available: false,
+  raf: 0,
+  metadata: null,
+};
 
 const METRIC_LABELS = { energy: "energy", bas: "beat align (BAS)", jerk: "smoothness", foot: "foot contact" };
 const HIGHER_BETTER = { energy: null, bas: true, jerk: false, foot: true }; // null = neutral (raw metrics)
@@ -523,7 +529,7 @@ function updateCompareAvailability() {
   const available = !!compareAncestors(currentCompareHead()).length;
   $("compareBtn").disabled = COMPARE_LOADING || !available;
   $("compareButtonMeta").textContent = available
-    ? "Synchronized side by side"
+    ? "Side by side + optional highlight"
     : "Available after your first edit";
   return available;
 }
@@ -554,7 +560,116 @@ function populateCmpVersions(preserveSelection = false) {
   return head;
 }
 
+function stopCompareHighlightLoop() {
+  if (CMP_HIGHLIGHT.raf) cancelAnimationFrame(CMP_HIGHLIGHT.raf);
+  CMP_HIGHLIGHT.raf = 0;
+}
+
+function compareHighlightMarkers(currentTime) {
+  const metadata = CMP_HIGHLIGHT.metadata;
+  if (!metadata || !Array.isArray(metadata.frames) || !metadata.frames.length) return [];
+  const fps = Number(metadata.fps) || 30;
+  const frame = Math.max(
+    0,
+    Math.min(metadata.frames.length - 1, Math.round((Number(currentTime) || 0) * fps)),
+  );
+  const markers = Array.isArray(metadata.frames[frame]) ? metadata.frames[frame] : [];
+  return markers.map((marker) => ({
+    x: Number(marker.x),
+    y: Number(marker.y),
+    rx: Number(marker.rx),
+    ry: Number(marker.ry),
+    strength: Math.max(0.2, Math.min(1, Number(marker.strength) || 0)),
+    label: String(marker.label || "Changed area"),
+  })).filter((marker) =>
+    [marker.x, marker.y, marker.rx, marker.ry].every(Number.isFinite));
+}
+
+function clearCompareHighlightCanvas() {
+  const canvas = $("cmpHighlightCanvas");
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function renderCompareHighlight() {
+  if (!CMP_HIGHLIGHT.enabled || $("compare").hidden) return;
+  const video = $("cmpAfter"), canvas = $("cmpHighlightCanvas");
+  if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
+  const width = video.videoWidth, height = video.videoHeight;
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, width, height);
+  const markers = compareHighlightMarkers(video.currentTime);
+  markers.forEach((marker) => {
+    const x = marker.x * width, y = marker.y * height;
+    const rx = Math.max(18, marker.rx * width), ry = Math.max(22, marker.ry * height);
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(24, 211, 238, ${0.08 + 0.10 * marker.strength})`;
+    ctx.shadowColor = "rgba(24, 211, 238, .96)";
+    ctx.shadowBlur = 12 + 18 * marker.strength;
+    ctx.lineWidth = 2.5 + 2.5 * marker.strength;
+    ctx.strokeStyle = `rgba(24, 211, 238, ${0.64 + 0.30 * marker.strength})`;
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  });
+  const labels = [...new Set(markers.map((marker) => marker.label))];
+  $("cmpHighlightBadge").querySelector("span").textContent = labels.length
+    ? `Cyan: ${labels.join(" + ")}`
+    : "Cyan appears when changed areas move";
+}
+
+function startCompareHighlightLoop() {
+  stopCompareHighlightLoop();
+  if (!CMP_HIGHLIGHT.enabled) return;
+  const tick = () => {
+    CMP_HIGHLIGHT.raf = 0;
+    renderCompareHighlight();
+    if (CMP_HIGHLIGHT.enabled && !$("cmpAfter").paused && !$("compare").hidden) {
+      CMP_HIGHLIGHT.raf = requestAnimationFrame(tick);
+    }
+  };
+  CMP_HIGHLIGHT.raf = requestAnimationFrame(tick);
+}
+
+function setCompareHighlightEnabled(requested) {
+  const enabled = Boolean(requested && CMP_HIGHLIGHT.available);
+  CMP_HIGHLIGHT.enabled = enabled;
+  const button = $("cmpHighlightToggle");
+  button.classList.toggle("active", enabled);
+  button.setAttribute("aria-pressed", String(enabled));
+  $("cmpHighlightCanvas").hidden = !enabled;
+  $("cmpHighlightBadge").hidden = !enabled;
+  $("cmpEditedFigure").classList.toggle("highlight-enabled", enabled);
+  if (!enabled) {
+    stopCompareHighlightLoop();
+    clearCompareHighlightCanvas();
+    return;
+  }
+  renderCompareHighlight();
+  if (!$("cmpAfter").paused) startCompareHighlightLoop();
+}
+
+function configureCompareHighlight(metadata) {
+  CMP_HIGHLIGHT.metadata = metadata || null;
+  CMP_HIGHLIGHT.available = Boolean(
+    metadata && Array.isArray(metadata.frames) && metadata.frames.length,
+  );
+  const button = $("cmpHighlightToggle");
+  button.disabled = !CMP_HIGHLIGHT.available;
+  button.title = CMP_HIGHLIGHT.available
+    ? "Overlay cyan markers on changed body regions in the Edited video"
+    : "Changed-region highlighting is unavailable for this comparison";
+  setCompareHighlightEnabled(false);
+}
+
 function resetCompareMedia() {
+  configureCompareHighlight(null);
   const videos = [$("cmpBefore"), $("cmpAfter")];
   videos.forEach((video) => {
     try { video.pause(); } catch (e) {}
@@ -768,6 +883,7 @@ async function setupCompareVideos(
     if (haveAudio) AU.load();
   }
   showCompareMetrics(metrics);
+  configureCompareHighlight(highlight);
   const changedParts = Array.isArray(highlight?.parts) ? highlight.parts : [];
   $("cmpChangeSummary").textContent = changedParts.length
     ? `Detected change: ${changedParts.join(" + ")}.`
@@ -808,24 +924,30 @@ async function setupCompareVideos(
     if (B.paused) B.play().catch(() => {});
     if (haveAudio && AU.paused) AU.play().catch(() => {});
     setPlayLabel();
+    startCompareHighlightLoop();
   };
   A.onpause = () => {
     if (!B.paused) B.pause();
     if (haveAudio) AU.pause();
     setPlayLabel();
+    stopCompareHighlightLoop();
+    renderCompareHighlight();
   };
   A.ontimeupdate = () => {
     const d = A.duration || 1;
     $("cmpScrub").value = Math.round((A.currentTime / d) * 1000);
     syncSecondary(false);
     updateTime();
+    if (CMP_HIGHLIGHT.enabled && !CMP_HIGHLIGHT.raf) renderCompareHighlight();
   };
   $("cmpScrub").oninput = () => {
     const d = A.duration || 1, t = ($("cmpScrub").value / 1000) * d;
     try { A.currentTime = t; B.currentTime = t; if (haveAudio) AU.currentTime = t; } catch (e) {}
     updateTime();
+    requestAnimationFrame(renderCompareHighlight);
   };
   A.onloadedmetadata = updateTime;
+  A.onseeked = renderCompareHighlight;
   const mediaReady = await waitForMediaReady(
     [A, B],
     "compare",
@@ -881,6 +1003,8 @@ function wireControls() {
   $("compareBtn").onclick = () => startCompare(false);
   $("compareBackdrop").onclick = () => closeCompare();
   $("cmpClose").onclick = () => closeCompare();
+  $("cmpHighlightToggle").onclick = () =>
+    setCompareHighlightEnabled(!CMP_HIGHLIGHT.enabled);
   $("cmpVersion").onchange = () => {
     if (!$("compare").hidden) startCompare(true);
   };

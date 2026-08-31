@@ -79,7 +79,9 @@ legacy checkpoint shapes.
 After the first edit, **Compare original & edited** opens a dedicated modal with two clearly labeled,
 synchronized clips of the exact edit window. It defaults to the untouched root choreography; another
 ancestor can be selected when a step-by-step comparison is useful. Play, pause, music, and scrubbing
-stay locked, and changing the active checkpoint invalidates rather than reusing an old comparison.
+stay locked. **Highlight changes** optionally overlays cyan markers on the affected body regions in
+the Edited panel without hiding either clip. Changing the active checkpoint invalidates rather than
+reusing an old comparison.
 
 The common-motion catalog stays collapsed until opened. Clicking any of its 19 entries opens the
 description and the exact editor-composed example at

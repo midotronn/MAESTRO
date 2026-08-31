@@ -156,7 +156,14 @@
       <label class="cmp-ver">Compare edited version against
         <select id="cmpVersion" title="Choose the earlier version shown as Original"></select>
       </label>
-      <span id="cmpWin" class="cmp-window"></span>
+      <div class="cmp-toolbar-options">
+        <button id="cmpHighlightToggle" class="cmp-highlight-toggle" type="button"
+                aria-pressed="false" aria-controls="cmpHighlightCanvas" disabled>
+          <i></i>
+          <span><strong>Highlight changes</strong><small>Cyan overlay on Edited</small></span>
+        </button>
+        <span id="cmpWin" class="cmp-window"></span>
+      </div>
     </div>
     <div id="cmpStatus" class="compare-status" role="status"></div>
     <div id="cmpProgWrap" class="progwrap cmp-prog" role="progressbar"
@@ -171,9 +178,13 @@
           <figcaption><strong>Original</strong><small id="cmpBeforeDetail">Original dance</small></figcaption>
           <video id="cmpBefore" muted playsinline preload="metadata" loop></video>
         </figure>
-        <figure class="edited">
+        <figure id="cmpEditedFigure" class="edited">
           <figcaption><strong>Edited</strong><small id="cmpAfterDetail">Current LLM-guided edit</small></figcaption>
-          <video id="cmpAfter" muted playsinline preload="metadata" loop></video>
+          <div class="cmp-video-stage">
+            <video id="cmpAfter" muted playsinline preload="metadata" loop></video>
+            <canvas id="cmpHighlightCanvas" aria-hidden="true" hidden></canvas>
+            <span id="cmpHighlightBadge" class="cmp-highlight-badge" hidden><i></i><span>Cyan highlight</span></span>
+          </div>
         </figure>
       </div>
       <p id="cmpChangeSummary" class="cmp-change-summary"></p>
