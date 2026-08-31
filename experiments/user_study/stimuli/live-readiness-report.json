@@ -1,17 +1,19 @@
 {
-  "validated_at": "2026-08-30T20:06:38-05:00",
+  "validated_at": "2026-08-31T17:11:17-05:00",
   "study_content_commit": "076411d9753442581d07f2a68dd35a9d785b2931",
-  "production_release_commit": "e2149bb6bad4dad21d2a03253dfef38cbcc42012",
-  "deployment_commit": "e2149bb6bad4dad21d2a03253dfef38cbcc42012",
+  "production_release_commit": "8aee8bd8c93b8bc1188072ceeecffacbeceea443",
+  "deployment_commit": "8aee8bd8c93b8bc1188072ceeecffacbeceea443",
   "rollback_snapshot": "/workspace/maestro-backups/study-player-before-v15-20260827T212344",
-  "editor_base": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net",
+  "editor_base": "https://x0u1o2qhc5hxgd-8888.proxy.runpod.net",
   "website": {
     "url": "https://midotronn.github.io/MAESTRO/",
     "config_url": "https://midotronn.github.io/MAESTRO/static/data/config.json",
-    "resolved_editor_url": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/",
+    "resolved_editor_url": "https://x0u1o2qhc5hxgd-8888.proxy.runpod.net/",
     "resolved_editor_buttons": 2,
     "browser_errors": 0,
-    "status": "passed"
+    "status": "passed",
+    "source_branch": "interactive-editor",
+    "deployment_commit": "19b79e0e07dfe028633e03adf3e93156ea2fea5b"
   },
   "generation": {
     "storyboard_model": "gpt-4o",
@@ -25,11 +27,11 @@
     "credential_file_mode": "0600"
   },
   "pod": {
-    "id": "eg25wp3e2ho1rg",
-    "checkout_commit": "e2149bb6bad4dad21d2a03253dfef38cbcc42012",
+    "id": "x0u1o2qhc5hxgd",
+    "checkout_commit": "8aee8bd8c93b8bc1188072ceeecffacbeceea443",
     "checkout_clean": true,
-    "host": "213.173.109.45",
-    "ssh_port": 12179,
+    "host": "213.173.107.23",
+    "ssh_port": 46690,
     "internal_port": 8011,
     "public_port": 8888,
     "healthy_workers": 10,
@@ -95,13 +97,13 @@
       "source_frames": 6173,
       "duration_seconds": 205.769,
       "sections": 5,
-      "edited_sections_at_validation": 1,
-      "current_signature": "00da718443862d6cd4ae",
-      "render_signature": "00da718443862d6cd4ae",
+      "edited_sections_at_validation": 0,
+      "current_signature": "4755aa215936afc8a1d6",
+      "render_signature": "4755aa215936afc8a1d6",
       "stale": false,
-      "render_elapsed_seconds": 36,
-      "rendered_video_bytes": 42434617,
-      "sha256": "e205724768de8a31f5c0c2e3a979dbc84105d0ebbae8d711a882ad4670f68a63",
+      "render_elapsed_seconds": 42.88,
+      "rendered_video_bytes": 42122063,
+      "sha256": "c50203405f9fb5847d3806f3829b0e452f2c25c312fa5983885f5b8e456de7f7",
       "video_codec": "h264",
       "video_frames": 6173,
       "video_dimensions": [
@@ -110,7 +112,7 @@
       ],
       "audio_codec": "aac",
       "audio_sample_rate": 22050,
-      "audio_duration_seconds": 205.682,
+      "audio_duration_seconds": 205.681995,
       "audio_mean_volume_db": -10.4,
       "http_byte_range_verified": true,
       "preview_persists_across_service_restart": true,
@@ -138,26 +140,26 @@
         4,
         8
       ],
-      "render_elapsed_seconds": 39,
+      "render_elapsed_seconds": 48.82,
       "video_frames_each": 120,
       "video_dimensions": [
         448,
         448
       ],
-      "before_video_bytes": 94365,
-      "after_video_bytes": 93759,
+      "before_video_bytes": 107513,
+      "after_video_bytes": 111198,
       "audio_bytes": 61141,
-      "before_sha256": "eb36726e5ce8ee43192cf1be1fc5e437a24a7753a41dd79ddf241ca7bd5ddbc7",
-      "after_sha256": "356093e555496aca9ae4c1471d76372cddb0ea73405ec581dc212253e38dfc0e",
+      "before_sha256": "60aee902c1a0dd38da5ff1adfa13cb7d8b8f6aadb2c1cb966f3ed1c837836033",
+      "after_sha256": "0aef8875faf60f6b7800d722e8717e59a1ef5c996dcc68a0d38731aab70656b2",
       "audio_sha256": "f9fdb96937a955501503b7f9d7687b62d6ec2c24732f5437a23e9dd5f98791f6",
-      "before_after_ssim": 0.994248,
+      "before_after_ssim": 0.993507,
       "audio_codec": "aac",
       "audio_sample_rate": 22050,
       "audio_duration_seconds": 4.0,
       "explicit_play_required": true,
       "synchronized_playback": true,
-      "video_playback_drift_seconds": 0.000155,
-      "audio_playback_drift_seconds": 0.0437,
+      "video_playback_drift_seconds": 0.000387,
+      "audio_playback_drift_seconds": 0.053128,
       "synchronized_scrub": true,
       "scrub_validation_seconds": 2.5,
       "changed_regions": [
@@ -170,7 +172,7 @@
       "highlight_target": "Edited",
       "highlight_color": "cyan",
       "highlight_uses_projected_changed_region_metadata": true,
-      "highlight_active_frames": 27,
+      "highlight_active_frames": 28,
       "highlight_desktop_canvas_pixels": 494,
       "highlight_responsive_500px_canvas_pixels": 225,
       "both_videos_visible_with_highlight": true,
@@ -202,11 +204,11 @@
         5.6,
         5.9
       ],
-      "total_bytes": 1887793,
+      "total_bytes": 1882400,
       "generated_with_motion_bank_apply": true,
       "overhead_clap": {
-        "sha256": "acc2a571ddc0bd5c6c6e75ea9042650f695a4ee80ca416c259e1468c24def886",
-        "bytes": 63903,
+        "sha256": "c15ac70af201505d369faf9331f6c1e81754960196e320353edfe62e67099bd2",
+        "bytes": 65800,
         "duration_seconds": 5.6,
         "dimensions": [
           640,
@@ -259,13 +261,13 @@
       "checkpoint_count_after_reset": 1,
       "head_is_root": true
     },
-    "study_link": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/study/",
-    "project_link": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/project/",
+    "study_link": "https://x0u1o2qhc5hxgd-8888.proxy.runpod.net/study/",
+    "project_link": "https://x0u1o2qhc5hxgd-8888.proxy.runpod.net/project/",
     "browser_errors": 0,
     "status": "passed"
   },
   "study_player": {
-    "url": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net/study/",
+    "url": "https://x0u1o2qhc5hxgd-8888.proxy.runpod.net/study/",
     "protocol": "maestro-expert-study-v15-llm-gpt4o-k10-front-facing-16s",
     "excerpt_duration_seconds": 16,
     "comparisons": 6,
@@ -404,8 +406,34 @@
       "full_song_current_after_concurrent_edit_passed": true,
       "temporary_validation_data_removed": true,
       "failed": 0
+    },
+    "fresh_pod_restore": {
+      "server_tests_passed": 90,
+      "server_tests_failed": 0,
+      "strict_four_gpu_verify_passed": true,
+      "study_player_browser_passed": true,
+      "editor_browser_passed": true,
+      "comparison_browser_passed": true,
+      "full_song_browser_passed": true,
+      "website_browser_passed": true
     }
   },
   "launch_blockers": [],
-  "status": "passed"
+  "status": "passed",
+  "restoration": {
+    "workspace": "brand-new persistent RunPod workspace",
+    "gpu_model": "NVIDIA RTX PRO 4500 Blackwell",
+    "gpu_count": 4,
+    "bootstrap_fix_commit": "03cb72da5d00cd417937e240ccbb9e81c14ab142",
+    "restored_audio_fix_commit": "8aee8bd8c93b8bc1188072ceeecffacbeceea443",
+    "website_deployment_commit": "19b79e0e07dfe028633e03adf3e93156ea2fea5b",
+    "dynamite_source_audio_sha256": "505f55500a7a3923662b6f8f6808d8cc206da644237ba3ba3ba0f4fd8546ff5a",
+    "dynamite_source_frames": 6173,
+    "dynamite_segments_built": 5,
+    "segment_idempotent_reuse_verified": 5,
+    "motion_previews_generated": 19,
+    "study_videos_verified": 6,
+    "validation_sessions_reset_to_root": true,
+    "ready_for_participants": true
+  }
 }
