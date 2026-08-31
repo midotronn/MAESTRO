@@ -1882,6 +1882,20 @@ def test_compare_requires_an_edit_first(client):
     assert client.post("/api/session/sng/compare").status_code == 400
 
 
+def test_song_wav_accepts_canonical_audio_filename(tmp_path, monkeypatch):
+    import server.app as A
+
+    media = tmp_path / "media"
+    song = media / "restored_song"
+    song.mkdir(parents=True)
+    audio = song / "audio.wav"
+    audio.write_bytes(b"wav")
+    monkeypatch.setattr(A, "MEDIA", media)
+    monkeypatch.setenv("WORKSPACE", str(tmp_path / "workspace"))
+
+    assert A._song_wav("restored_song") == str(audio)
+
+
 def test_full_render_passes_song_audio_to_accelerated_renderer(client, monkeypatch, tmp_path):
     import server.app as A
     import server.rendering as R

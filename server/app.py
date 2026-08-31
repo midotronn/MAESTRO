@@ -1165,8 +1165,11 @@ def render_status(sid: str) -> dict:
 def _song_wav(sid: str) -> str | None:
     """Best-effort path to the song's wav for muxing window audio (editor is co-located on the pod)."""
     ws = os.environ.get("WORKSPACE", "/workspace")
-    for p in (Path(ws) / "LODGE" / "data" / "finedance" / "music_wav" / f"{sid}.wav",
-              _song_dir(sid) / f"{sid}.wav"):
+    for p in (
+        Path(ws) / "LODGE" / "data" / "finedance" / "music_wav" / f"{sid}.wav",
+        _song_dir(sid) / f"{sid}.wav",
+        _song_dir(sid) / "audio.wav",
+    ):
         if p.exists():
             return str(p)
     return None
