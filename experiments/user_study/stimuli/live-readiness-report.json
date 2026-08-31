@@ -1,8 +1,8 @@
 {
-  "validated_at": "2026-08-30T18:32:15-05:00",
+  "validated_at": "2026-08-30T19:25:23-05:00",
   "study_content_commit": "076411d9753442581d07f2a68dd35a9d785b2931",
-  "production_release_commit": "0580648ab34412ea152277c06e5f463fe883cc12",
-  "deployment_commit": "0580648ab34412ea152277c06e5f463fe883cc12",
+  "production_release_commit": "87c92b26a840df9e518ac8541099ac096873f739",
+  "deployment_commit": "87c92b26a840df9e518ac8541099ac096873f739",
   "rollback_snapshot": "/workspace/maestro-backups/study-player-before-v15-20260827T212344",
   "editor_base": "https://eg25wp3e2ho1rg-8888.proxy.runpod.net",
   "website": {
@@ -26,7 +26,7 @@
   },
   "pod": {
     "id": "eg25wp3e2ho1rg",
-    "checkout_commit": "0580648ab34412ea152277c06e5f463fe883cc12",
+    "checkout_commit": "87c92b26a840df9e518ac8541099ac096873f739",
     "checkout_clean": true,
     "host": "213.173.109.45",
     "ssh_port": 12179,
@@ -41,6 +41,7 @@
     "planner_model": "gpt-4o",
     "strict_verify_status": "FOUR_GPU_POD_READY",
     "temporary_segment_files_absent": true,
+    "temporary_comparison_validation_absent": true,
     "status": "passed"
   },
   "editor": {
@@ -94,11 +95,11 @@
       "source_frames": 6173,
       "duration_seconds": 205.769,
       "sections": 5,
-      "edited_sections_at_validation": 1,
-      "current_signature": "99e01092faf4a889ee75",
-      "render_elapsed_seconds": 38,
-      "rendered_video_bytes": 42448616,
-      "sha256": "9243085dcbfdf742b03c38d70566134be9e8a9ed84d25bc3d56a535801d81a7d",
+      "edited_sections_at_validation": 0,
+      "current_signature": "bfaf3167c46b1af7610b",
+      "render_elapsed_seconds": 48,
+      "rendered_video_bytes": 42456940,
+      "sha256": "2e2749fd655e70272255180ac4172405387c927d443bfd8248375bd7f29862dc",
       "video_codec": "h264",
       "video_frames": 6173,
       "video_dimensions": [
@@ -117,6 +118,56 @@
       "responsive_500px_verified": true,
       "browser_playback_verified": true,
       "post_restart_browser_verified": true,
+      "browser_errors": 0
+    },
+    "edit_comparison": {
+      "release_commit": "87c92b26a840df9e518ac8541099ac096873f739",
+      "available_after_first_edit": true,
+      "default_before_version": "original_root",
+      "alternate_versions_restricted_to_ancestors": true,
+      "labels": [
+        "Original",
+        "Edited"
+      ],
+      "validation_window_seconds": [
+        4,
+        8
+      ],
+      "render_elapsed_seconds": 36,
+      "video_frames_each": 120,
+      "video_dimensions": [
+        448,
+        448
+      ],
+      "before_video_bytes": 94365,
+      "after_video_bytes": 93759,
+      "audio_bytes": 61141,
+      "before_sha256": "eb36726e5ce8ee43192cf1be1fc5e437a24a7753a41dd79ddf241ca7bd5ddbc7",
+      "after_sha256": "356093e555496aca9ae4c1471d76372cddb0ea73405ec581dc212253e38dfc0e",
+      "audio_sha256": "f9fdb96937a955501503b7f9d7687b62d6ec2c24732f5437a23e9dd5f98791f6",
+      "before_after_ssim": 0.994248,
+      "audio_codec": "aac",
+      "audio_sample_rate": 22050,
+      "audio_duration_seconds": 4.0,
+      "explicit_play_required": true,
+      "synchronized_playback": true,
+      "video_playback_drift_seconds": 0.000134,
+      "audio_playback_drift_seconds": 0.10401,
+      "synchronized_scrub": true,
+      "scrub_validation_seconds": 2.5,
+      "changed_regions": [
+        "Left arm",
+        "Right arm"
+      ],
+      "metrics_available": true,
+      "desktop_video_pixels": 494,
+      "responsive_500px_video_pixels": 225,
+      "stale_after_head_change": true,
+      "llm_planner_used": true,
+      "llm_planner_model": "gpt-4o",
+      "llm_selected_tool": "motion_bank",
+      "validation_motion": "clap_overhead",
+      "temporary_validation_session_removed": true,
       "browser_errors": 0
     },
     "motion_examples": {
@@ -304,6 +355,23 @@
       "post_restart_live_browser_passed": true,
       "desktop_layout_verified": true,
       "responsive_500px_verified": true,
+      "failed": 0
+    },
+    "edit_comparison_release": {
+      "local_python_passed": 92,
+      "local_javascript_passed": 6,
+      "mock_browser_passed": true,
+      "pod_server_passed": 86,
+      "pod_server_skipped": 1,
+      "strict_four_gpu_verify_passed": true,
+      "live_llm_edit_passed": true,
+      "live_render_passed": true,
+      "live_browser_passed": true,
+      "live_playback_sync_passed": true,
+      "live_scrub_sync_passed": true,
+      "stale_invalidation_passed": true,
+      "full_song_regression_passed": true,
+      "temporary_validation_data_removed": true,
       "failed": 0
     }
   },
