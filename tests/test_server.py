@@ -26,6 +26,7 @@ from agentlodge.editor.window_edit import MockWindowGenerator  # noqa: E402
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     import server.app as A
+    import server.rendering as R
     monkeypatch.delenv("AGENTLODGE_LIVE", raising=False)
     monkeypatch.delenv("MAESTRO_REQUIRE_MOTION_AUDIT", raising=False)
     # point the server at a temp media/sessions tree with one synthetic song
@@ -43,6 +44,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(A, "SESSIONS", tmp_path / "sessions")
     monkeypatch.setattr(A, "MOTION_PREVIEWS", tmp_path / "motion-previews")
     A._sessions.clear()
+    R._CJOBS.clear()
     return TestClient(A.app)
 
 
@@ -1639,8 +1641,8 @@ def test_editor_review_actions_explain_the_user_flow(client):
     css = (STATIC / "style.css").read_text(encoding="utf-8")
     rendered = client.get("/").text
 
-    assert "Review edit" in html
-    assert "Changed body areas highlighted" in html
+    assert "Compare original &amp; edited" in html
+    assert "Synchronized side by side" in js
     assert "Review full song" in html
     assert "Combines all 5 sections" in html
     assert 'id="prevSection"' in html
@@ -1676,16 +1678,19 @@ def test_editor_review_actions_explain_the_user_flow(client):
     assert "clap to the right" in js
     assert "insertion is unavailable until it has its own visual audit" in js
     assert "follows the dance flow" in js
-    assert 'id="cmpHighlightCanvas"' in html
-    assert 'id="cmpModeHighlight"' in html
-    assert 'id="cmpModeSide"' in html
-    assert 'id="cmpHoldBefore"' in html
-    assert "MAESTRO follows the changed joints through the render" in html
-    assert "/static/compare_highlight.js" in html
+    assert 'id="compareBackdrop"' in html
+    assert 'id="cmpContent"' in html
+    assert 'id="cmpBefore"' in html
+    assert 'id="cmpAfter"' in html
+    assert 'id="cmpChangeSummary"' in html
+    assert 'id="cmpTime"' in html
+    assert "Both clips show the same edit window" in html
+    assert "/static/compare_highlight.js" not in html
     assert (STATIC / "compare_highlight.js").is_file()
-    assert "renderCompareHighlight" in js
-    assert "drawProjectedBodyHighlights" in js
-    assert "setCompareMode" in js
+    assert "setupCompareVideos" in js
+    assert "compareAncestors" in js
+    assert "updateCompareAvailability" in js
+    assert "renderCompareHighlight" not in js
     assert 'id="activityCenter"' in html
     assert 'id="agentProgWrap"' in html
     assert "activityStart" in js
@@ -1984,13 +1989,22 @@ def test_compare_after_edit_renders_before_and_after(client, monkeypatch):
     captured: dict = {}
 
     def fake_start(sid, before, after, media_dir, *, metrics=None,
-                   audio_wav=None, audio_start=0.0, audio_dur=0.0):
+                   audio_wav=None, audio_start=0.0, audio_dur=0.0,
+                   comparison_id=None, head_id=None, before_id=None):
         captured["sid"] = sid
         captured["before"] = np.asarray(before)
         captured["after"] = np.asarray(after)
         captured["metrics"] = metrics
         captured["audio"] = (audio_wav, audio_start, audio_dur)
-        R._cset(sid, status="rendering", progress=10)
+        captured["context"] = (comparison_id, head_id, before_id)
+        R._cset(
+            sid,
+            status="rendering",
+            progress=10,
+            comparison_id=comparison_id,
+            head_id=head_id,
+            before_id=before_id,
+        )
 
     monkeypatch.setattr(R, "start_compare_render", fake_start)
     client.post("/api/session/sng")
@@ -2006,6 +2020,10 @@ def test_compare_after_edit_renders_before_and_after(client, monkeypatch):
     assert set(("before", "after", "window", "window_sec", "before_id", "before_label")) <= set(m)
     assert "bas" in m["before"] and "bas" in m["after"]
     assert m["window_sec"] == [3.0, 6.0]
+    assert m["before_is_original"] is True
+    assert captured["context"][0] == j["comparison_id"]
+    assert captured["context"][1] == m["after_id"]
+    assert captured["context"][2] == m["before_id"]
     # audio is requested for the window (start = a_sec, dur = window length)
     assert captured["audio"][1] == 3.0 and abs(captured["audio"][2] - 3.0) < 1e-6
     assert j["status"] in ("queued", "rendering", "idle")
@@ -2031,10 +2049,18 @@ def test_compare_from_id_selects_chosen_prior_version(client, monkeypatch):
     captured: dict = {}
 
     def fake_start(sid, before, after, media_dir, *, metrics=None,
-                   audio_wav=None, audio_start=0.0, audio_dur=0.0):
+                   audio_wav=None, audio_start=0.0, audio_dur=0.0,
+                   comparison_id=None, head_id=None, before_id=None):
         captured["before"] = np.asarray(before)
         captured["metrics"] = metrics
-        R._cset(sid, status="rendering", progress=10)
+        R._cset(
+            sid,
+            status="rendering",
+            progress=10,
+            comparison_id=comparison_id,
+            head_id=head_id,
+            before_id=before_id,
+        )
 
     monkeypatch.setattr(R, "start_compare_render", fake_start)
     client.post("/api/session/sng")
@@ -2048,3 +2074,88 @@ def test_compare_from_id_selects_chosen_prior_version(client, monkeypatch):
     assert captured["metrics"]["before_id"] == root["id"]
     assert captured["metrics"].get("before_label") is not None
     assert captured["before"].shape[0] == 90
+
+
+def test_compare_defaults_to_root_and_rejects_non_ancestor(client, monkeypatch):
+    import server.rendering as R
+    captured: dict = {}
+
+    def fake_start(sid, before, after, media_dir, *, metrics=None, **context):
+        captured["metrics"] = metrics
+        R._cset(
+            sid,
+            status="rendering",
+            progress=10,
+            comparison_id=context["comparison_id"],
+            head_id=context["head_id"],
+            before_id=context["before_id"],
+        )
+
+    monkeypatch.setattr(R, "start_compare_render", fake_start)
+    initial = client.post("/api/session/sng").json()
+    root = initial["head"]
+    first = client.post(
+        "/api/session/sng/edit",
+        json={"a_sec": 3, "b_sec": 6, "instruction": "more energetic"},
+    ).json()["state"]["head"]
+    sibling = client.post(
+        "/api/session/sng/edit",
+        json={"a_sec": 3, "b_sec": 6, "instruction": "calmer"},
+    ).json()["state"]["head"]
+    current = client.post(
+        "/api/session/sng/edit",
+        json={
+            "a_sec": 3,
+            "b_sec": 6,
+            "instruction": "tighten to the beat",
+            "from_id": first,
+        },
+    ).json()["state"]["head"]
+
+    response = client.post("/api/session/sng/compare")
+    assert response.status_code == 200
+    assert captured["metrics"]["before_id"] == root
+    assert captured["metrics"]["before_is_original"] is True
+    assert client.post(
+        "/api/session/sng/compare",
+        json={"from_id": first},
+    ).status_code == 409
+
+    rejected = client.post(
+        "/api/session/sng/compare",
+        json={"from_id": sibling},
+    )
+    assert rejected.status_code == 400
+    assert "ancestor" in rejected.text
+    assert current != sibling
+
+
+def test_compare_status_is_stale_after_head_changes(client, monkeypatch):
+    import server.rendering as R
+
+    def fake_start(sid, before, after, media_dir, *, metrics=None, **context):
+        R._cset(
+            sid,
+            status="done",
+            progress=100,
+            metrics=metrics,
+            before_video="cmp_before.mp4",
+            after_video="cmp_after.mp4",
+            comparison_id=context["comparison_id"],
+            head_id=context["head_id"],
+            before_id=context["before_id"],
+        )
+
+    monkeypatch.setattr(R, "start_compare_render", fake_start)
+    client.post("/api/session/sng")
+    client.post(
+        "/api/session/sng/edit",
+        json={"a_sec": 3, "b_sec": 6, "instruction": "more energetic"},
+    )
+    assert client.post("/api/session/sng/compare").json()["status"] == "done"
+
+    client.post("/api/session/sng/reset")
+    stale = client.get("/api/session/sng/compare").json()
+    assert stale["status"] == "stale"
+    assert stale["before_video"] is None
+    assert stale["after_video"] is None

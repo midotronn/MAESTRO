@@ -66,51 +66,15 @@
           <span>Render only when you want a polished character preview.</span>
         </div>
         <div class="review-actions">
-          <button id="compareBtn" class="review-btn primary" title="Render this edited window and highlight the body areas that changed">
+          <button id="compareBtn" class="review-btn primary" title="Compare the current edit with the original dance in synchronized videos" disabled>
             <span class="review-icon">⇄</span>
-            <span><strong>Review edit</strong><small>Changed body areas highlighted</small></span>
+            <span><strong>Compare original &amp; edited</strong><small id="compareButtonMeta">Available after your first edit</small></span>
           </button>
           <button id="fullRenderBtn" class="review-btn full-song-btn" title="Review the current versions of all five Dynamite sections as one full song">
             <span class="review-icon">▶</span>
             <span><strong>Review full song</strong><small id="fullReviewButtonMeta">Combines all 5 sections</small></span>
           </button>
         </div>
-      </div>
-
-      <div id="compare" class="compare" hidden>
-        <div class="cmp-head">
-          <span class="cmp-title">Compare window <em id="cmpWin"></em></span>
-          <label class="cmp-ver">before:
-            <select id="cmpVersion" title="Which earlier version of this window to compare the current one against"></select>
-          </label>
-          <button id="cmpClose" class="icon-btn" title="Close comparison">✕</button>
-        </div>
-        <div id="cmpStatus" class="render-status"></div>
-        <div id="cmpProgWrap" class="progwrap cmp-prog" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><div id="cmpProg" class="progbar"></div></div>
-        <div class="cmp-viewbar" aria-label="Comparison view">
-          <span>View</span>
-          <button id="cmpModeHighlight" class="cmp-view-btn active" type="button" aria-pressed="true">Highlight changes</button>
-          <button id="cmpModeSide" class="cmp-view-btn" type="button" aria-pressed="false">Side by side</button>
-        </div>
-        <div id="cmpHighlight" class="cmp-highlight">
-          <div class="cmp-highlight-stage">
-            <canvas id="cmpHighlightCanvas" aria-label="Edited dance with changed body areas highlighted"></canvas>
-            <span id="cmpHighlightBadge" class="cmp-highlight-badge">After · cyan = changed body area</span>
-            <span class="cmp-highlight-legend"><i></i> changed body area</span>
-          </div>
-          <p>MAESTRO follows the changed joints through the render and places a cyan focus directly on the affected arms, torso, legs, or travel.</p>
-        </div>
-        <div id="cmpSideBySide" class="cmp-vids" hidden>
-          <figure><figcaption id="cmpCapBefore">Before</figcaption><video id="cmpBefore" muted playsinline preload="auto" loop></video></figure>
-          <figure><figcaption>After (current)</figcaption><video id="cmpAfter" muted playsinline preload="auto" loop></video></figure>
-        </div>
-        <audio id="cmpAudio" preload="auto" loop></audio>
-        <div class="cmp-ctl">
-          <button id="cmpPlay" class="ghost-btn">▶ Play both</button>
-          <button id="cmpHoldBefore" class="ghost-btn" type="button" title="Press and hold to temporarily show the original">Hold for original</button>
-          <input id="cmpScrub" type="range" min="0" max="1000" value="0" title="Scrub both clips" />
-        </div>
-        <table id="cmpMetrics" class="metrics"></table>
       </div>
 
       <div class="tl-wrap" id="tlWrap">
@@ -173,6 +137,59 @@
       </div>
     </aside>
   </main>
+</div>
+
+<div id="compare" class="compare" role="dialog" aria-modal="true"
+     aria-labelledby="cmpTitle" hidden>
+  <button id="compareBackdrop" class="compare-backdrop" type="button"
+          aria-label="Close Original vs Edited comparison"></button>
+  <section class="compare-card">
+    <header class="compare-head">
+      <div>
+        <span>Original vs edited</span>
+        <h2 id="cmpTitle">Compare your edit</h2>
+        <p>Both clips show the same edit window and stay synchronized while you play or scrub.</p>
+      </div>
+      <button id="cmpClose" class="icon-btn" type="button" title="Close comparison">✕</button>
+    </header>
+    <div class="compare-toolbar">
+      <label class="cmp-ver">Compare edited version against
+        <select id="cmpVersion" title="Choose the earlier version shown as Original"></select>
+      </label>
+      <span id="cmpWin" class="cmp-window"></span>
+    </div>
+    <div id="cmpStatus" class="compare-status" role="status"></div>
+    <div id="cmpProgWrap" class="progwrap cmp-prog" role="progressbar"
+         aria-valuemin="0" aria-valuemax="100" hidden><div id="cmpProg" class="progbar"></div></div>
+    <div id="cmpPlaceholder" class="compare-placeholder">
+      <strong>Preparing Original and Edited clips…</strong>
+      <span>The comparison will appear here when both synchronized renders are ready.</span>
+    </div>
+    <div id="cmpContent" class="compare-content" hidden>
+      <div class="cmp-vids">
+        <figure class="original">
+          <figcaption><strong>Original</strong><small id="cmpBeforeDetail">Original dance</small></figcaption>
+          <video id="cmpBefore" muted playsinline preload="metadata" loop></video>
+        </figure>
+        <figure class="edited">
+          <figcaption><strong>Edited</strong><small id="cmpAfterDetail">Current LLM-guided edit</small></figcaption>
+          <video id="cmpAfter" muted playsinline preload="metadata" loop></video>
+        </figure>
+      </div>
+      <p id="cmpChangeSummary" class="cmp-change-summary"></p>
+      <div class="cmp-ctl">
+        <button id="cmpPlay" class="apply" type="button">▶ Play both</button>
+        <input id="cmpScrub" type="range" min="0" max="1000" value="0"
+               aria-label="Scrub Original and Edited clips together" />
+        <span id="cmpTime" class="cmp-time">0:00 / 0:00</span>
+      </div>
+      <details class="cmp-metrics-details">
+        <summary>View motion metrics</summary>
+        <table id="cmpMetrics" class="metrics"></table>
+      </details>
+    </div>
+    <audio id="cmpAudio" preload="metadata" loop></audio>
+  </section>
 </div>
 
 <div id="fullReview" class="full-review" role="dialog" aria-modal="true"
@@ -254,7 +271,6 @@
   </div>
 </div>
 <script src="/static/editor_utils.js"></script>
-<script src="/static/compare_highlight.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

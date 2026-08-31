@@ -76,6 +76,11 @@ the next REST or WebSocket edit a child of that checkpoint. Timeline responses i
 `lineage`, `depth`, and branch metadata, plus a normalized seconds/frames interval for current and
 legacy checkpoint shapes.
 
+After the first edit, **Compare original & edited** opens a dedicated modal with two clearly labeled,
+synchronized clips of the exact edit window. It defaults to the untouched root choreography; another
+ancestor can be selected when a step-by-step comparison is useful. Play, pause, music, and scrubbing
+stay locked, and changing the active checkpoint invalidates rather than reusing an old comparison.
+
 The common-motion catalog stays collapsed until opened. Clicking any of its 19 entries opens the
 description and the exact editor-composed example at
 `assets/motion_bank/previews/<motion-id>.mp4`. These are derived assets, not placeholders. Generate

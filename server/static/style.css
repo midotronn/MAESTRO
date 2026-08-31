@@ -235,69 +235,111 @@ video { height: 100%; width: auto; max-width: 100%; object-fit: contain; display
 
 /* before/after comparison panel */
 .compare {
-  margin-top: 10px; background: var(--card); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow);
-  max-height: 62vh; overflow-y: auto;
+  position: fixed; inset: 0; z-index: 925; display: grid; place-items: center; padding: 18px;
 }
 .compare[hidden] { display: none; }
-.cmp-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.cmp-title { font-size: 13px; font-weight: 650; color: var(--text); margin-right: auto; }
-.cmp-title em { color: var(--muted); font-style: normal; font-size: 11px; margin-left: 4px; }
-.cmp-ver { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-.cmp-ver select { padding: 4px 8px; border-radius: 7px; font-size: 12px; max-width: 210px; text-transform: none; letter-spacing: 0; }
-.compare .render-status { position: static; display: none; max-width: none; margin: 0 0 8px; }
+.compare-backdrop {
+  position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+  background: rgba(15,18,28,.68); cursor: default;
+}
+.compare-card {
+  position: relative; z-index: 1; width: min(1040px, 97vw); max-height: 96vh; overflow-y: auto;
+  border: 1px solid var(--line2); border-radius: 18px; padding: 17px;
+  background: var(--card); box-shadow: 0 28px 80px rgba(10,15,30,.38);
+}
+.compare-head {
+  display: flex; align-items: flex-start; gap: 16px; padding: 1px 1px 13px;
+  border-bottom: 1px solid var(--line);
+}
+.compare-head > div { min-width: 0; flex: 1; }
+.compare-head > div > span {
+  color: var(--accent); font-size: 10px; font-weight: 750; letter-spacing: .09em;
+  text-transform: uppercase;
+}
+.compare-head h2 { margin: 3px 0 4px; font: 750 22px/1.25 var(--head-font); }
+.compare-head p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.compare-toolbar {
+  display: flex; align-items: end; justify-content: space-between; gap: 14px; padding: 13px 1px 10px;
+}
+.cmp-ver {
+  min-width: 0; display: flex; flex-direction: column; gap: 4px;
+  color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.cmp-ver select {
+  min-width: min(360px, 68vw); max-width: 100%; padding: 7px 10px; border-radius: 8px;
+  font-size: 12px; text-transform: none; letter-spacing: 0;
+}
+.cmp-window {
+  flex: none; padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--card2); color: var(--muted); font-size: 10.5px; font-weight: 650;
+}
+.compare-status { min-height: 24px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.compare-status.ok { color: var(--ok); }
+.compare-status.bad { color: var(--warn); }
 .render-prog { position: absolute; top: 74px; right: 12px; width: 170px; max-width: 60%; z-index: 6; }
 .render-prog[hidden], .cmp-prog[hidden] { display: none; }
 .cmp-prog { margin: 0 0 10px; }
-.cmp-viewbar {
-  display: flex; align-items: center; justify-content: center; gap: 5px; margin: 2px 0 10px;
+.compare-placeholder {
+  min-height: min(460px, 55vh); display: grid; place-content: center; gap: 5px; padding: 28px;
+  border: 1px dashed var(--line2); border-radius: 13px; background: var(--card2); text-align: center;
 }
-.cmp-viewbar > span {
-  color: var(--faint); font-size: 10.5px; font-weight: 650; letter-spacing: .06em;
-  text-transform: uppercase; margin-right: 3px;
+.compare-placeholder[hidden], .compare-content[hidden] { display: none; }
+.compare-placeholder strong { font: 700 15px/1.35 var(--head-font); }
+.compare-placeholder span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.compare-content { display: flex; flex-direction: column; gap: 10px; }
+.cmp-vids { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cmp-vids figure {
+  min-width: 0; margin: 0; overflow: hidden; border: 1px solid var(--line);
+  border-radius: 13px; background: #111827;
 }
-.cmp-view-btn {
-  border: 1px solid var(--line2); border-radius: 999px; background: var(--card2);
-  color: var(--muted); padding: 5px 11px; cursor: pointer; font-size: 11.5px; transition: .12s;
+.cmp-vids figure.original { border-color: rgba(75,112,190,.42); }
+.cmp-vids figure.edited { border-color: rgba(108,76,224,.55); }
+.cmp-vids figcaption {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 8px 10px;
+  background: var(--card2); color: var(--text);
 }
-.cmp-view-btn:hover { border-color: var(--accent); color: var(--accent); }
-.cmp-view-btn.active {
-  border-color: rgba(34,211,238,.55); color: #087d91; background: rgba(34,211,238,.11);
-  box-shadow: 0 0 0 2px rgba(34,211,238,.08);
+.cmp-vids figcaption strong {
+  font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
 }
-.cmp-highlight { display: flex; flex-direction: column; align-items: center; gap: 7px; }
-.cmp-highlight[hidden], .cmp-vids[hidden], #cmpHoldBefore[hidden] { display: none; }
-.cmp-highlight-stage {
-  position: relative; width: min(100%, 560px); aspect-ratio: 1; overflow: hidden;
-  border: 1px solid var(--line2); border-radius: 10px; background: #111827;
-  box-shadow: 0 10px 30px rgba(20,30,60,.12);
+.cmp-vids figure.original figcaption strong { color: #4169a8; }
+.cmp-vids figure.edited figcaption strong { color: var(--accent); }
+.cmp-vids figcaption small {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--faint); font-size: 9.5px;
 }
-#cmpHighlightCanvas { width: 100%; height: 100%; display: block; }
-.cmp-highlight-badge, .cmp-highlight-legend {
-  position: absolute; z-index: 2; color: #fff; background: rgba(15,23,42,.78);
-  border: 1px solid rgba(255,255,255,.15); border-radius: 999px; backdrop-filter: blur(5px);
-  font-size: 10.5px; line-height: 1; padding: 6px 9px;
+.cmp-vids video {
+  width: 100%; height: auto; aspect-ratio: 1; object-fit: contain; background: #111827; display: block;
 }
-.cmp-highlight-badge { top: 10px; left: 10px; }
-.cmp-highlight-legend { right: 10px; bottom: 10px; display: flex; align-items: center; gap: 6px; }
-.cmp-highlight-legend i {
-  width: 9px; height: 9px; border-radius: 50%; display: block; background: #18d3ee;
-  box-shadow: 0 0 9px rgba(24,211,238,.9);
+.cmp-change-summary {
+  min-height: 20px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.45;
+  text-align: center;
 }
-.cmp-highlight p {
-  margin: 0; max-width: 620px; color: var(--faint); font-size: 11px; line-height: 1.4; text-align: center;
-}
-.cmp-vids { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.cmp-vids figure { margin: 0; }
-.cmp-vids figcaption { font-size: 11px; color: var(--muted); text-align: center; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .06em; }
-.cmp-vids video { width: 100%; border-radius: 8px; border: 1px solid var(--line); background: #000; display: block; }
-.cmp-ctl { display: flex; align-items: center; gap: 10px; margin: 10px 0 6px; }
+.cmp-ctl { display: flex; align-items: center; gap: 10px; margin: 0; }
+.cmp-ctl #cmpPlay { min-width: 112px; }
 .cmp-ctl #cmpScrub { flex: 1; accent-color: var(--accent); }
-#cmpMetrics { width: 100%; margin-top: 6px; }
-@media (max-width: 720px) {
-  .cmp-vids { grid-template-columns: 1fr; }
-  .cmp-ctl { flex-wrap: wrap; }
-  .cmp-ctl #cmpScrub { flex-basis: 100%; }
+.cmp-time {
+  flex: none; color: var(--muted);
+  font: 600 10.5px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.cmp-metrics-details {
+  border-top: 1px solid var(--line); padding-top: 8px; color: var(--muted);
+}
+.cmp-metrics-details summary { width: fit-content; cursor: pointer; font-size: 10.5px; font-weight: 650; }
+#cmpMetrics { width: 100%; margin-top: 7px; }
+@media (max-width: 620px) {
+  .compare { padding: 7px; }
+  .compare-card { width: 100%; padding: 12px; border-radius: 14px; }
+  .compare-head h2 { font-size: 19px; }
+  .compare-head p { font-size: 11px; }
+  .compare-toolbar { align-items: stretch; flex-direction: column; gap: 7px; }
+  .cmp-ver select { width: 100%; min-width: 0; }
+  .cmp-window { align-self: flex-start; }
+  .cmp-vids { gap: 6px; }
+  .cmp-vids figcaption { align-items: flex-start; flex-direction: column; gap: 1px; padding: 6px 7px; }
+  .cmp-ctl { display: grid; grid-template-columns: auto 1fr; gap: 7px; }
+  .cmp-ctl #cmpScrub { grid-column: 1 / -1; grid-row: 2; width: 100%; }
+  .cmp-time { justify-self: end; }
 }
 
 /* timeline */

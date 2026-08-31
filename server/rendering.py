@@ -1285,8 +1285,8 @@ def _render(sid: str, motion: np.ndarray, media_dir: Path, scope: str,
 # =========================================================================== before/after compare
 # Renders the edited window twice -- the pre-edit ("before") and current ("after") motion -- as two
 # short window clips, launched in PARALLEL on the pod so the wall time stays close to a single render.
-# The UI uses the exact after-render joint projection to highlight changed body parts, while retaining
-# the synchronized side-by-side clips as a secondary view.
+# The UI presents the clips side by side and uses the exact after-render joint projection only to
+# summarize which body regions changed.
 _CJOBS: dict[str, dict] = {}
 _BODY_PART_JOINTS = {
     "torso": ("Torso", (0, 3, 6, 9, 12, 15)),
@@ -1310,9 +1310,11 @@ def _cset(sid: str, **kw) -> None:
 def start_compare_render(sid: str, before_motion: np.ndarray, after_motion: np.ndarray,
                          media_dir: Path, *, metrics: dict | None = None,
                          audio_wav: str | None = None, audio_start: float = 0.0,
-                         audio_dur: float = 0.0) -> None:
+                         audio_dur: float = 0.0, comparison_id: str | None = None,
+                         head_id: str | None = None, before_id: str | None = None) -> None:
     _cset(sid, status="queued", message="queued", progress=3, started=time.time(),
-          metrics=metrics or {}, before_video=None, after_video=None, audio=None, highlight=None)
+          metrics=metrics or {}, before_video=None, after_video=None, audio=None, highlight=None,
+          comparison_id=comparison_id, head_id=head_id, before_id=before_id)
     threading.Thread(
         target=_compare_render,
         args=(sid, np.asarray(before_motion), np.asarray(after_motion), media_dir),

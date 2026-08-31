@@ -83,6 +83,7 @@ app = FastAPI(title="MAESTRO Interactive Editor")
 _sessions: dict[str, EditSession] = {}
 _full_song_review_lock = threading.Lock()
 _full_song_review_signature: str | None = None
+_compare_lock = threading.Lock()
 _PLANNER_STATUS: dict[str, object] = {
     "configured": False,
     "verified": False,
@@ -537,7 +538,7 @@ class RenderBody(BaseModel):
 
 
 class CompareBody(BaseModel):
-    from_id: str | None = None   # which prior checkpoint to use as "before" (default: head's parent)
+    from_id: str | None = None   # prior ancestor to use as "before" (default: original root)
 
 
 class BrowserTimingBody(BaseModel):
@@ -564,10 +565,6 @@ def index() -> HTMLResponse:
     html = html.replace(
         "/static/editor_utils.js",
         f"/static/editor_utils.js?v={_v('editor_utils.js')}",
-    )
-    html = html.replace(
-        "/static/compare_highlight.js",
-        f"/static/compare_highlight.js?v={_v('compare_highlight.js')}",
     )
     html = html.replace("/static/style.css", f"/static/style.css?v={_v('style.css')}")
     return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
@@ -1177,10 +1174,10 @@ def _song_wav(sid: str) -> str | None:
 
 @app.post("/api/session/{sid}/compare")
 def compare(sid: str, body: CompareBody | None = None) -> dict:
-    """Render the edited window as two synced clips: the CURRENT state (after) vs a chosen PRIOR
-    version (before). ``from_id`` selects which prior checkpoint to compare against (default: the
-    head's parent, i.e. the state right before the last edit). The window is the head's edit window,
-    and the window's music is muxed in so the comparison plays with sound.
+    """Render the current edit window as synchronized ORIGINAL and EDITED clips.
+
+    ``from_id`` may select another ancestor of the current head, but defaults to the original root.
+    The window is the current head's edit window and carries the matching music excerpt.
     """
     sess = _load_session(sid)
     head = sess.current()
@@ -1190,8 +1187,13 @@ def compare(sid: str, body: CompareBody | None = None) -> dict:
     if not win or len(win) != 2:
         raise HTTPException(400, "the last edit has no window to compare.")
     from_id = body.from_id if body else None
-    before_id = from_id if (from_id and from_id in sess.store and from_id != head.id) \
-        else head.parent_id
+    ancestry = sess.store.ancestry(head.id)
+    eligible_before = ancestry[:-1]
+    if not eligible_before:
+        raise HTTPException(400, "make an edit first, then compare original and edited.")
+    if from_id is not None and from_id not in eligible_before:
+        raise HTTPException(400, "the comparison version must be an ancestor of the current edit.")
+    before_id = from_id or eligible_before[0]
     after = sess.current_motion()
     before = sess.store.motion(before_id)
     n = min(int(before.shape[0]), int(after.shape[0]))
@@ -1199,6 +1201,9 @@ def compare(sid: str, body: CompareBody | None = None) -> dict:
     b = int(max(a + 1, min(int(win[1]), n)))
     wb = _window_beats(sess.assets.beats, a, b) if sess.assets.beats is not None else None
     before_ck = sess.store.get(before_id)
+    comparison_id = hashlib.sha256(
+        f"{sid}:{head.id}:{before_id}:{a}:{b}".encode("utf-8")
+    ).hexdigest()[:20]
     metrics = {
         "before": window_metrics(before[a:b], wb),
         "after": window_metrics(after[a:b], wb),
@@ -1206,16 +1211,63 @@ def compare(sid: str, body: CompareBody | None = None) -> dict:
         "window_sec": [round(a / FPS, 2), round(b / FPS, 2)],
         "before_id": before_id,
         "before_label": (before_ck.label or "original") if before_ck else "original",
+        "before_is_original": before_ck.parent_id is None if before_ck else False,
+        "after_id": head.id,
+        "after_label": head.label or "current edit",
     }
-    rendering.start_compare_render(
-        sid, before[a:b], after[a:b], _song_dir(sid), metrics=metrics,
-        audio_wav=_song_wav(sid), audio_start=a / FPS, audio_dur=(b - a) / FPS)
-    return rendering.get_compare_job(sid)
+    with _compare_lock:
+        current_job = rendering.get_compare_job(sid)
+        if current_job.get("status") in {"queued", "rendering"}:
+            if current_job.get("comparison_id") == comparison_id:
+                return current_job
+            raise HTTPException(
+                409,
+                "another comparison is still rendering; wait for it to finish, then try again.",
+            )
+        cached = (
+            current_job.get("status") == "done"
+            and current_job.get("comparison_id") == comparison_id
+            and all(
+                (_song_dir(sid) / str(current_job.get(name) or "")).is_file()
+                for name in ("before_video", "after_video")
+            )
+        )
+        if not cached:
+            rendering.start_compare_render(
+                sid,
+                before[a:b],
+                after[a:b],
+                _song_dir(sid),
+                metrics=metrics,
+                audio_wav=_song_wav(sid),
+                audio_start=a / FPS,
+                audio_dur=(b - a) / FPS,
+                comparison_id=comparison_id,
+                head_id=head.id,
+                before_id=before_id,
+            )
+    return compare_status(sid)
 
 
 @app.get("/api/session/{sid}/compare")
 def compare_status(sid: str) -> dict:
-    return rendering.get_compare_job(sid)
+    sess = _load_session(sid)
+    head = sess.current()
+    job = rendering.get_compare_job(sid)
+    if job.get("status") == "idle":
+        return job
+    if head is None or job.get("head_id") != head.id:
+        stale = dict(job)
+        stale.update(
+            status="stale",
+            progress=0,
+            message="The dance version changed. Start a new Original vs Edited comparison.",
+            before_video=None,
+            after_video=None,
+            audio=None,
+        )
+        return stale
+    return job
 
 
 @app.post("/api/session/{sid}/undo")

@@ -25,17 +25,9 @@ let FULL_REVIEW_STATE = null;
 let FULL_REVIEW_POLL_TIMER = 0;
 let FULL_REVIEW_REFRESH_TIMER = 0;
 let FULL_REVIEW_COMPLETED_SIGNATURE = null;
-const CMP_HIGHLIGHT = {
-  mode: "highlight",
-  raf: 0,
-  holdOriginal: false,
-  failed: false,
-  beforeCanvas: document.createElement("canvas"),
-  afterCanvas: document.createElement("canvas"),
-  overlayCanvas: document.createElement("canvas"),
-  overlayImage: null,
-  metadata: null,
-};
+let COMPARE_POLL_TIMER = 0;
+let COMPARE_CONTEXT = null;
+let COMPARE_LOADING = false;
 
 const METRIC_LABELS = { energy: "energy", bas: "beat align (BAS)", jerk: "smoothness", foot: "foot contact" };
 const HIGHER_BETTER = { energy: null, bas: true, jerk: false, foot: true }; // null = neutral (raw metrics)
@@ -512,63 +504,174 @@ async function startFullSongReview() {
 }
 
 // -------------------------------------------------------------- before/after window comparison
-function populateCmpVersions() {
+function currentCompareHead() {
+  return (ST.timeline || []).find((checkpoint) => checkpoint.is_head) || null;
+}
+
+function compareAncestors(head) {
+  if (!head) return [];
+  const byId = new Map((ST.timeline || []).map((checkpoint) => [checkpoint.id, checkpoint]));
+  if (Array.isArray(head.lineage) && head.lineage.length) {
+    return head.lineage.slice(0, -1).map((id) => byId.get(id)).filter(Boolean);
+  }
+  return (ST.timeline || [])
+    .filter((checkpoint) => checkpoint.id !== head.id && checkpoint.is_ancestor_of_head)
+    .sort((a, b) => Number(a.depth || 0) - Number(b.depth || 0));
+}
+
+function updateCompareAvailability() {
+  const available = !!compareAncestors(currentCompareHead()).length;
+  $("compareBtn").disabled = COMPARE_LOADING || !available;
+  $("compareButtonMeta").textContent = available
+    ? "Synchronized side by side"
+    : "Available after your first edit";
+  return available;
+}
+
+function populateCmpVersions(preserveSelection = false) {
   const sel = $("cmpVersion");
-  if (!sel) return;
-  const tl = ST.timeline || [];
-  const head = tl.find((c) => c.is_head) || tl[tl.length - 1];
-  if (!head) { sel.innerHTML = ""; return; }
-  // candidate "before" versions = every checkpoint except the current one, newest first; default is
-  // the state right before the last edit (the head's parent).
-  const opts = tl.filter((c) => c.id !== head.id).slice().reverse();
-  const prev = sel.value;
+  const head = currentCompareHead();
+  const options = compareAncestors(head);
+  const previous = preserveSelection ? sel.value : "";
   sel.innerHTML = "";
-  opts.forEach((c) => {
+  options.forEach((checkpoint) => {
     const o = document.createElement("option");
-    o.value = c.id;
-    const isParent = c.id === head.parent_id;
-    o.textContent = (c.label || "original") + (isParent ? " (pre-edit)" : "");
+    o.value = checkpoint.id;
+    if (!checkpoint.parent_id) o.textContent = "Original dance";
+    else if (checkpoint.id === head.parent_id) {
+      o.textContent = `Before latest edit \u2014 ${checkpoint.label || "earlier version"}`;
+    } else {
+      o.textContent = `Earlier version \u2014 ${checkpoint.label || "checkpoint"}`;
+    }
     sel.appendChild(o);
   });
-  // keep the previous choice if still valid, else default to the head's parent
-  if (prev && opts.some((c) => c.id === prev)) sel.value = prev;
-  else if (head.parent_id) sel.value = head.parent_id;
-  sel.disabled = opts.length <= 1;
-}
-
-async function startCompare() {
-  const panel = $("compare"); panel.hidden = false;
-  populateCmpVersions();
-  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  const st = $("cmpStatus"); st.style.display = "block"; st.className = "render-status";
-  st.textContent = "starting comparison render\u2026";
-  setProgressBar("cmpProg", "cmpProgWrap", 3);
-  activityStart("compare", "Rendering edit comparison", "Starting before and after render", 3);
-  $("compareBtn").disabled = true;
-  try {
-    const fromId = ($("cmpVersion") && $("cmpVersion").value) || null;
-    await api(`/api/session/${ST.sid}/compare`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from_id: fromId }) });
-    pollCompare();
-  } catch (e) {
-    st.className = "render-status bad"; st.textContent = "\u26a0 " + e.message;
-    $("cmpProgWrap").hidden = true;
-    $("compareBtn").disabled = false;
-    activityFail("compare", e.message);
+  if (previous && options.some((checkpoint) => checkpoint.id === previous)) {
+    sel.value = previous;
+  } else if (options.length) {
+    sel.value = options[0].id;
   }
+  sel.disabled = COMPARE_LOADING || options.length <= 1;
+  return head;
 }
 
-async function pollCompare() {
-  let j;
-  try { j = await api(`/api/session/${ST.sid}/compare`); }
-  catch (e) {
-    activityUpdate("compare", { detail: "Reconnecting to comparison status\u2026" });
-    setTimeout(pollCompare, 750);
+function resetCompareMedia() {
+  const videos = [$("cmpBefore"), $("cmpAfter")];
+  videos.forEach((video) => {
+    try { video.pause(); } catch (e) {}
+    video.removeAttribute("src");
+    video.load();
+  });
+  const audio = $("cmpAudio");
+  try { audio.pause(); } catch (e) {}
+  audio.removeAttribute("src");
+  audio.load();
+  $("cmpContent").hidden = true;
+  $("cmpPlaceholder").hidden = false;
+  $("cmpScrub").value = 0;
+  $("cmpTime").textContent = "0:00 / 0:00";
+  $("cmpPlay").textContent = "\u25b6 Play both";
+}
+
+function setCompareLoading(loading) {
+  COMPARE_LOADING = loading;
+  updateCompareAvailability();
+  const sel = $("cmpVersion");
+  sel.disabled = loading || sel.options.length <= 1;
+}
+
+function closeCompare(focusButton = true) {
+  const panel = $("compare");
+  if (panel.hidden) return;
+  clearTimeout(COMPARE_POLL_TIMER);
+  COMPARE_POLL_TIMER = 0;
+  COMPARE_CONTEXT = null;
+  setCompareLoading(false);
+  resetCompareMedia();
+  panel.hidden = true;
+  if ($("fullReview").hidden) document.body.classList.remove("modal-open");
+  if (focusButton) $("compareBtn").focus();
+}
+
+function compareError(message) {
+  clearTimeout(COMPARE_POLL_TIMER);
+  COMPARE_POLL_TIMER = 0;
+  const status = $("cmpStatus");
+  status.className = "compare-status bad";
+  status.textContent = `\u26a0 ${message}`;
+  $("cmpProgWrap").hidden = true;
+  $("cmpContent").hidden = true;
+  $("cmpPlaceholder").hidden = false;
+  $("cmpPlaceholder").querySelector("strong").textContent = "Comparison unavailable";
+  $("cmpPlaceholder").querySelector("span").textContent = message;
+  setCompareLoading(false);
+  activityFail("compare", message);
+}
+
+async function startCompare(preserveSelection = false) {
+  const head = populateCmpVersions(preserveSelection);
+  if (!head || !compareAncestors(head).length) {
+    updateCompareAvailability();
+    toast("Make an edit first, then compare Original and Edited");
     return;
   }
-  const st = $("cmpStatus");
-  st.textContent = (j.status === "rendering" ? "\u{1F3AC} " : "") + (j.message || j.status);
+  const panel = $("compare");
+  panel.hidden = false;
+  document.body.classList.add("modal-open");
+  resetCompareMedia();
+  const status = $("cmpStatus");
+  status.className = "compare-status";
+  status.textContent = "Preparing synchronized Original and Edited clips\u2026";
+  $("cmpPlaceholder").querySelector("strong").textContent = "Preparing Original and Edited clips\u2026";
+  $("cmpPlaceholder").querySelector("span").textContent =
+    "The comparison will appear here when both synchronized renders are ready.";
+  setProgressBar("cmpProg", "cmpProgWrap", 3);
+  activityStart("compare", "Rendering Original vs Edited", "Preparing synchronized clips", 3);
+  setCompareLoading(true);
+  const context = {
+    sid: ST.sid,
+    headId: head.id,
+    comparisonId: null,
+  };
+  COMPARE_CONTEXT = context;
+  try {
+    const fromId = $("cmpVersion").value || null;
+    const job = await api(`/api/session/${context.sid}/compare`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from_id: fromId }) });
+    if (COMPARE_CONTEXT !== context) return;
+    context.comparisonId = job.comparison_id || null;
+    pollCompare(context);
+    $("cmpClose").focus();
+  } catch (e) {
+    if (COMPARE_CONTEXT === context) compareError(e.message);
+  }
+}
+
+async function pollCompare(context) {
+  clearTimeout(COMPARE_POLL_TIMER);
+  if (
+    COMPARE_CONTEXT !== context
+    || $("compare").hidden
+    || ST.sid !== context.sid
+    || ST.head !== context.headId
+  ) return;
+  let j;
+  try { j = await api(`/api/session/${context.sid}/compare`); }
+  catch (e) {
+    activityUpdate("compare", { detail: "Reconnecting to comparison status\u2026" });
+    COMPARE_POLL_TIMER = setTimeout(() => pollCompare(context), 900);
+    return;
+  }
+  if (
+    context.comparisonId
+    && j.comparison_id
+    && context.comparisonId !== j.comparison_id
+  ) {
+    compareError("A newer comparison replaced this one. Start Original vs Edited again.");
+    return;
+  }
+  const status = $("cmpStatus");
+  status.textContent = (j.status === "rendering" ? "\u{1F3AC} " : "") + (j.message || j.status);
   setProgressBar("cmpProg", "cmpProgWrap", Number(j.progress || 0));
   activityUpdate("compare", {
     progress: Number(j.progress || 0),
@@ -576,41 +679,56 @@ async function pollCompare() {
   });
   if (j.status === "done") {
     activityUpdate("compare", { progress: 96, detail: "Loading comparison videos\u2026" });
-    const mediaReady = await setupCompareVideos(
-      j.before_video,
-      j.after_video,
-      j.metrics || {},
-      j.audio,
-      j.highlight || null,
-    );
-    st.className = "render-status ok";
-    st.textContent = `\u2714 comparison ready${j.elapsed ? " in " + j.elapsed + "s" : ""}`;
+    let mediaReady;
+    try {
+      mediaReady = await setupCompareVideos(
+        context.sid,
+        j.before_video,
+        j.after_video,
+        j.metrics || {},
+        j.audio,
+        j.highlight || null,
+        context.comparisonId,
+      );
+    } catch (error) {
+      compareError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    if (COMPARE_CONTEXT !== context) return;
+    status.className = "compare-status ok";
+    status.textContent = `\u2714 Original and Edited are ready${j.elapsed ? " in " + j.elapsed + "s" : ""}.`;
     $("cmpProgWrap").hidden = true;
-    $("compareBtn").disabled = false;
+    setCompareLoading(false);
     activityDone(
       "compare",
       mediaReady ? "Comparison ready" : "Comparison ready; videos are still buffering",
     );
-    setTimeout(() => { st.style.display = "none"; }, 5000);
-    toast("Comparison ready");
+    toast("Original vs Edited comparison ready");
+    return;
+  }
+  if (j.status === "stale") {
+    compareError(j.message || "The dance changed. Start a new comparison.");
     return;
   }
   if (j.status === "error") {
-    st.className = "render-status bad"; st.textContent = "\u26a0 " + (j.message || "compare failed");
-    $("cmpProgWrap").hidden = true;
-    $("compareBtn").disabled = false;
-    activityFail("compare", j.message || "Comparison failed");
+    compareError(j.message || "Comparison failed");
     toast("Compare failed");
     return;
   }
-  setTimeout(pollCompare, 500);
+  COMPARE_POLL_TIMER = setTimeout(() => pollCompare(context), 650);
 }
 
 function showCompareMetrics(m) {
   const t = $("cmpMetrics"); t.innerHTML = "";
   const b = m.before || {}, a = m.after || {};
-  if (m.window_sec) $("cmpWin").textContent = `(${m.window_sec[0]}\u2013${m.window_sec[1]}s)`;
-  if (m.before_label && $("cmpCapBefore")) $("cmpCapBefore").textContent = "Before \u2014 " + m.before_label;
+  if (m.window_sec) {
+    $("cmpWin").textContent =
+      `Edit window ${clockLabel(m.window_sec[0])}\u2013${clockLabel(m.window_sec[1])}`;
+  }
+  $("cmpBeforeDetail").textContent = m.before_is_original
+    ? "Original dance"
+    : m.before_label || "Earlier version";
+  $("cmpAfterDetail").textContent = m.after_label || "Current LLM-guided edit";
   if (b.bas === undefined) return;
   t.appendChild(metricHeader());
   ["energy", "bas", "jerk", "foot"].forEach((k) => {
@@ -619,248 +737,109 @@ function showCompareMetrics(m) {
   });
 }
 
-function stopCompareHighlightLoop() {
-  if (CMP_HIGHLIGHT.raf) cancelAnimationFrame(CMP_HIGHLIGHT.raf);
-  CMP_HIGHLIGHT.raf = 0;
+function compareTimeLabel(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-function failCompareHighlight(message) {
-  if (CMP_HIGHLIGHT.failed) return;
-  CMP_HIGHLIGHT.failed = true;
-  setCompareMode("side");
-  const st = $("cmpStatus");
-  st.style.display = "block";
-  st.className = "render-status bad";
-  st.textContent = "\u26a0 change highlighting unavailable: " + message;
-  toast("Change highlighting unavailable; showing side by side");
-}
-
-function ensureCompareHighlightCanvases(width, height) {
-  const canvases = [
-    $("cmpHighlightCanvas"),
-    CMP_HIGHLIGHT.beforeCanvas,
-    CMP_HIGHLIGHT.afterCanvas,
-    CMP_HIGHLIGHT.overlayCanvas,
-  ];
-  canvases.forEach((canvas) => {
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
-    }
-  });
-  const overlayCtx = CMP_HIGHLIGHT.overlayCanvas.getContext("2d");
-  if (!CMP_HIGHLIGHT.overlayImage
-      || CMP_HIGHLIGHT.overlayImage.width !== width
-      || CMP_HIGHLIGHT.overlayImage.height !== height) {
-    CMP_HIGHLIGHT.overlayImage = overlayCtx.createImageData(width, height);
+async function setupCompareVideos(
+  sid,
+  beforeName,
+  afterName,
+  metrics,
+  audioName,
+  highlight,
+  comparisonId,
+) {
+  const A = $("cmpAfter"), B = $("cmpBefore"), AU = $("cmpAudio");
+  if (!beforeName || !afterName) {
+    throw new Error("The comparison render did not provide both videos.");
   }
-}
-
-function drawProjectedBodyHighlights(ctx, width, height, currentTime) {
-  const metadata = CMP_HIGHLIGHT.metadata;
-  if (!metadata || !Array.isArray(metadata.frames) || !metadata.frames.length) return null;
-  const fps = Number(metadata.fps) || 30;
-  const frame = Math.max(0, Math.min(metadata.frames.length - 1, Math.round(currentTime * fps)));
-  const markers = metadata.frames[frame] || [];
-  const labels = [];
-
-  markers.forEach((marker) => {
-    const x = Number(marker.x) * width;
-    const y = Number(marker.y) * height;
-    const rx = Math.max(20, Number(marker.rx) * width);
-    const ry = Math.max(24, Number(marker.ry) * height);
-    const strength = Math.max(0.2, Math.min(1, Number(marker.strength) || 0));
-    if (![x, y, rx, ry].every(Number.isFinite)) return;
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(24, 211, 238, ${0.07 + 0.09 * strength})`;
-    ctx.shadowColor = "rgba(24, 211, 238, .95)";
-    ctx.shadowBlur = 12 + 18 * strength;
-    ctx.lineWidth = 2.5 + 2.5 * strength;
-    ctx.strokeStyle = `rgba(24, 211, 238, ${0.62 + 0.30 * strength})`;
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-
-    const label = String(marker.label || "Changed area");
-    labels.push(label);
-    ctx.save();
-    ctx.font = `600 ${Math.max(11, Math.round(width / 40))}px "Noto Sans", sans-serif`;
-    const textWidth = ctx.measureText(label).width;
-    const lx = Math.max(6, Math.min(width - textWidth - 18, x - textWidth / 2 - 9));
-    const ly = Math.max(25, y - ry - 9);
-    ctx.fillStyle = "rgba(15, 23, 42, .82)";
-    ctx.fillRect(lx, ly - 20, textWidth + 18, 25);
-    ctx.fillStyle = "#8ff3ff";
-    ctx.fillText(label, lx + 9, ly - 3);
-    ctx.restore();
-  });
-  return [...new Set(labels)];
-}
-
-function renderCompareHighlight() {
-  if (CMP_HIGHLIGHT.mode !== "highlight" || CMP_HIGHLIGHT.failed || $("compare").hidden) return;
-  const A = $("cmpAfter"), B = $("cmpBefore"), canvas = $("cmpHighlightCanvas");
-  if (A.readyState < 2 || B.readyState < 2 || !A.videoWidth || !A.videoHeight) return;
-
-  try {
-    const width = A.videoWidth, height = A.videoHeight;
-    ensureCompareHighlightCanvases(width, height);
-    const ctx = canvas.getContext("2d");
-    const badge = $("cmpHighlightBadge");
-
-    if (CMP_HIGHLIGHT.holdOriginal) {
-      ctx.clearRect(0, 0, width, height);
-      ctx.drawImage(B, 0, 0, width, height);
-      badge.textContent = "Original · release to see highlighted edit";
-      return;
-    }
-
-    ctx.clearRect(0, 0, width, height);
-    ctx.drawImage(A, 0, 0, width, height);
-    const partLabels = drawProjectedBodyHighlights(ctx, width, height, A.currentTime || 0);
-    if (partLabels) {
-      badge.textContent = partLabels.length
-        ? "After · highlighting " + partLabels.join(" + ")
-        : "After · edited body areas will glow cyan";
-      return;
-    }
-
-    const beforeCtx = CMP_HIGHLIGHT.beforeCanvas.getContext("2d", { willReadFrequently: true });
-    const afterCtx = CMP_HIGHLIGHT.afterCanvas.getContext("2d", { willReadFrequently: true });
-    const overlayCtx = CMP_HIGHLIGHT.overlayCanvas.getContext("2d");
-    beforeCtx.drawImage(B, 0, 0, width, height);
-    afterCtx.drawImage(A, 0, 0, width, height);
-    const before = beforeCtx.getImageData(0, 0, width, height).data;
-    const after = afterCtx.getImageData(0, 0, width, height).data;
-    const kernel = window.MAESTRO_COMPARE_HIGHLIGHT;
-    if (!kernel || typeof kernel.colorizeChangedPixels !== "function") {
-      failCompareHighlight("pixel comparison module did not load");
-      return;
-    }
-    const changed = kernel.colorizeChangedPixels(
-      before,
-      after,
-      CMP_HIGHLIGHT.overlayImage.data,
-      kernel.DEFAULT_THRESHOLD,
-    );
-    overlayCtx.putImageData(CMP_HIGHLIGHT.overlayImage, 0, 0);
-
-    ctx.save();
-    ctx.globalAlpha = 0.58;
-    ctx.filter = "blur(5px)";
-    ctx.drawImage(CMP_HIGHLIGHT.overlayCanvas, 0, 0);
-    ctx.filter = "none";
-    ctx.globalAlpha = 0.92;
-    ctx.drawImage(CMP_HIGHLIGHT.overlayCanvas, 0, 0);
-    ctx.restore();
-    badge.textContent = changed
-      ? "After · cyan = changed body area"
-      : "After · no visible pixel change at this frame";
-  } catch (error) {
-    failCompareHighlight(error instanceof Error ? error.message : String(error));
+  wireMediaBuffering(A, "compare-buffer", "Buffering comparison");
+  wireMediaBuffering(B, "compare-buffer", "Buffering comparison");
+  const bust = `?comparison=${encodeURIComponent(comparisonId || "")}&t=${Date.now()}`;
+  A.src = `/api/session/${sid}/media/${afterName}${bust}`;
+  B.src = `/api/session/${sid}/media/${beforeName}${bust}`;
+  A.load(); B.load();
+  const haveAudio = !!(audioName && AU);
+  if (AU) {
+    AU.src = haveAudio ? `/api/session/${sid}/media/${audioName}${bust}` : "";
+    AU.muted = !haveAudio;
+    if (haveAudio) AU.load();
   }
-}
-
-function startCompareHighlightLoop() {
-  stopCompareHighlightLoop();
-  if (CMP_HIGHLIGHT.mode !== "highlight" || CMP_HIGHLIGHT.failed) return;
-  const tick = () => {
-    CMP_HIGHLIGHT.raf = 0;
-    renderCompareHighlight();
-    if (!$("cmpAfter").paused && CMP_HIGHLIGHT.mode === "highlight" && !$("compare").hidden) {
-      CMP_HIGHLIGHT.raf = requestAnimationFrame(tick);
+  showCompareMetrics(metrics);
+  const changedParts = Array.isArray(highlight?.parts) ? highlight.parts : [];
+  $("cmpChangeSummary").textContent = changedParts.length
+    ? `Detected change: ${changedParts.join(" + ")}.`
+    : "Both clips show the exact same time window; compare the movement directly.";
+  const updateTime = () => {
+    $("cmpTime").textContent =
+      `${compareTimeLabel(A.currentTime)} / ${compareTimeLabel(A.duration)}`;
+  };
+  const syncSecondary = (force = false) => {
+    if (!Number.isFinite(A.currentTime)) return;
+    if (force || Math.abs((B.currentTime || 0) - A.currentTime) > 0.05) {
+      try { B.currentTime = A.currentTime; } catch (e) {}
+    }
+    if (haveAudio && (force || Math.abs((AU.currentTime || 0) - A.currentTime) > 0.12)) {
+      try { AU.currentTime = A.currentTime; } catch (e) {}
     }
   };
-  CMP_HIGHLIGHT.raf = requestAnimationFrame(tick);
-}
-
-function setCompareMode(mode) {
-  const useHighlight = mode === "highlight" && !CMP_HIGHLIGHT.failed;
-  CMP_HIGHLIGHT.mode = useHighlight ? "highlight" : "side";
-  $("cmpHighlight").hidden = !useHighlight;
-  $("cmpSideBySide").hidden = useHighlight;
-  $("cmpHoldBefore").hidden = !useHighlight;
-  $("cmpModeHighlight").classList.toggle("active", useHighlight);
-  $("cmpModeHighlight").setAttribute("aria-pressed", String(useHighlight));
-  $("cmpModeSide").classList.toggle("active", !useHighlight);
-  $("cmpModeSide").setAttribute("aria-pressed", String(!useHighlight));
-  if (useHighlight) startCompareHighlightLoop();
-  else stopCompareHighlightLoop();
-}
-
-function setCompareOriginalHeld(held) {
-  CMP_HIGHLIGHT.holdOriginal = held;
-  if (CMP_HIGHLIGHT.mode === "highlight") renderCompareHighlight();
-}
-
-function setupCompareVideos(beforeName, afterName, metrics, audioName, highlight) {
-  const A = $("cmpAfter"), B = $("cmpBefore"), AU = $("cmpAudio");
-  wireMediaBuffering(A, "compare-buffer", "Buffering comparison");
-  const bust = "?t=" + Date.now();
-  A.src = `/api/session/${ST.sid}/media/${afterName}${bust}`;
-  B.src = `/api/session/${ST.sid}/media/${beforeName}${bust}`;
-  A.load(); B.load();
-  const mediaReady = waitForMediaReady(
+  const setPlayLabel = () => {
+    $("cmpPlay").textContent = A.paused ? "\u25b6 Play both" : "\u23f8 Pause both";
+  };
+  const playBoth = async () => {
+    syncSecondary(true);
+    await Promise.allSettled([
+      A.play(),
+      B.play(),
+      haveAudio ? AU.play() : Promise.resolve(),
+    ]);
+    setPlayLabel();
+  };
+  const pauseBoth = () => {
+    A.pause();
+    B.pause();
+    if (haveAudio) AU.pause();
+    setPlayLabel();
+  };
+  $("cmpPlay").onclick = () => { if (A.paused) playBoth(); else pauseBoth(); };
+  A.onplay = () => {
+    if (B.paused) B.play().catch(() => {});
+    if (haveAudio && AU.paused) AU.play().catch(() => {});
+    setPlayLabel();
+  };
+  A.onpause = () => {
+    if (!B.paused) B.pause();
+    if (haveAudio) AU.pause();
+    setPlayLabel();
+  };
+  A.ontimeupdate = () => {
+    const d = A.duration || 1;
+    $("cmpScrub").value = Math.round((A.currentTime / d) * 1000);
+    syncSecondary(false);
+    updateTime();
+  };
+  $("cmpScrub").oninput = () => {
+    const d = A.duration || 1, t = ($("cmpScrub").value / 1000) * d;
+    try { A.currentTime = t; B.currentTime = t; if (haveAudio) AU.currentTime = t; } catch (e) {}
+    updateTime();
+  };
+  A.onloadedmetadata = updateTime;
+  const mediaReady = await waitForMediaReady(
     [A, B],
     "compare",
     96,
     100,
     "Loading comparison videos\u2026",
   );
-  // window music: a small clip the same length as the window, looped in sync with the (looping)
-  // videos. The clips and the audio are all 0-based over the window, so audio.currentTime == A.time.
-  const haveAudio = !!(audioName && AU);
-  if (AU) {
-    AU.src = haveAudio ? `/api/session/${ST.sid}/media/${audioName}${bust}` : "";
-    AU.muted = !haveAudio;
-    if (haveAudio) AU.load();
+  if (!mediaReady) {
+    throw new Error("The comparison videos did not become ready. Try the comparison again.");
   }
-  showCompareMetrics(metrics);
-  CMP_HIGHLIGHT.failed = false;
-  CMP_HIGHLIGHT.holdOriginal = false;
-  CMP_HIGHLIGHT.metadata = highlight || null;
-  setCompareMode("highlight");
-  const setPlayLabel = () => { $("cmpPlay").textContent = A.paused ? "\u25b6 Play both" : "\u23f8 Pause"; };
-  const playAudio = () => { if (haveAudio) { try { AU.currentTime = A.currentTime || 0; } catch (e) {} AU.play().catch(() => {}); } };
-  const playBoth = () => { A.play().catch(() => {}); B.play().catch(() => {}); playAudio(); setPlayLabel(); };
-  const pauseBoth = () => { A.pause(); B.pause(); if (haveAudio) AU.pause(); setPlayLabel(); };
-  $("cmpPlay").onclick = () => { A.paused ? playBoth() : pauseBoth(); };
-  A.onplay = () => {
-    if (B.paused) B.play().catch(() => {});
-    playAudio();
-    setPlayLabel();
-    startCompareHighlightLoop();
-  };
-  A.onpause = () => {
-    if (!B.paused) B.pause();
-    if (haveAudio) AU.pause();
-    setPlayLabel();
-    stopCompareHighlightLoop();
-    renderCompareHighlight();
-  };
-  A.ontimeupdate = () => {                                  // keep "before" + music locked to "after"
-    const d = A.duration || 1;
-    $("cmpScrub").value = Math.round((A.currentTime / d) * 1000);
-    if (isFinite(A.currentTime) && Math.abs((B.currentTime || 0) - A.currentTime) > 0.08) {
-      try { B.currentTime = A.currentTime; } catch (e) {}
-    }
-    if (haveAudio && isFinite(A.currentTime) && Math.abs((AU.currentTime || 0) - A.currentTime) > 0.18) {
-      try { AU.currentTime = A.currentTime; } catch (e) {}
-    }
-    if (!CMP_HIGHLIGHT.raf) renderCompareHighlight();
-  };
-  $("cmpScrub").oninput = () => {
-    const d = A.duration || 1, t = ($("cmpScrub").value / 1000) * d;
-    try { A.currentTime = t; B.currentTime = t; if (haveAudio) AU.currentTime = t; } catch (e) {}
-    requestAnimationFrame(renderCompareHighlight);
-  };
-  A.onseeked = renderCompareHighlight;
-  B.onseeked = renderCompareHighlight;
-  B.onloadeddata = renderCompareHighlight;
-  A.onloadeddata = () => { renderCompareHighlight(); playBoth(); };
+  syncSecondary(true);
+  updateTime();
+  $("cmpPlaceholder").hidden = true;
+  $("cmpContent").hidden = false;
   return mediaReady;
 }
 
@@ -899,34 +878,19 @@ function wireControls() {
     $("fullReviewRender").disabled = false;
     $("fullReviewRender").textContent = "Reload full-song preview";
   });
-  $("compareBtn").onclick = startCompare;
-  $("cmpModeHighlight").onclick = () => setCompareMode("highlight");
-  $("cmpModeSide").onclick = () => setCompareMode("side");
-  const holdBefore = $("cmpHoldBefore");
-  const releaseOriginal = () => setCompareOriginalHeld(false);
-  holdBefore.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    setCompareOriginalHeld(true);
-  });
-  ["pointerup", "pointercancel", "pointerleave"].forEach((name) =>
-    holdBefore.addEventListener(name, releaseOriginal));
-  holdBefore.addEventListener("keydown", (e) => {
-    if (e.key === " " || e.key === "Enter") {
-      e.preventDefault();
-      setCompareOriginalHeld(true);
-    }
-  });
-  holdBefore.addEventListener("keyup", (e) => {
-    if (e.key === " " || e.key === "Enter") releaseOriginal();
-  });
-  window.addEventListener("blur", releaseOriginal);
-  $("cmpClose").onclick = () => {
-    $("compare").hidden = true;
-    stopCompareHighlightLoop();
-    try { $("cmpAfter").pause(); $("cmpBefore").pause(); $("cmpAudio").pause(); } catch (e) {}
+  $("compareBtn").onclick = () => startCompare(false);
+  $("compareBackdrop").onclick = () => closeCompare();
+  $("cmpClose").onclick = () => closeCompare();
+  $("cmpVersion").onchange = () => {
+    if (!$("compare").hidden) startCompare(true);
   };
-  const cmpVer = $("cmpVersion");
-  if (cmpVer) cmpVer.onchange = () => { if (!$("compare").hidden) startCompare(); };
+  [$("cmpBefore"), $("cmpAfter")].forEach((video) => {
+    video.addEventListener("error", () => {
+      if (!$("compare").hidden) {
+        compareError("One of the comparison videos could not be loaded. Try the comparison again.");
+      }
+    });
+  });
   $("undo").onclick = () => runHistoryAction("Undoing edit", "undo");
   $("redo").onclick = () => runHistoryAction("Redoing edit", "redo");
   $("branchCancel").onclick = () => clearBranchBase(true);
@@ -944,9 +908,7 @@ function wireControls() {
     activityStart("history", "Resetting edit history", "Restoring the original dance", null);
     try {
       const st = await api(`/api/session/${ST.sid}/reset`, { method: "POST" });
-      $("compare").hidden = true;
-      stopCompareHighlightLoop();
-      try { $("cmpAfter").pause(); $("cmpBefore").pause(); $("cmpAudio").pause(); } catch (e) {}
+      closeCompare(false);
       const video = $("video");
       video.src = st.preview_url + "?t=" + Date.now();       // back to the original dance
       video.load();
@@ -963,6 +925,10 @@ function wireControls() {
   };
   $("instruction").addEventListener("keydown", (e) => { if (e.key === "Enter") runEdit(); });
   window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("compare").hidden) {
+      closeCompare();
+      return;
+    }
     if (e.key === "Escape" && !$("fullReview").hidden) {
       closeFullReview();
       return;
@@ -983,8 +949,8 @@ const TOUR_STEPS = [
     text: "Open this collapsed catalog when you need it. Click a motion to watch the exact editor example, read its meaning, and add it to your prompt. Beat-hit motions land on the strongest beat in the selected window." },
   { el: "apply", title: "4 · Apply the edit",
     text: "The agent plans the right tools, applies them, and verifies the result actually hit your goal. If needed, it refines the edit." },
-  { el: "compareBtn", title: "5 · Review the result",
-    text: "Review the edited dancer with changed body areas glowing cyan. Hold for the original or switch to side by side, all synchronized to the music." },
+  { el: "compareBtn", title: "5 · Compare Original and Edited",
+    text: "After an edit, open two clearly labeled videos of the same window. Play or scrub them together to compare the original dance directly with the current LLM-guided edit." },
   { el: "history", title: "6 · Iterate freely",
     text: "Every edit is a checkpoint. Restore one by clicking its row, or use its Branch button to make the next edit from that older state without deleting later work." },
   { el: "fullRenderBtn", title: "7 · Review the full song",
@@ -1196,6 +1162,8 @@ async function openSession(sid) {
   const label = sel && sel.selectedOptions.length ? sel.selectedOptions[0].textContent : sid;
   activityStart("session", "Loading song", `Opening ${label}`, 8);
   if (sel) sel.disabled = true;
+  $("compareBtn").disabled = true;
+  $("compareButtonMeta").textContent = "Loading section\u2026";
   updateSectionNavigation(sid);
   $("prevSection").disabled = true;
   $("nextSection").disabled = true;
@@ -1216,10 +1184,12 @@ async function openSession(sid) {
       sel.disabled = false;
     }
     updateSectionNavigation();
+    updateCompareAvailability();
     activityFail("session", `Could not open ${label}`);
     toast(`Couldn't open ${sid} \u2014 please refresh in a moment.`);
     return false;
   }
+  closeCompare(false);
   ST.sid = sid;
   ST.branchBase = null;
   updateSectionNavigation();
@@ -1245,6 +1215,7 @@ async function openSession(sid) {
 
 function applyState(st, opts) {
   opts = opts || {};
+  if (ST.head && ST.head !== st.head) closeCompare(false);
   ST.fps = st.fps; ST.dur = st.duration; ST.nframes = st.n_frames; ST.beats = st.n_beats; ST.head = st.head;
   ST.generator = st.generator;
   ST.timeline = st.timeline || [];
@@ -1256,7 +1227,7 @@ function applyState(st, opts) {
   renderBranchState();
   syncTimelineToVideo();
   syncPlayhead();
-  if (!$("compare").hidden) populateCmpVersions();          // keep the version picker current
+  updateCompareAvailability();
   if (!opts.keepMetrics && st.metrics && st.metrics.energy !== undefined) showCurrentMetrics(st.metrics);
   scheduleFullReviewRefresh();
 }
