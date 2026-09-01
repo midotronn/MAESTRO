@@ -1,5 +1,5 @@
 {
-  "validated_at": "2026-08-31T17:11:17-05:00",
+  "validated_at": "2026-08-31T21:56:49-05:00",
   "study_content_commit": "076411d9753442581d07f2a68dd35a9d785b2931",
   "production_release_commit": "8aee8bd8c93b8bc1188072ceeecffacbeceea443",
   "deployment_commit": "8aee8bd8c93b8bc1188072ceeecffacbeceea443",
@@ -31,7 +31,7 @@
     "checkout_commit": "8aee8bd8c93b8bc1188072ceeecffacbeceea443",
     "checkout_clean": true,
     "host": "213.173.107.23",
-    "ssh_port": 46690,
+    "ssh_port": 33355,
     "internal_port": 8011,
     "public_port": 8888,
     "healthy_workers": 10,
@@ -98,12 +98,12 @@
       "duration_seconds": 205.769,
       "sections": 5,
       "edited_sections_at_validation": 0,
-      "current_signature": "4755aa215936afc8a1d6",
-      "render_signature": "4755aa215936afc8a1d6",
+      "current_signature": "4ac19a8a092f3fa9754a",
+      "render_signature": "4ac19a8a092f3fa9754a",
       "stale": false,
-      "render_elapsed_seconds": 42.88,
-      "rendered_video_bytes": 42122063,
-      "sha256": "c50203405f9fb5847d3806f3829b0e452f2c25c312fa5983885f5b8e456de7f7",
+      "render_elapsed_seconds": 42.46,
+      "rendered_video_bytes": 42132550,
+      "sha256": "303c790b66f30b91d33168a00f7b10fc8c07b03c79af0136f2b1c0fd1fc2f33d",
       "video_codec": "h264",
       "video_frames": 6173,
       "video_dimensions": [
@@ -259,7 +259,8 @@
     "validation_session": {
       "sid": "dynamite_climax_punch_drop",
       "checkpoint_count_after_reset": 1,
-      "head_is_root": true
+      "head_is_root": true,
+      "all_five_sections_reset_to_root": true
     },
     "study_link": "https://x0u1o2qhc5hxgd-8888.proxy.runpod.net/study/",
     "project_link": "https://x0u1o2qhc5hxgd-8888.proxy.runpod.net/project/",
@@ -415,7 +416,15 @@
       "editor_browser_passed": true,
       "comparison_browser_passed": true,
       "full_song_browser_passed": true,
-      "website_browser_passed": true
+      "website_browser_passed": true,
+      "post_restart_revalidation": {
+        "strict_four_gpu_verify_passed": true,
+        "study_player_browser_passed": true,
+        "editor_browser_passed": true,
+        "full_song_browser_passed": true,
+        "all_participant_links_http_200": true,
+        "all_five_sections_reset_to_root": true
+      }
     }
   },
   "launch_blockers": [],
@@ -434,6 +443,12 @@
     "motion_previews_generated": 19,
     "study_videos_verified": 6,
     "validation_sessions_reset_to_root": true,
-    "ready_for_participants": true
+    "ready_for_participants": true,
+    "restart_validated_at": "2026-08-31T21:56:49-05:00",
+    "ssh_port": 33355,
+    "previous_study_backup": "/workspace/maestro-backups/pre-next-user-study-20260901T025434Z/study-state.tar.gz",
+    "previous_study_backup_sha256": "1209231c0716f65ff02b22a61ae384c37a87262c4853f1fc6508ebffc8e3b46a",
+    "all_five_sections_reset_to_root": true,
+    "full_song_clean_signature": "4ac19a8a092f3fa9754a"
   }
 }
