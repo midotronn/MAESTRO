@@ -143,11 +143,17 @@ else
     echo 'Refusing to replace a modified pod checkout.' >&2
     exit 1
   fi
-  git -C '$WS/AgentLODGE' fetch origin '$GitRef'
-  if git -C '$WS/AgentLODGE' show-ref --verify --quiet 'refs/remotes/origin/$GitRef'; then
-    git -C '$WS/AgentLODGE' checkout -B '$GitRef' 'origin/$GitRef'
+  if printf '%s\n' '$GitRef' | grep -Eq '^[0-9a-fA-F]{40}$' &&
+      git -C '$WS/AgentLODGE' cat-file -e '$GitRef^{commit}' 2>/dev/null; then
+    echo 'Pinned commit is already cached; skipping the remote fetch.'
+    git -C '$WS/AgentLODGE' checkout --detach '$GitRef'
   else
-    git -C '$WS/AgentLODGE' checkout --detach FETCH_HEAD
+    git -C '$WS/AgentLODGE' fetch origin '$GitRef'
+    if git -C '$WS/AgentLODGE' show-ref --verify --quiet 'refs/remotes/origin/$GitRef'; then
+      git -C '$WS/AgentLODGE' checkout -B '$GitRef' 'origin/$GitRef'
+    else
+      git -C '$WS/AgentLODGE' checkout --detach FETCH_HEAD
+    fi
   fi
 fi
 cd '$WS/AgentLODGE'
