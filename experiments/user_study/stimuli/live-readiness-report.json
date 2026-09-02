@@ -1,19 +1,19 @@
 {
-  "validated_at": "2026-09-02T11:59:51-05:00",
+  "validated_at": "2026-09-02T17:12:59-05:00",
   "study_content_commit": "076411d9753442581d07f2a68dd35a9d785b2931",
   "production_release_commit": "8aee8bd8c93b8bc1188072ceeecffacbeceea443",
   "deployment_commit": "8aee8bd8c93b8bc1188072ceeecffacbeceea443",
-  "rollback_snapshot": "/workspace/maestro-backups/pre-next-user-study-20260902T164023Z/study-state.tar.gz",
-  "editor_base": "https://x0u1o2qhc5hxgd-8888.proxy.runpod.net",
+  "rollback_snapshot": "/workspace/maestro-backups/pre-next-user-study-20260902T215738Z/study-state.tar.gz",
+  "editor_base": "https://raguyv8yuljox1-8888.proxy.runpod.net",
   "website": {
     "url": "https://midotronn.github.io/MAESTRO/",
     "config_url": "https://midotronn.github.io/MAESTRO/static/data/config.json",
-    "resolved_editor_url": "https://x0u1o2qhc5hxgd-8888.proxy.runpod.net/",
+    "resolved_editor_url": "https://raguyv8yuljox1-8888.proxy.runpod.net/",
     "resolved_editor_buttons": 2,
     "browser_errors": 0,
     "status": "passed",
     "source_branch": "interactive-editor",
-    "deployment_commit": "19b79e0e07dfe028633e03adf3e93156ea2fea5b"
+    "deployment_commit": "8a2208ab4cb51e0affeafa43b0a86a50de15ceb7"
   },
   "generation": {
     "storyboard_model": "gpt-4o",
@@ -27,11 +27,11 @@
     "credential_file_mode": "0600"
   },
   "pod": {
-    "id": "x0u1o2qhc5hxgd",
-    "checkout_commit": "a465c4e9a4590a433af1cd44595f016807d7f31e",
+    "id": "raguyv8yuljox1",
+    "checkout_commit": "51a3aaa3128fde60f7c8a66ba596246dd23def0a",
     "checkout_clean": true,
-    "host": "213.173.107.23",
-    "ssh_port": 17533,
+    "host": "213.173.109.238",
+    "ssh_port": 16215,
     "internal_port": 8011,
     "public_port": 8888,
     "healthy_workers": 10,
@@ -98,13 +98,13 @@
       "duration_seconds": 205.769,
       "sections": 5,
       "edited_sections_at_validation": 0,
-      "current_signature": "09d6e41b105f7f7d183d",
-      "render_signature": "09d6e41b105f7f7d183d",
+      "current_signature": "2dc8a6077f2b947aedfb",
+      "render_signature": "2dc8a6077f2b947aedfb",
       "stale": false,
-      "render_elapsed_seconds": 43.44,
-      "rendered_at_utc": "2026-09-02T16:58:29+00:00",
-      "rendered_video_bytes": 42099526,
-      "sha256": "d999713cadf94ff582c9bc71d304c650c7f9074b3c1f673f6a73306311cb076b",
+      "render_elapsed_seconds": 34.51,
+      "rendered_at_utc": "2026-09-02T22:11:29+00:00",
+      "rendered_video_bytes": 42117644,
+      "sha256": "bb7283cf112f6f5843ad58624a21f911644d514b1d9e998f68e8217d25825e31",
       "video_codec": "h264",
       "video_frames": 6173,
       "video_dimensions": [
@@ -263,13 +263,13 @@
       "head_is_root": true,
       "all_five_sections_reset_to_root": true
     },
-    "study_link": "https://x0u1o2qhc5hxgd-8888.proxy.runpod.net/study/",
-    "project_link": "https://x0u1o2qhc5hxgd-8888.proxy.runpod.net/project/",
+    "study_link": "https://raguyv8yuljox1-8888.proxy.runpod.net/study/",
+    "project_link": "https://raguyv8yuljox1-8888.proxy.runpod.net/project/",
     "browser_errors": 0,
     "status": "passed"
   },
   "study_player": {
-    "url": "https://x0u1o2qhc5hxgd-8888.proxy.runpod.net/study/",
+    "url": "https://raguyv8yuljox1-8888.proxy.runpod.net/study/",
     "protocol": "maestro-expert-study-v15-llm-gpt4o-k10-front-facing-16s",
     "excerpt_duration_seconds": 16,
     "comparisons": 6,
@@ -426,17 +426,33 @@
         "all_participant_links_http_200": true,
         "all_five_sections_reset_to_root": true
       }
+    },
+    "migrated_pod_restore": {
+      "migration_files_settled": true,
+      "persistent_media_directories": 7,
+      "motion_previews_preserved": 19,
+      "strict_four_gpu_verify_passed": true,
+      "study_player_browser_passed": true,
+      "editor_browser_passed": true,
+      "comparison_browser_passed": true,
+      "full_song_browser_passed": true,
+      "website_browser_passed": true,
+      "all_participant_links_http_200": true,
+      "all_five_sections_reset_to_root": true
     }
   },
   "launch_blockers": [],
   "status": "passed",
   "restoration": {
-    "workspace": "brand-new persistent RunPod workspace",
+    "workspace": "migrated persistent RunPod workspace",
+    "migration_source_pod": "x0u1o2qhc5hxgd",
+    "migration_destination_pod": "raguyv8yuljox1",
+    "migration_completed_at_utc": "2026-09-02T21:56:17+00:00",
     "gpu_model": "NVIDIA RTX PRO 4500 Blackwell",
     "gpu_count": 4,
     "bootstrap_fix_commit": "03cb72da5d00cd417937e240ccbb9e81c14ab142",
     "restored_audio_fix_commit": "8aee8bd8c93b8bc1188072ceeecffacbeceea443",
-    "website_deployment_commit": "19b79e0e07dfe028633e03adf3e93156ea2fea5b",
+    "website_deployment_commit": "8a2208ab4cb51e0affeafa43b0a86a50de15ceb7",
     "dynamite_source_audio_sha256": "505f55500a7a3923662b6f8f6808d8cc206da644237ba3ba3ba0f4fd8546ff5a",
     "dynamite_source_frames": 6173,
     "dynamite_segments_built": 5,
@@ -445,12 +461,12 @@
     "study_videos_verified": 6,
     "validation_sessions_reset_to_root": true,
     "ready_for_participants": true,
-    "restart_validated_at": "2026-09-02T11:59:51-05:00",
-    "ssh_port": 17533,
-    "previous_study_backup": "/workspace/maestro-backups/pre-next-user-study-20260902T164023Z/study-state.tar.gz",
-    "previous_study_backup_sha256": "e8aa96ec77c677c05a34acff97ff97985bbd8e0d4687d1f13fbf9f572bd4e000",
-    "previous_study_backup_bytes": 48261373,
+    "restart_validated_at": "2026-09-02T17:12:59-05:00",
+    "ssh_port": 16215,
+    "previous_study_backup": "/workspace/maestro-backups/pre-next-user-study-20260902T215738Z/study-state.tar.gz",
+    "previous_study_backup_sha256": "1b3d70a8db7e4d21cc04da4da8ce314d022b86ea980785baca083f74ac59af1e",
+    "previous_study_backup_bytes": 47592306,
     "all_five_sections_reset_to_root": true,
-    "full_song_clean_signature": "09d6e41b105f7f7d183d"
+    "full_song_clean_signature": "2dc8a6077f2b947aedfb"
   }
 }
