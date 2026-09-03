@@ -1,9 +1,9 @@
 {
-  "validated_at": "2026-09-02T22:02:24-05:00",
+  "validated_at": "2026-09-03T18:12:26-05:00",
   "study_content_commit": "076411d9753442581d07f2a68dd35a9d785b2931",
   "production_release_commit": "8aee8bd8c93b8bc1188072ceeecffacbeceea443",
   "deployment_commit": "8aee8bd8c93b8bc1188072ceeecffacbeceea443",
-  "rollback_snapshot": "/workspace/maestro-backups/pre-next-user-study-20260903T024749Z/study-state.tar.gz",
+  "rollback_snapshot": "/workspace/maestro-backups/pre-next-user-study-20260903T225136Z/study-state.tar.gz",
   "editor_base": "https://raguyv8yuljox1-8888.proxy.runpod.net",
   "website": {
     "url": "https://midotronn.github.io/MAESTRO/",
@@ -28,10 +28,10 @@
   },
   "pod": {
     "id": "raguyv8yuljox1",
-    "checkout_commit": "51a3aaa3128fde60f7c8a66ba596246dd23def0a",
+    "checkout_commit": "f9d514a5d8311cb2bd1d0c0adc782315c9690f33",
     "checkout_clean": true,
     "host": "213.173.109.238",
-    "ssh_port": 26695,
+    "ssh_port": 32640,
     "internal_port": 8011,
     "public_port": 8888,
     "healthy_workers": 10,
@@ -98,13 +98,13 @@
       "duration_seconds": 205.769,
       "sections": 5,
       "edited_sections_at_validation": 0,
-      "current_signature": "14f62d221af1e1f986ca",
-      "render_signature": "14f62d221af1e1f986ca",
+      "current_signature": "288e114422d0004c51f8",
+      "render_signature": "288e114422d0004c51f8",
       "stale": false,
-      "render_elapsed_seconds": 32.81,
-      "rendered_at_utc": "2026-09-03T03:01:30+00:00",
-      "rendered_video_bytes": 42128737,
-      "sha256": "1076e549422aca08b1b355174cd6b8a4ed8ff15d526e314d56b65a70d3e3abdf",
+      "render_elapsed_seconds": 32,
+      "rendered_at_utc": "2026-09-03T23:11:06.933+00:00",
+      "rendered_video_bytes": 42110013,
+      "sha256": "38981619eeef1648fe803ed81e2f6962bc6c9cd153d54967571b69f1bf788335",
       "video_codec": "h264",
       "video_frames": 6173,
       "video_dimensions": [
@@ -141,7 +141,7 @@
         4,
         8
       ],
-      "render_elapsed_seconds": 48.82,
+      "render_elapsed_seconds": 49.08,
       "video_frames_each": 120,
       "video_dimensions": [
         448,
@@ -159,8 +159,8 @@
       "audio_duration_seconds": 4.0,
       "explicit_play_required": true,
       "synchronized_playback": true,
-      "video_playback_drift_seconds": 0.000387,
-      "audio_playback_drift_seconds": 0.053128,
+      "video_playback_drift_seconds": 0.00027,
+      "audio_playback_drift_seconds": 0.048966,
       "synchronized_scrub": true,
       "scrub_validation_seconds": 2.5,
       "changed_regions": [
@@ -173,7 +173,7 @@
       "highlight_target": "Edited",
       "highlight_color": "cyan",
       "highlight_uses_projected_changed_region_metadata": true,
-      "highlight_active_frames": 28,
+      "highlight_active_frames": 27,
       "highlight_desktop_canvas_pixels": 494,
       "highlight_responsive_500px_canvas_pixels": 225,
       "both_videos_visible_with_highlight": true,
@@ -461,12 +461,12 @@
     "study_videos_verified": 6,
     "validation_sessions_reset_to_root": true,
     "ready_for_participants": true,
-    "restart_validated_at": "2026-09-02T22:02:24-05:00",
-    "ssh_port": 26695,
-    "previous_study_backup": "/workspace/maestro-backups/pre-next-user-study-20260903T024749Z/study-state.tar.gz",
-    "previous_study_backup_sha256": "213bbb0d93f6260b7dec14876921c9ab86c6d201de266fdc89f1900c5b4f26c5",
-    "previous_study_backup_bytes": 45712635,
+    "restart_validated_at": "2026-09-03T18:12:26-05:00",
+    "ssh_port": 32640,
+    "previous_study_backup": "/workspace/maestro-backups/pre-next-user-study-20260903T225136Z/study-state.tar.gz",
+    "previous_study_backup_sha256": "1b68f064fd754836867ba42783e366bc8521419a5319a28d6193b88b2e4de9d4",
+    "previous_study_backup_bytes": 85849781,
     "all_five_sections_reset_to_root": true,
-    "full_song_clean_signature": "14f62d221af1e1f986ca"
+    "full_song_clean_signature": "288e114422d0004c51f8"
   }
 }
